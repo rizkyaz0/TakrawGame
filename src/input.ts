@@ -37,9 +37,73 @@ const KEYMAPS: [KeyMap, KeyMap] = [
   ],
 ];
 
-function readGamepad(i: number): number {
-  const pad = navigator.getGamepads?.()[i];
-  if (!pad) return 0;
+// ===== Stick / gamepad =====
+// Stick didaftarkan ke pemain berdasarkan urutan menekan tombol, bukan nomor urut dari
+// browser. Nomor urut tidak bisa dipercaya: di PC satu stick PS sering terbaca sebagai dua
+// perangkat sekaligus (misalnya lewat DS4Windows atau Steam), sehingga "nomor 0" dan
+// "nomor 1" bisa stick yang sama.
+//
+// padSlots[0] = nomor perangkat milik P1, padSlots[1] = milik P2, null = belum ada.
+export const padSlots: [number | null, number | null] = [null, null];
+let twoPlayers = false;
+
+export function setTwoPlayers(on: boolean): void {
+  twoPlayers = on;
+}
+
+export function resetPadSlots(): void {
+  padSlots[0] = null;
+  padSlots[1] = null;
+}
+
+function listPads(): Gamepad[] {
+  const all = Array.from(navigator.getGamepads?.() ?? []).filter((g): g is Gamepad => g !== null);
+  // Kalau ada perangkat dengan pemetaan standar, yang tidak standar diabaikan: itu biasanya
+  // versi "mentah" dari stick yang sama, dengan letak tombol yang tidak bisa ditebak.
+  const standard = all.filter((g) => g.mapping === "standard");
+  return standard.length > 0 ? standard : all;
+}
+
+// Apakah ada tombol atau stick yang sedang digerakkan di perangkat ini.
+function isActive(pad: Gamepad): boolean {
+  if (pad.buttons.some((b) => b.pressed)) return true;
+  return Math.abs(pad.axes[0] ?? 0) > 0.6 || Math.abs(pad.axes[1] ?? 0) > 0.6;
+}
+
+// Dipanggil tiap frame. Mengembalikan true kalau pembagian stick berubah.
+export function updatePadSlots(): boolean {
+  const pads = listPads();
+  const byIndex = (n: number | null) => pads.find((g) => g.index === n) ?? null;
+  let changed = false;
+
+  // Stick dicabut: tempatnya dikosongkan.
+  for (let s = 0; s < 2; s++) {
+    if (padSlots[s] !== null && !byIndex(padSlots[s])) {
+      padSlots[s] = null;
+      changed = true;
+    }
+  }
+
+  for (const pad of pads) {
+    if (pad.index === padSlots[0] || pad.index === padSlots[1] || !isActive(pad)) continue;
+    if (padSlots[0] === null) {
+      padSlots[0] = pad.index;
+      changed = true;
+      continue;
+    }
+    // Perangkat kembaran selalu bergerak bersamaan dengan aslinya. Jadi stick kedua
+    // hanya didaftarkan kalau ia ditekan saat stick P1 sedang benar-benar diam.
+    const first = byIndex(padSlots[0]);
+    if (first && isActive(first)) continue;
+    if (padSlots[1] === null) {
+      padSlots[1] = pad.index;
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+function padBits(pad: Gamepad): number {
   let out = 0;
   const b = (n: number) => pad.buttons[n]?.pressed === true;
   const sx = pad.axes[0] ?? 0;
@@ -53,6 +117,19 @@ function readGamepad(i: number): number {
   if (b(1) || b(5)) out |= Btn.DASH;
   if (b(3) || b(7)) out |= Btn.SPECIAL;
   if (b(4) || b(6)) out |= Btn.GUARD;
+  return out;
+}
+
+function readGamepad(i: number): number {
+  const pads = listPads();
+  let out = 0;
+  for (const pad of pads) {
+    const mine = twoPlayers
+      ? pad.index === padSlots[i]
+      : // Satu pemain: stick mana pun yang sudah terdaftar mengendalikan P1.
+        i === 0 && (pad.index === padSlots[0] || pad.index === padSlots[1]);
+    if (mine) out |= padBits(pad);
+  }
   return out;
 }
 

@@ -1,5 +1,5 @@
 import { crowdSfx, sfx } from "./audio";
-import { readInput } from "./input";
+import { padSlots, readInput, resetPadSlots, setTwoPlayers, updatePadSlots } from "./input";
 import { Renderer } from "./render";
 import { initTouch, setSpecialReady, touchState } from "./touch";
 import {
@@ -229,12 +229,16 @@ function startDemo(): void {
 
 function goTitle(): void {
   setMode("title");
+  // Pembagian stick diulang dari awal tiap kembali ke judul.
+  resetPadSlots();
+  setTwoPlayers(false);
   startDemo();
   renderMenus();
 }
 
 function goSelect(): void {
   setMode("select");
+  setTwoPlayers(app.humans === 2);
   app.locked = [false, false];
   Object.assign(state, createState(app.chars));
   renderSelect();
@@ -261,7 +265,7 @@ function renderMenus(): void {
     `<div class="item${on ? " on" : ""}" data-tap="${tap}">${label}</div>`;
   $("titleMenu").innerHTML =
     item("1 PEMAIN · LAWAN CPU", app.titleIndex === 0, "title:0") +
-    item("2 PEMAIN · SATU KEYBOARD", app.titleIndex === 1, "title:1") +
+    item("2 PEMAIN · MABAR", app.titleIndex === 1, "title:1") +
     item("LATIHAN", app.titleIndex === 2, "title:2");
   $("pauseMenu").innerHTML =
     item("LANJUT MAIN", app.pauseIndex === 0, "pause:0") +
@@ -298,6 +302,14 @@ function renderSelect(): void {
         : cpu
           ? `<span data-tap="KeyW">CPU · ${CPU_NAMES[app.cpuLevel].toUpperCase()} ▸</span>`
           : "PEMAIN 2";
+    // Mode 2 pemain: tunjukkan alat yang dipakai tiap pemain, supaya jelas stick siapa milik siapa.
+    const device = cpu
+      ? ""
+      : padSlots[i] !== null
+        ? `<div class="dev ok">🎮 STICK ${i + 1} TERHUBUNG</div>`
+        : i === 0
+          ? `<div class="dev">KEYBOARD: A D pilih, F kunci<br />atau tekan tombol di stick</div>`
+          : `<div class="dev wait">TEKAN TOMBOL DI STICK KEDUA<br />atau keyboard: ← → pilih, K kunci</div>`;
     const stat = (label: string, v: number) =>
       `<div class="stat">${label}<div class="bar"><i style="width:${Math.round(v * 100)}%"></i></div></div>`;
     el.style.setProperty("--pc", hex(c.color));
@@ -308,7 +320,8 @@ function renderSelect(): void {
       stat("Cepat", statBar("moveSpeed", c.moveSpeed)) +
       stat("Lompat", statBar("jumpV", c.jumpV)) +
       stat("Tenaga", statBar("smashSpeed", c.smashSpeed)) +
-      `<div class="sp"><b>${c.specialName}</b>${SPECIAL_DESC[c.special]}</div>`;
+      `<div class="sp"><b>${c.specialName}</b>${SPECIAL_DESC[c.special]}</div>` +
+      device;
     document.documentElement.style.setProperty(`--c${i + 1}`, hex(c.color));
   }
 
@@ -538,13 +551,18 @@ window.addEventListener("keydown", (e) => {
 // ke tombol keyboard yang sudah dipahami menu, hanya saat baru ditekan.
 // Indeks tombol mengikuti pemetaan standar: 0 silang/A, 1 lingkaran/B, 3 segitiga/Y,
 // 9 Options/Start, 12-15 D-pad.
-const padPrev: number[] = [0, 0];
+const padPrev = new Map<number, number>();
 function pollPads(): void {
-  const pads = navigator.getGamepads?.() ?? [];
-  for (let i = 0; i < 2; i++) {
-    const pad = pads[i];
-    if (!pad) {
-      padPrev[i] = 0;
+  // Pembagian stick diperbarui dulu; layar pilih karakter menampilkan siapa pakai apa.
+  if (updatePadSlots() && app.mode === "select") renderSelect();
+
+  for (const pad of navigator.getGamepads?.() ?? []) {
+    if (!pad) continue;
+    // Hanya stick yang sudah terdaftar yang didengar. Perangkat kembaran (satu stick
+    // terbaca dua kali) tidak pernah terdaftar, jadi tidak menggandakan tekanan tombol.
+    const slot = pad.index === padSlots[0] ? 0 : pad.index === padSlots[1] ? 1 : -1;
+    if (slot < 0) {
+      padPrev.delete(pad.index);
       continue;
     }
     const b = (n: number) => pad.buttons[n]?.pressed === true;
@@ -559,8 +577,8 @@ function pollPads(): void {
       (b(1) ? 32 : 0) |
       (b(3) ? 64 : 0) |
       (b(9) ? 128 : 0);
-    const hit = now & ~padPrev[i];
-    padPrev[i] = now;
+    const hit = now & ~(padPrev.get(pad.index) ?? 0);
+    padPrev.set(pad.index, now);
     if (hit === 0) continue;
 
     const playing = app.mode === "match" && !app.paused && state.phase !== "over";
@@ -569,8 +587,8 @@ function pollPads(): void {
       if (hit & 128) menuKey("Escape");
       continue;
     }
-    // Pemain kedua punya tombol sendiri hanya di layar pilih karakter mode 2 pemain.
-    const second = i === 1 && app.mode === "select" && app.humans === 2;
+    // Stick kedua punya tombol sendiri hanya di layar pilih karakter mode 2 pemain.
+    const second = slot === 1 && app.mode === "select" && app.humans === 2;
     if (hit & 1) menuKey(second ? "ArrowUp" : "KeyW");
     if (hit & 2) menuKey(second ? "ArrowDown" : "KeyS");
     if (hit & 4) menuKey(second ? "ArrowLeft" : "KeyA");

@@ -223,6 +223,19 @@
       body.touch #train { top: 96px; width: 280px; }
       body.touch #train .tkeys { display: none; }
       body.touch #title .hint, body.touch #pause .hint { display: none; }
+      /* Tombol layar penuh: pojok kanan atas di komputer, di samping tombol jeda di HP. */
+      #fs {
+        position: fixed; z-index: 40; top: calc(10px + env(safe-area-inset-top)); right: calc(10px + env(safe-area-inset-right));
+        width: 42px; height: 42px; padding: 0; display: none; align-items: center; justify-content: center; cursor: pointer;
+        border: 3px solid var(--paper); background: rgba(23, 19, 28, 0.8); color: var(--paper); touch-action: manipulation;
+      }
+      #fs.can { display: flex; }
+      #fs:hover { background: var(--sun); color: var(--ink); border-color: var(--ink); }
+      #fs svg { fill: none; stroke: currentColor; stroke-width: 2.6; stroke-linecap: square; }
+      #fs .close, #fs.on .open { display: none; }
+      #fs.on .close { display: inline; }
+      body.touch #fs { top: calc(8px + env(safe-area-inset-top)); right: auto; left: 50%; margin-left: -138px; }
+
       /* HP dalam posisi tegak: minta diputar. */
       #rotate {
         position: fixed; inset: 0; z-index: 50; display: none; align-items: center; justify-content: center; text-align: center;
@@ -428,6 +441,13 @@
         <div class="hint"><kbd>W</kbd><kbd>S</kbd> pilih &nbsp;·&nbsp; <kbd>F</kbd> atau <kbd>Enter</kbd> pilih &nbsp;·&nbsp; <kbd>Esc</kbd> lanjut main</div>
       </div>
     </div>
+    <!-- Tombol layar penuh; disembunyikan kalau browser tidak mendukungnya. -->
+    <button id="fs" type="button" aria-label="Layar penuh" title="Layar penuh">
+      <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+        <path class="open" d="M3 9V3h6M15 3h6v6M21 15v6h-6M9 21H3v-6" />
+        <path class="close" d="M9 3v6H3M21 9h-6V3M15 21v-6h6M3 15h6v6" />
+      </svg>
+    </button>
     <div id="rotate">Putar HP ke posisi mendatar<br />untuk bermain ↻</div>
     <script type="module" src="/src/main.ts"></script>
   </body>

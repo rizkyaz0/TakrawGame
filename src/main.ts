@@ -361,6 +361,45 @@ document.addEventListener("click", (e) => {
   if (el?.dataset.tap) handleTap(el.dataset.tap);
 });
 
+// ===== Layar penuh =====
+// Safari lama memakai nama berawalan webkit; iPhone tidak mendukungnya sama sekali,
+// dan di sana tombolnya tidak ditampilkan.
+type FsDoc = Document & { webkitFullscreenElement?: Element | null; webkitExitFullscreen?: () => void };
+type FsEl = Omit<HTMLElement, "requestFullscreen"> & {
+  requestFullscreen?: () => Promise<void>;
+  webkitRequestFullscreen?: () => void;
+};
+const fsDoc = document as FsDoc;
+const fsRoot = document.documentElement as unknown as FsEl;
+const elFs = $("fs");
+const fsActive = () => Boolean(document.fullscreenElement ?? fsDoc.webkitFullscreenElement);
+
+function toggleFullscreen(): void {
+  if (fsActive()) {
+    if (document.exitFullscreen) void document.exitFullscreen();
+    else fsDoc.webkitExitFullscreen?.();
+    return;
+  }
+  const request = fsRoot.requestFullscreen
+    ? fsRoot.requestFullscreen()
+    : Promise.resolve(fsRoot.webkitRequestFullscreen?.());
+  // Di HP, kunci ke posisi mendatar kalau browser mengizinkan.
+  void Promise.resolve(request)
+    .then(() => (screen.orientation as ScreenOrientation & { lock?: (o: string) => Promise<void> }).lock?.("landscape"))
+    .catch(() => undefined);
+}
+
+if (fsRoot.requestFullscreen || fsRoot.webkitRequestFullscreen) {
+  elFs.classList.add("can");
+  elFs.addEventListener("click", () => {
+    toggleFullscreen();
+    elFs.blur(); // supaya spasi/Enter berikutnya tidak menekan tombol ini lagi
+  });
+  const sync = () => elFs.classList.toggle("on", fsActive());
+  document.addEventListener("fullscreenchange", sync);
+  document.addEventListener("webkitfullscreenchange", sync);
+}
+
 // Seluruh HUD diperkecil di layar pendek atau sempit, supaya tidak saling tumpuk.
 function fitUi(): void {
   const z = Math.max(0.42, Math.min(1, window.innerHeight / 640, window.innerWidth / 880));

@@ -179,6 +179,7 @@ export class Renderer {
         this.playAnim(e.player, "guard", f);
         break;
       case "receive":
+        this.strikeAnim(e.player, "guard", s, e.x, e.y);
         this.fx.burst(f, e.x, e.y, e.perfect ? 0xffffff : 0x7fd4ff, e.perfect ? 1.3 : 0.8);
         if (e.perfect) this.fx.burst(f, e.x, e.y, 0x7fd4ff, 0.8);
         break;

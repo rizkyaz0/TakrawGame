@@ -3,6 +3,9 @@ import type { Player, SpecialKind } from "./sim";
 // Animator: menghitung pose dari state simulasi, tanpa tahu bentuk badannya.
 // Dipisah dari bentuk karakter supaya rig lain bisa memakai gerakan yang sama.
 //
+// Aturan takraw: bola tidak boleh disentuh tangan atau lengan. Di semua pose, lengan
+// hanya dipakai untuk keseimbangan dan tidak pernah diarahkan ke bola.
+//
 // Konvensi sudut: karakter menghadap "depan"; sudut positif = anggota badan
 // mengayun ke depan. lean positif = badan condong ke belakang.
 
@@ -107,6 +110,12 @@ export class Animator {
       const rel = by - p.y;
       part = rel > 1.75 ? "head" : rel > 1.05 ? "knee" : "foot";
       lead = 0.35;
+    } else if (kind === "guard") {
+      // Terima bola: sama seperti sentuhan, tanpa tangan. Tinggi disundul, sedang
+      // ditahan dada/paha, rendah ditahan kaki.
+      const rel = by - p.y;
+      part = rel > 1.75 ? "head" : rel > 1.05 ? "knee" : "foot";
+      lead = 0.4;
     }
     this.anim = { kind, start: frame - lead * ANIM_FRAMES[kind], aim, reach, part };
   }
@@ -143,8 +152,8 @@ export class Animator {
         t.kneeR = -1.6;
         t.hipL = -0.35;
         t.kneeL = -0.6;
-        t.shR = 2.7;
-        t.shL = 2.1;
+        t.shR = 1.1;
+        t.shL = -0.9;
         t.elL = t.elR = 0.25;
         t.lean = -0.1;
       } else {
@@ -152,8 +161,8 @@ export class Animator {
         t.hipL = -0.3;
         t.kneeL = -0.7;
         t.kneeR = -0.4;
-        t.shR = 1.9;
-        t.shL = -1.5;
+        t.shR = 1.2;
+        t.shL = -1.2;
         t.elL = t.elR = 0.35;
         t.lean = 0.08;
       }
@@ -217,19 +226,43 @@ export class Animator {
       if (u >= 1 || u < 0) {
         this.anim = null;
       } else if (an.kind === "guard") {
-        // Terima bola: jongkok rendah, kedua lengan lurus ke depan sebagai landasan.
+        // Terima bola. Takraw melarang tangan dan lengan, jadi kedua lengan ditarik ke
+        // belakang badan; bola ditahan dengan kepala, dada/paha, atau kaki.
         const w = u < 0.15 ? u / 0.15 : u > 0.75 ? (1 - u) / 0.25 : 1;
         face = w;
-        o.kneeL = lerp(o.kneeL, -1.0, w);
-        o.kneeR = lerp(o.kneeR, -0.9, w);
-        o.hipL = lerp(o.hipL, 0.8, w);
-        o.hipR = lerp(o.hipR, 0.5, w);
-        o.lean = lerp(o.lean, -0.28, w);
-        o.shL = lerp(o.shL, 1.25, w);
-        o.shR = lerp(o.shR, 1.35, w);
-        o.elL = lerp(o.elL, 0.35, w);
-        o.elR = lerp(o.elR, 0.35, w);
-        o.bob = lerp(o.bob, -0.06, w);
+        o.shL = lerp(o.shL, -0.95, w);
+        o.shR = lerp(o.shR, -0.75, w);
+        o.elL = lerp(o.elL, 0.25, w);
+        o.elR = lerp(o.elR, 0.25, w);
+        if (an.aim === null) {
+          // Bersiap: lutut ditekuk, dada dibusungkan, satu kaki terangkat sedikit.
+          o.kneeL = lerp(o.kneeL, -0.75, w);
+          o.hipL = lerp(o.hipL, 0.45, w);
+          o.hipR = lerp(o.hipR, 0.7, w);
+          o.kneeR = lerp(o.kneeR, -1.1, w);
+          o.lean = lerp(o.lean, 0.14, w);
+          o.bob = lerp(o.bob, -0.05, w);
+        } else if (an.part === "head") {
+          // Sundulan menahan: badan naik, kepala mendongak.
+          lift = 0.12 * w;
+          nod = 0.5 * w;
+          o.lean = lerp(o.lean, 0.1, w);
+          o.kneeL = lerp(o.kneeL, -0.2, w);
+          o.kneeR = lerp(o.kneeR, -0.2, w);
+        } else if (an.part === "knee") {
+          // Dada dan paha: badan condong ke belakang, paha naik menyambut bola.
+          o.hipR = lerp(o.hipR, clamp(an.aim, 0.9, 1.9), w);
+          o.kneeR = lerp(o.kneeR, -1.8, w);
+          o.lean = lerp(o.lean, 0.32, w);
+          o.kneeL = lerp(o.kneeL, -0.35, w);
+        } else {
+          // Kaki bagian dalam: kaki diayun rendah ke arah bola.
+          o.hipR = lerp(o.hipR, an.aim, w);
+          o.kneeR = lerp(o.kneeR, -0.35, w);
+          o.lean = lerp(o.lean, 0.12, w);
+          o.kneeL = lerp(o.kneeL, -0.5, w);
+          legStretch = 1 + (Math.min(an.reach, this.maxReach * 0.6) - 1) * w;
+        }
       } else if (an.kind === "touch") {
         const w = bell(u);
         const aim = an.aim ?? 1.2;
@@ -250,14 +283,14 @@ export class Animator {
           o.hipR = lerp(o.hipR, clamp(aim, 0.7, 2.0), w);
           o.kneeR = lerp(o.kneeR, -1.75, w);
           o.lean = lerp(o.lean, 0.12, w);
-          o.shL = lerp(o.shL, 1.7, w);
+          o.shL = lerp(o.shL, 0.9, w);
           o.shR = lerp(o.shR, -0.8, w);
         } else {
           // Kaki: sontekan ke arah bola.
           o.hipR = lerp(o.hipR, aim, w);
           o.kneeR = lerp(o.kneeR, -0.2, w);
           o.lean = lerp(o.lean, 0.15, w);
-          o.shL = lerp(o.shL, 1.8, w);
+          o.shL = lerp(o.shL, 1.0, w);
           o.shR = lerp(o.shR, -0.9, w);
           legStretch = 1 + (Math.min(an.reach, this.maxReach * 0.72) - 1) * w;
         }
@@ -275,7 +308,7 @@ export class Animator {
           o.lean = lerp(o.lean, 0.26, w);
           o.twist = lerp(o.twist, -0.6, w);
           o.shR = lerp(o.shR, -1.7, w);
-          o.shL = lerp(o.shL, 2.0, w);
+          o.shL = lerp(o.shL, 1.15, w);
           o.elL = lerp(o.elL, 0.3, w);
           o.elR = lerp(o.elR, 0.3, w);
           if (an.kind === "special") {
@@ -292,7 +325,7 @@ export class Animator {
           o.kneeL = lerp(o.kneeL, -0.7, w);
           o.lean = lerp(o.lean, 0.24, w);
           o.shR = lerp(o.shR, -2.0, w);
-          o.shL = lerp(o.shL, 2.2, w);
+          o.shL = lerp(o.shL, 1.25, w);
           o.elL = lerp(o.elL, 0.2, w);
           o.elR = lerp(o.elR, 0.2, w);
           glow = w;
@@ -307,7 +340,7 @@ export class Animator {
           o.kneeR = kickKnee(u);
           o.lean = lerp(o.lean, 0.2, w);
           o.twist = lerp(o.twist, Math.sin(u * Math.PI * 2) * 0.8, w);
-          o.shL = lerp(o.shL, 2.3, w);
+          o.shL = lerp(o.shL, 1.25, w);
           o.shR = lerp(o.shR, -1.5, w);
           o.elL = lerp(o.elL, 0.3, w);
           o.elR = lerp(o.elR, 0.3, w);

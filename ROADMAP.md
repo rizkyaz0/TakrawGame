@@ -43,7 +43,7 @@ Selesai kalau: game bersuara penuh di HP dan komputer, ukuran unduhan suara di b
 - [x] Kurangi kilatan dan guncangan. Belum: teks lebih besar, mode buta warna
 - [x] Bisa dipasang ke layar utama HP dan dimainkan tanpa internet (PWA)
 - [x] Ikon aplikasi, gambar pratinjau link, judul tab tanpa "prototipe"
-- [ ] Layar pemuatan dan transisi antar layar
+- [x] Layar pemuatan. Belum: transisi antar layar
 - [ ] Bahasa Inggris sebagai pilihan kedua
 
 Selesai kalau: orang yang belum pernah main bisa menang satu poin lawan CPU Mudah
@@ -51,11 +51,11 @@ tanpa dijelaskan siapa pun.
 
 ## Tahap 3 — Keseimbangan dan aturan
 
-- [ ] Alat ukur otomatis: liga CPU lawan CPU yang bisa dijalankan dari terminal
-- [ ] Rapatkan tingkat menang karakter ke 45–55%
+- [x] Alat ukur otomatis: `npm run league`
+- [x] Rapatkan tingkat menang karakter: dari 32–69% jadi 44–60% (Normal) dan 40–56% (Sulit). Target 45–55% belum tercapai
 - [ ] Setel angka penonton usil dari hasil uji bertiga
 - [ ] Servis bergantian dan posisi servis seperti takraw asli
-- [ ] Pilihan panjang pertandingan: poin per set dan jumlah set
+- [x] Pilihan poin untuk menang (5, 7, 11, 15). Belum: beberapa set
 - [ ] CPU dengan gaya main per karakter, dan tingkat keempat "Jagoan"
 
 Selesai kalau: liga 500 pertandingan per pasangan menunjukkan tidak ada karakter di
@@ -65,11 +65,11 @@ luar 45–55%.
 
 Inti game sekarang dikunci untuk dua pemain. Tahap ini merombaknya jadi N pemain per sisi.
 
-- [ ] Simulasi mendukung 1–3 pemain per sisi, 3 sentuhan dibagi satu tim
-- [ ] 2v2 dengan CPU sebagai teman setim
+- [x] Simulasi mendukung 1–3 pemain per sisi, 3 sentuhan dibagi satu tim
+- [x] 2v2 dan 3v3 dengan CPU sebagai teman setim; orang kedua bisa jadi teman atau lawan
 - [ ] 3v3 dengan peran takraw: tekong (servis), feeder (umpan), striker (smash)
 - [ ] Umpan ke teman: bola diangkat ke arah teman terdekat
-- [ ] Kamera, HUD, dan layar pilih jagoan untuk 4–6 pemain
+- [x] Kamera dan HUD untuk 4–6 pemain. Belum: tiap orang memilih jagoan teman CPU-nya
 - [ ] Kursi online sampai 6 pemain plus penonton
 - [ ] Jurus gabungan dua karakter
 
@@ -78,9 +78,9 @@ Selesai kalau: 2v2 dan 3v3 bisa dimainkan lokal dan online, kursi kosong diisi C
 ## Tahap 5 — Online yang layak
 
 - [ ] Rapikan `main.ts`: pisahkan menu, HUD, jaringan, dan loop game ke berkas sendiri
-- [ ] Penghalus gerakan di tamu, dan prediksi gerakan untuk pemain tamu sendiri
-- [ ] Game tetap jalan saat tab host disembunyikan (simulasi pindah ke worker)
-- [ ] Sambung ulang otomatis untuk tamu, dan pemindahan host kalau host putus
+- [x] Penghalus gerakan di tamu (penyangga). Belum: prediksi gerakan pemain tamu sendiri
+- [x] Game tetap jalan saat tab host disembunyikan (detak dari pekerja latar)
+- [x] Sambung ulang otomatis untuk tamu (3 kali coba). Belum: pemindahan host
 - [ ] Server perantara sendiri, supaya tidak bergantung pada layanan gratis
 - [ ] Nama pemain, emote cepat, penunjuk kualitas sambungan
 - [ ] Kunci room dan tombol keluarkan tamu
@@ -94,15 +94,15 @@ Keputusan yang dibutuhkan sebelum mulai: server sendiri berarti ada biaya bulana
 
 ## Tahap 6 — Isi dan alasan untuk kembali
 
-- [ ] Arena baru: pantai, pasar malam, lapangan sekolah; variasi siang, sore, malam
-- [ ] Karakter baru sampai 12, tiap karakter punya jenis jurus sendiri
-- [ ] Animasi masuk lapangan, menang, dan kalah per karakter
-- [ ] Mode arcade (lawan CPU berurutan) dan turnamen 4–8 pemain
+- [x] Arena baru: pantai, pasar malam, lapangan sekolah; variasi siang, sore, malam
+- [x] Karakter baru sampai 12. Belum: jenis jurus baru (masih 5 jenis, namanya saja yang beda)
+- [x] Tiga gaya selebrasi dan dua gaya lesu. Belum: animasi masuk lapangan
+- [x] Mode arcade lima babak. Belum: turnamen 4–8 pemain
 - [ ] Tantangan harian
 - [ ] Senjata penonton baru, dan lebih dari satu penonton usil
 - [ ] Tayangan ulang poin terakhir dan cuplikan momen terbaik
-- [ ] Profil pemain, statistik, dan pencapaian
-- [ ] Kostum dan karakter yang dibuka dengan bermain
+- [x] Profil, statistik, dan 11 pencapaian (tersimpan di perangkat)
+- [x] Lima karakter dibuka dengan menang. Belum: kostum
 - [ ] Peringkat dan papan skor
 - [ ] Bagikan hasil pertandingan sebagai gambar
 
@@ -112,13 +112,13 @@ Keputusan yang dibutuhkan: profil dan peringkat butuh akun dan basis data.
 
 ## Tahap 7 — Rilis ke publik
 
-- [ ] Tes otomatis untuk simulasi dan aturan
+- [x] Tes otomatis untuk simulasi dan aturan (`npm test`, 11 tes)
 - [ ] Laporan error dari pemain dan data pemakaian dasar
 - [ ] Ukur dan perbaiki performa di HP kelas bawah; pecah unduhan awal
 - [ ] Domain sendiri
-- [ ] Kebijakan privasi, ketentuan pakai, dan lisensi repo
+- [x] Halaman privasi. Belum: ketentuan pakai dan lisensi repo (perlu keputusan pemilik)
 - [ ] Tombol lapor bug dan masukan
-- [ ] README dan dokumentasi cara kerja
+- [x] README dan dokumentasi cara kerja
 - [ ] Halaman perkenalan dan trailer
 - [ ] Rencana biaya server dan rencana pemasukan
 

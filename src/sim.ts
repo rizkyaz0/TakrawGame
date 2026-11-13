@@ -17,16 +17,30 @@ export const WIN_SCORE = 7;
 export const WIN_CAP = 10; // deuce: harus unggul 2, tapi skor 10 selalu menang
 
 // Pemenang pertandingan untuk skor tertentu, atau -1 kalau belum ada.
-export function gameWinner(a: number, b: number): number {
-  if (a >= WIN_CAP || (a >= WIN_SCORE && a - b >= 2)) return 0;
-  if (b >= WIN_CAP || (b >= WIN_SCORE && b - a >= 2)) return 1;
+export function gameWinner(a: number, b: number, win = WIN_SCORE, cap = WIN_CAP): number {
+  if (a >= cap || (a >= win && a - b >= 2)) return 0;
+  if (b >= cap || (b >= win && b - a >= 2)) return 1;
   return -1;
 }
 
+// Pemain bernomor genap di sisi kiri, ganjil di sisi kanan. Pemain 0 dan 1 adalah kapten
+// tiap sisi; di mode tim, 2 dan 3 (lalu 4 dan 5) adalah teman setimnya.
+export const sideOf = (i: number) => i & 1;
+export const MAX_TEAM = 3;
+// Posisi awal tiap anggota tim, diukur dari net.
+const HOMES = [[4], [2.8, 6.0], [2.1, 4.4, 6.6]];
+export function homeX(teamSize: number, i: number): number {
+  const row = HOMES[Math.min(MAX_TEAM, Math.max(1, teamSize)) - 1];
+  return row[Math.min(row.length - 1, i >> 1)] * (sideOf(i) === 0 ? -1 : 1);
+}
+
 // Bit 1 = P1 menang kalau dapat poin berikutnya, bit 2 = P2. Bisa dua-duanya (9-9).
-export function matchPointMask(score: readonly [number, number]): number {
-  if (gameWinner(score[0], score[1]) >= 0) return 0; // pertandingan sudah selesai
-  return(gameWinner(score[0] + 1, score[1]) === 0 ? 1 : 0) | (gameWinner(score[0], score[1] + 1) === 1 ? 2 : 0);
+export function matchPointMask(score: readonly [number, number], win = WIN_SCORE, cap = WIN_CAP): number {
+  if (gameWinner(score[0], score[1], win, cap) >= 0) return 0; // pertandingan sudah selesai
+  return (
+    (gameWinner(score[0] + 1, score[1], win, cap) === 0 ? 1 : 0) |
+    (gameWinner(score[0], score[1] + 1, win, cap) === 1 ? 2 : 0)
+  );
 }
 export const MAX_TOUCHES = 3;
 
@@ -52,6 +66,7 @@ export interface CharDef {
   smashSpeed: number;
   special: SpecialKind;
   specialName: string;
+  charge?: number; // pengali kecepatan meter jurus terisi (bawaan 1); dipakai untuk menyeimbangkan
 }
 
 // Roster jajanan. Tampilan tiap karakter ada di foodchar.ts, urutannya harus sama.
@@ -64,6 +79,7 @@ export const CHARS: readonly CharDef[] = [
     smashSpeed: 18.2,
     special: "fire",
     specialName: "Tendangan Bakar",
+    charge: 0.8,
   },
   {
     name: "Mbak Lontong",
@@ -73,6 +89,7 @@ export const CHARS: readonly CharDef[] = [
     smashSpeed: 15.9,
     special: "curve",
     specialName: "Bola Pelintir",
+    charge: 1.07,
   },
   {
     name: "Pak Bakso",
@@ -82,6 +99,7 @@ export const CHARS: readonly CharDef[] = [
     smashSpeed: 19.5,
     special: "fire",
     specialName: "Bom Bakso",
+    charge: 0.8,
   },
   {
     name: "Mas Tahu",
@@ -91,6 +109,7 @@ export const CHARS: readonly CharDef[] = [
     smashSpeed: 16.2,
     special: "curve",
     specialName: "Tahu Dadakan",
+    charge: 1.16,
   },
   {
     name: "Kak Pisang",
@@ -100,6 +119,7 @@ export const CHARS: readonly CharDef[] = [
     smashSpeed: 15.9,
     special: "zigzag",
     specialName: "Kulit Licin",
+    charge: 0.7,
   },
   {
     name: "Dek Lilin",
@@ -109,6 +129,7 @@ export const CHARS: readonly CharDef[] = [
     smashSpeed: 16.3,
     special: "ghost",
     specialName: "Bola Mencair",
+    charge: 1.7,
   },
   {
     name: "Bung Jagung",
@@ -118,6 +139,57 @@ export const CHARS: readonly CharDef[] = [
     smashSpeed: 16.7,
     special: "meteor",
     specialName: "Hujan Jagung",
+    charge: 1.14,
+  },
+  {
+    name: "Om Sate",
+    color: 0xe07a2f,
+    moveSpeed: 6.4,
+    jumpV: 13.4,
+    smashSpeed: 18.6,
+    special: "fire",
+    specialName: "Sate Membara",
+    charge: 0.82,
+  },
+  {
+    name: "Mbok Klepon",
+    color: 0x58b84a,
+    moveSpeed: 6.8,
+    jumpV: 12.4,
+    smashSpeed: 16.8,
+    special: "ghost",
+    specialName: "Gula Lumer",
+    charge: 1.55,
+  },
+  {
+    name: "Cak Kerupuk",
+    color: 0xff8ad8,
+    moveSpeed: 7.4,
+    jumpV: 13.8,
+    smashSpeed: 15.4,
+    special: "zigzag",
+    specialName: "Kerupuk Terbang",
+    charge: 0.72,
+  },
+  {
+    name: "Pakde Tempe",
+    color: 0x3d9a8a,
+    moveSpeed: 6.1,
+    jumpV: 12.2,
+    smashSpeed: 19.2,
+    special: "meteor",
+    specialName: "Tempe Mendoan",
+    charge: 1.0,
+  },
+  {
+    name: "Neng Cendol",
+    color: 0x7fd4ff,
+    moveSpeed: 6.9,
+    jumpV: 13.1,
+    smashSpeed: 16.4,
+    special: "curve",
+    specialName: "Santan Tumpah",
+    charge: 1.1,
   },
 ];
 
@@ -292,8 +364,10 @@ export interface GameState {
   phase: Phase;
   timer: number;
   hitstop: number;
-  chars: [number, number];
-  players: [Player, Player];
+  chars: number[]; // karakter tiap pemain; panjangnya 2, 4, atau 6
+  players: Player[];
+  winScore: number; // poin untuk menang (harus unggul 2)
+  winCap: number; // skor yang selalu menang
   ball: Ball;
   score: [number, number];
   server: number;
@@ -308,9 +382,10 @@ export interface GameState {
   hazards: Hazard[];
 }
 
-function makePlayer(side: number): Player {
+function makePlayer(i: number, teamSize: number): Player {
+  const side = sideOf(i);
   return {
-    x: side === 0 ? -4 : 4,
+    x: homeX(teamSize, i),
     y: 0,
     vx: 0,
     vy: 0,
@@ -331,14 +406,16 @@ function makePlayer(side: number): Player {
   };
 }
 
-export function createState(chars: [number, number] = [0, 1]): GameState {
+export function createState(chars: readonly number[] = [0, 1]): GameState {
   const s: GameState = {
     frame: 0,
     phase: "serve",
     timer: 0,
     hitstop: 0,
-    chars: [chars[0], chars[1]],
-    players: [makePlayer(0), makePlayer(1)],
+    chars: [...chars],
+    players: chars.map((_, i) => makePlayer(i, chars.length >> 1)),
+    winScore: WIN_SCORE,
+    winCap: WIN_CAP,
     ball: { x: 0, y: 0, vx: 0, vy: 0, power: 0, curveSide: -1, wave: 0, waveT: 0, waveBase: 0, rise: 0, tx: 0, ghost: 0 },
     score: [0, 0],
     server: 0,
@@ -358,8 +435,8 @@ export function createState(chars: [number, number] = [0, 1]): GameState {
 
 function startServe(s: GameState): void {
   const old = s.players;
-  s.players = [makePlayer(0), makePlayer(1)];
-  for (let i = 0; i < 2; i++) {
+  s.players = old.map((_, i) => makePlayer(i, old.length >> 1));
+  for (let i = 0; i < old.length; i++) {
     s.players[i].prev = old[i].prev;
     s.players[i].meter = old[i].meter;
   }
@@ -380,7 +457,7 @@ function startServe(s: GameState): void {
 
 function award(s: GameState, winner: number, fault: boolean): void {
   s.score[winner]++;
-  addMeter(s.players[1 - winner], METER_CONCEDE);
+  for (let i = 0; i < s.players.length; i++) if (sideOf(i) !== winner) addMeter(s, i, METER_CONCEDE);
   clearBallFx(s.ball);
   s.server = winner;
   s.phase = "point";
@@ -393,8 +470,17 @@ export function heatMul(s: GameState): number {
   return 1 + HEAT_STEP * Math.min(s.heat, HEAT_MAX);
 }
 
-function addMeter(p: Player, amount: number): void {
-  p.meter = Math.min(METER_MAX, p.meter + amount);
+// Makin banyak pemain makin susah bola jatuh, jadi di mode tim reli memanas lebih cepat.
+function heatGain(s: GameState): number {
+  const team = s.players.length >> 1;
+  return team > 1 ? team + 1 : 1;
+}
+
+function addMeter(s: GameState, i: number, amount: number): void {
+  const p = s.players[i];
+  // Di mode tim meter terisi lebih pelan, supaya jurus tidak keluar bertubi-tubi.
+  const team = s.players.length >> 1;
+  p.meter = Math.min(METER_MAX, p.meter + (amount * (CHARS[s.chars[i]].charge ?? 1)) / (team > 1 ? team * 0.8 : 1));
 }
 
 function pressed(p: Player, input: number, bit: number): boolean {
@@ -410,7 +496,7 @@ function stepPlayer(s: GameState, i: number, rawInput: number): void {
     input = 0;
   }
   const c = CHARS[s.chars[i]];
-  const side = i === 0 ? -1 : 1;
+  const side = sideOf(i) === 0 ? -1 : 1;
   const ax = (input & Btn.RIGHT ? 1 : 0) - (input & Btn.LEFT ? 1 : 0);
 
   if (p.dashCd > 0) p.dashCd--;
@@ -517,8 +603,9 @@ function tryHit(s: GameState, i: number, input: number): void {
   if (p.stun > 0) return;
   // Bola jurus tidak melukai pemukulnya sendiri: selama efeknya masih aktif, bola itu
   // menembus badan pemiliknya.
+  const team = sideOf(i);
   const ownFx =
-    s.lastSide === i && (b.power > 0 || b.curveSide >= 0 || b.wave > 0 || b.rise > 0 || b.ghost > 0);
+    s.lastSide === team && (b.power > 0 || b.curveSide >= 0 || b.wave > 0 || b.rise > 0 || b.ghost > 0);
   if (ownFx) return;
 
   const c = CHARS[s.chars[i]];
@@ -533,19 +620,19 @@ function tryHit(s: GameState, i: number, input: number): void {
   const dy = b.y - (p.y + BODY_Y);
   if (dx * dx + dy * dy > reach * reach) return;
 
-  if (s.lastSide !== i) {
-    s.lastSide = i;
+  if (s.lastSide !== team) {
+    s.lastSide = team;
     s.touches = 0;
   }
   s.touches++;
   if (s.touches > MAX_TOUCHES) {
-    award(s, 1 - i, true);
+    award(s, 1 - team, true);
     return;
   }
 
   s.rally++;
 
-  const dir = i === 0 ? 1 : -1;
+  const dir = team === 0 ? 1 : -1;
   const ax = (input & Btn.RIGHT ? 1 : 0) - (input & Btn.LEFT ? 1 : 0);
   const ay = (input & Btn.UP ? 1 : 0) - (input & Btn.DOWN ? 1 : 0);
   p.hitCd = HIT_COOLDOWN;
@@ -591,7 +678,7 @@ function tryHit(s: GameState, i: number, input: number): void {
       const tApex = 0.62;
       b.vx = dir * Math.max(4, (Math.abs(b.x) + 1) / tApex);
       b.vy = 13;
-      b.curveSide = i;
+      b.curveSide = team;
       s.hitstop = 6;
     } else if (c.special === "zigzag") {
       // Zig-zag: bola melaju mendatar sambil naik-turun, susah ditebak tingginya.
@@ -624,7 +711,7 @@ function tryHit(s: GameState, i: number, input: number): void {
       // Kalau bidikannya ke arah net tapi bakal nyangkut, sudutnya dinaikkan sedikit demi
       // sedikit sampai lolos: jurus yang sudah kena tidak boleh mati di net.
       if (nx * dir > 0 && b.x * dir < 0) {
-        for (let k = 0; k < 10; k++) {
+        for (let k = 0; k < 40; k++) {
           const l = Math.hypot(nx, ny);
           const t = Math.abs(b.x) / ((Math.abs(nx) / l) * GHOST_SPEED);
           const yAtNet = b.y + (ny / l) * GHOST_SPEED * t - 0.5 * BALL_GRAVITY * t * t;
@@ -638,7 +725,7 @@ function tryHit(s: GameState, i: number, input: number): void {
       b.ghost = GHOST_FRAMES;
       s.hitstop = 6;
     }
-    s.heat += 2;
+    s.heat += 2 * heatGain(s);
     s.events.push({ type: "specialHit", player: i, kind: c.special, x: b.x, y: b.y });
   } else if (smashing && (!hadFx || smashPerfect)) {
     let nx = ax;
@@ -657,8 +744,8 @@ function tryHit(s: GameState, i: number, input: number): void {
     b.vy = (ny / len) * speed;
     p.smashTimer = 0;
     p.smashRecover = SMASH_RECOVER;
-    addMeter(p, perfect ? METER_PERFECT : METER_SMASH);
-    s.heat += perfect ? 2 : 1;
+    addMeter(s, i, perfect ? METER_PERFECT : METER_SMASH);
+    s.heat += (perfect ? 2 : 1) * heatGain(s);
     s.hitstop = 5 + Math.floor(Math.min(s.heat, HEAT_MAX) / 6) + (perfect ? 3 : 0);
     s.events.push({ type: "smash", player: i, x: b.x, y: b.y, perfect, elapsed });
   } else {
@@ -673,7 +760,7 @@ function tryHit(s: GameState, i: number, input: number): void {
       b.vy = perfect ? 11 : 9.5;
       p.guardTimer = 0;
       p.smashRecover = perfect ? 0 : 6; // terima sempurna: langsung bisa menyerang balik
-      addMeter(p, (perfect ? METER_RECEIVE_PERFECT : METER_RECEIVE) + (hadFx ? 10 : 0));
+      addMeter(s, i, (perfect ? METER_RECEIVE_PERFECT : METER_RECEIVE) + (hadFx ? 10 : 0));
       s.hitstop = perfect ? 6 : 3;
       s.events.push({ type: "receive", player: i, x: b.x, y: b.y, perfect, elapsed: guardElapsed });
     } else if (hard) {
@@ -702,7 +789,7 @@ function tryHit(s: GameState, i: number, input: number): void {
       // Sentuhan biasa: bola diangkat, arah stick menentukan ke mana.
       b.vx = dir * 2.5 + ax * 3 + p.vx * 0.5;
       b.vy = 10 + (ay > 0 ? 2 : 0) + Math.max(0, p.vy) * 0.25;
-      addMeter(p, METER_TOUCH);
+      addMeter(s, i, METER_TOUCH);
       s.events.push({ type: "touch", player: i, x: b.x, y: b.y, weak: false });
     }
     b.x = p.x + ux * reach;
@@ -710,7 +797,7 @@ function tryHit(s: GameState, i: number, input: number): void {
   }
 }
 
-function stepBall(s: GameState, inputs: readonly [number, number]): void {
+function stepBall(s: GameState, inputs: readonly number[]): void {
   const b = s.ball;
   const h = DT / BALL_SUBSTEPS;
   let powered = b.power > 0;
@@ -827,10 +914,10 @@ function stepBall(s: GameState, inputs: readonly [number, number]): void {
       }
     }
 
-    tryHit(s, 0, inputs[0]);
-    if (s.phase !== "play") return;
-    tryHit(s, 1, inputs[1]);
-    if (s.phase !== "play") return;
+    for (let i = 0; i < s.players.length; i++) {
+      tryHit(s, i, inputs[i] ?? 0);
+      if (s.phase !== "play") return;
+    }
     if (s.hitstop > 0) return;
 
     // Bola menyentuh lantai: poin untuk sisi seberang.
@@ -878,7 +965,9 @@ function stepHazards(s: GameState): void {
   if (!s.spec.active && s.rowdy && --s.heckleTimer <= 0) {
     const h = hz(s.frame * 31 + s.rally * 7 + s.score[0] * 3 + s.score[1]);
     // Yang diusili pemain yang unggul; kalau seri, bergantian.
-    const target = s.score[0] > s.score[1] ? 0 : s.score[1] > s.score[0] ? 1 : (h >>> 3) & 1;
+    const targetSide = s.score[0] > s.score[1] ? 0 : s.score[1] > s.score[0] ? 1 : (h >>> 3) & 1;
+    // Di mode tim, salah satu anggota sisi itu yang diincar.
+    const target = targetSide + 2 * ((h >>> 5) % (s.players.length >> 1));
     const p = s.players[target];
     const side = target === 0 ? -1 : 1;
     const kind: HazardKind = h % 100 < 55 ? "peel" : "sandal";
@@ -888,7 +977,7 @@ function stepHazards(s: GameState): void {
     x = Math.min(Math.max(x * side, 0.9), COURT_HALF - 0.7) * side;
     s.hazards.push({ kind, x, y: kind === "peel" ? 0 : 9.5, warn: HECKLE_WARN, life: PEEL_LIFE });
     s.heckleTimer = 420 + ((h >>> 12) % 360); // 7 sampai 13 detik
-    s.events.push({ type: "heckle", kind, x, side: target });
+    s.events.push({ type: "heckle", kind, x, side: targetSide });
   }
 
   for (let k = s.hazards.length - 1; k >= 0; k--) {
@@ -900,7 +989,7 @@ function stepHazards(s: GameState): void {
     if (hzd.kind === "peel") {
       // Kepleset: pemain yang berlari di tanah melewati kulit pisang. Melompatinya aman.
       let gone = --hzd.life <= 0;
-      for (let i = 0; i < 2 && !gone; i++) {
+      for (let i = 0; i < s.players.length && !gone; i++) {
         const p = s.players[i];
         if (p.grounded && p.stun === 0 && Math.abs(p.vx) > 0.8 && Math.abs(p.x - hzd.x) < PEEL_R) {
           p.stun = SLIP_STUN;
@@ -922,7 +1011,7 @@ function stepHazards(s: GameState): void {
         s.events.push({ type: "bonk", target: "ball", player: -1, x: hzd.x, y: hzd.y });
         gone = true;
       }
-      for (let i = 0; i < 2 && !gone; i++) {
+      for (let i = 0; i < s.players.length && !gone; i++) {
         const p = s.players[i];
         if (Math.abs(p.x - hzd.x) < SANDAL_R && hzd.y > p.y && hzd.y < p.y + 1.8) {
           p.stun = Math.max(p.stun, SANDAL_STUN);
@@ -935,7 +1024,7 @@ function stepHazards(s: GameState): void {
   }
 }
 
-export function step(s: GameState, inputs: readonly [number, number], specInput = 0): void {
+export function step(s: GameState, inputs: readonly number[], specInput = 0): void {
   s.events.length = 0;
 
   // Hitstop: semua membeku beberapa frame setelah smash kena.
@@ -946,24 +1035,22 @@ export function step(s: GameState, inputs: readonly [number, number], specInput 
   s.frame++;
 
   if (s.phase === "over") {
-    const any =
-      pressed(s.players[0], inputs[0], Btn.JUMP | Btn.SMASH) ||
-      pressed(s.players[1], inputs[1], Btn.JUMP | Btn.SMASH);
-    s.players[0].prev = inputs[0];
-    s.players[1].prev = inputs[1];
+    let any = false;
+    for (let i = 0; i < s.players.length; i++) {
+      if (pressed(s.players[i], inputs[i] ?? 0, Btn.JUMP | Btn.SMASH)) any = true;
+      s.players[i].prev = inputs[i] ?? 0;
+    }
     if (s.timer > 0) s.timer--;
     else if (any) {
       s.score = [0, 0];
-      s.players[0].meter = 0;
-      s.players[1].meter = 0;
+      for (const p of s.players) p.meter = 0;
       s.server = 0;
       startServe(s);
     }
     return;
   }
 
-  stepPlayer(s, 0, inputs[0]);
-  stepPlayer(s, 1, inputs[1]);
+  for (let i = 0; i < s.players.length; i++) stepPlayer(s, i, inputs[i] ?? 0);
   stepSpectator(s, specInput);
 
   if (s.phase === "serve") {
@@ -973,7 +1060,7 @@ export function step(s: GameState, inputs: readonly [number, number], specInput 
     if (s.phase === "play" && s.hitstop === 0) stepHazards(s);
   } else if (s.phase === "point") {
     if (--s.timer <= 0) {
-      const winner = gameWinner(s.score[0], s.score[1]);
+      const winner = gameWinner(s.score[0], s.score[1], s.winScore, s.winCap);
       if (winner >= 0) {
         s.phase = "over";
         s.timer = 40;
@@ -984,23 +1071,24 @@ export function step(s: GameState, inputs: readonly [number, number], specInput 
     }
   }
 
-  s.players[0].prev = inputs[0];
-  s.players[1].prev = inputs[1];
+  for (let i = 0; i < s.players.length; i++) s.players[i].prev = inputs[i] ?? 0;
 }
 
 // CPU sederhana untuk sisi kanan. Deterministik: hanya membaca state.
 // Tingkat CPU: 0 mudah, 1 normal, 2 sulit. Angkanya peluang (persen) tiap keputusan.
 const CPU_LEVELS = [
-  { jump: 40, smash: 45, perfect: 2, special: 30, sharp: 4, guard: 26, lazy: 3, miss: 24 },
-  { jump: 70, smash: 85, perfect: 18, special: 60, sharp: 25, guard: 62, lazy: 0, miss: 9 },
-  { jump: 85, smash: 94, perfect: 42, special: 78, sharp: 55, guard: 92, lazy: 0, miss: 0 },
+  { jump: 40, smash: 45, perfect: 2, special: 30, sharp: 4, guard: 26, lazy: 3, miss: 24, readCurve: 25 },
+  { jump: 70, smash: 85, perfect: 18, special: 60, sharp: 25, guard: 62, lazy: 0, miss: 9, readCurve: 55 },
+  { jump: 85, smash: 94, perfect: 42, special: 78, sharp: 55, guard: 60, lazy: 0, miss: 5, readCurve: 40 },
 ] as const;
 
 export function cpuInput(s: GameState, i: number, level = 1): number {
   const L = CPU_LEVELS[Math.min(2, Math.max(0, level))];
   const p = s.players[i];
   const b = s.ball;
-  const side = i === 0 ? -1 : 1;
+  const team = sideOf(i);
+  const teamSize = s.players.length >> 1;
+  const side = team === 0 ? -1 : 1;
   const toward = side === 1 ? Btn.LEFT : Btn.RIGHT; // arah ke net
   const away = side === 1 ? Btn.RIGHT : Btn.LEFT;
   let out = 0;
@@ -1009,7 +1097,8 @@ export function cpuInput(s: GameState, i: number, level = 1): number {
 
   const ballOnMySide = b.x * side > -0.3;
   const incoming = b.vx * side > 0.5;
-  let targetX = 4 * side;
+  const home = homeX(teamSize, i);
+  let targetX = home;
 
   if (s.phase !== "point" && (ballOnMySide || incoming)) {
     // Perkiraan titik jatuh bola di ketinggian badan (balistik, tanpa pantulan).
@@ -1031,15 +1120,28 @@ export function cpuInput(s: GameState, i: number, level = 1): number {
     targetX += (((Math.imul(s.rally + 11, 2654435761) >>> 0) % 5) - 2) * 1.8;
   }
   // Bola Pelintir lawan akan menukik dekat net; CPU kadang membacanya, kadang tidak.
-  if (b.curveSide === 1 - i && (Math.imul(s.score[0] + s.score[1] + 7, 40503) >>> 0) % 100 < 45) {
+  if (b.curveSide === 1 - team && (Math.imul(s.score[0] + s.score[1] + 7, 40503) >>> 0) % 100 < L.readCurve) {
     targetX = 1.5 * side;
   }
 
   // Salah baca posisi: di sebagian reli CPU berdiri agak meleset dari titik jatuh bola.
   // Tidak berlaku untuk bola servis (reli masih 0): melongo melihat bola servis jatuh
   // bukan kesalahan yang wajar.
-  if (s.rally > 0 && (Math.imul(s.rally * 3 + i * 7 + (s.score[0] + s.score[1]) * 5, 40503) >>> 0) % 100 < L.miss) {
+  if (s.rally > 0 && (Math.imul(s.rally * 3 + i * 7 + (s.score[0] + s.score[1]) * 5, 40503) >>> 0) % 100 < L.miss * (teamSize > 1 ? teamSize + 1.5 : 1) + (teamSize > 1 ? 6 : 0)) {
+    // Di mode tim tiap anggota lebih sering salah baca: kalau tidak, bola nyaris tak pernah jatuh.
     targetX += 1.3 * side;
+  }
+  // Mode tim: hanya anggota yang paling dekat ke titik jatuh bola yang mengejar; yang lain
+  // menjaga posisinya supaya tidak berebut dan menghabiskan jatah tiga sentuhan.
+  let chasing = true;
+  if (teamSize > 1) {
+    const mine = Math.abs(p.x - targetX);
+    for (let k = team; k < s.players.length; k += 2) {
+      if (k === i || s.players[k].stun > 0) continue;
+      const d = Math.abs(s.players[k].x - targetX);
+      if (d < mine - 0.01 || (Math.abs(d - mine) <= 0.01 && k < i)) chasing = false;
+    }
+    if (!chasing) targetX = home;
   }
   const ox = Math.min(Math.max(targetX * side, PLAYER_MIN_X + 0.2), PLAYER_MAX_X - 0.2);
   const dxT = ox - p.x * side;
@@ -1062,7 +1164,9 @@ export function cpuInput(s: GameState, i: number, level = 1): number {
   const dy = b.y - (p.y + BODY_Y);
   const roll = (Math.imul(s.frame >>> 3, 2654435761) >>> 0) % 100;
 
-  if (s.phase === "play" && ballOnMySide) {
+  // Yang tidak mengejar hanya bereaksi kalau bolanya memang datang ke badannya.
+  const involved = chasing || Math.hypot(dx, dy) < 1.6;
+  if (s.phase === "play" && ballOnMySide && involved) {
     // Lompat menyambut bola tinggi yang sedang turun.
     // Jauh dari net smash hampir pasti nyangkut, jadi CPU cukup mengoper.
     const nearNet = p.x * side < 3.4;
@@ -1110,7 +1214,7 @@ export function cpuInput(s: GameState, i: number, level = 1): number {
     }
     // Jurus kalau meter cukup. Karena jurus sekarang siaga sampai bola kena, hampir semua
     // jenis aman dipakai dari mana saja setelah sentuhan sendiri.
-    const ownBall = dx < 1.4 && Math.abs(dy) < 1.4 && s.touches >= 1 && s.lastSide === i;
+    const ownBall = dx < 1.4 && Math.abs(dy) < 1.4 && s.touches >= 1 && s.lastSide === team;
     const specialOk = ownBall;
     if (p.meter >= SPECIAL_COST && specialOk && roll < L.special && p.smashRecover === 0) {
       out &= ~Btn.SMASH;
@@ -1131,12 +1235,12 @@ export function cpuInput(s: GameState, i: number, level = 1): number {
     );
     const guardSkill = (Math.imul(s.rally * 11 + i * 29 + s.score[0] * 3 + s.score[1], 40503) >>> 0) % 100 < L.guard;
     const idle = p.smashTimer === 0 && p.specialTimer === 0 && p.guardTimer === 0 && p.smashRecover === 0;
-    if (dangerous && guardSkill && idle && s.lastSide !== i && dGuard < GUARD_R + BALL_R - 0.05) {
+    if (dangerous && guardSkill && idle && s.lastSide !== team && dGuard < GUARD_R + BALL_R - 0.05) {
       out &= ~(Btn.SMASH | Btn.SPECIAL);
       if ((p.prev & Btn.GUARD) === 0) out |= Btn.GUARD;
     }
     // Sentuhan terakhir harus dikirim ke seberang.
-    if (dx < 1.4 && Math.abs(dy) < 1.5 && s.lastSide === i && s.touches >= 2) {
+    if (dx < 1.4 && Math.abs(dy) < 1.5 && s.lastSide === team && s.touches >= 2) {
       out = (out & ~away) | toward;
     }
   }

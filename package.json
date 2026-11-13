@@ -8,7 +8,9 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "dev:lan": "vite --host",
-    "audio": "node --env-file=.env.local scripts/make-audio.mjs"
+    "audio": "node --env-file=.env.local scripts/make-audio.mjs",
+    "league": "node --experimental-strip-types --no-warnings scripts/league.mjs",
+    "test": "node --experimental-strip-types --no-warnings --test tests/sim.test.mjs"
   },
   "dependencies": {
     "@elevenlabs/elevenlabs-js": "^2.78.0",

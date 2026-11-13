@@ -7,10 +7,35 @@ import { addOutline, toon } from "./style";
 // badannya, plus tangan dan kaki "karet" yang tipis dan bisa melar jauh.
 // Model menghadap +x; ayunan sendi adalah rotasi sumbu z (positif = ke depan).
 
-type BodyKind = "sosis" | "lontong" | "bakso" | "tahu" | "pisang" | "eslilin" | "jagung";
+type BodyKind =
+  | "sosis"
+  | "lontong"
+  | "bakso"
+  | "tahu"
+  | "pisang"
+  | "eslilin"
+  | "jagung"
+  | "sate"
+  | "klepon"
+  | "kerupuk"
+  | "tempe"
+  | "cendol";
 
 // Urutannya sama dengan CHARS di sim.ts.
-const KINDS: readonly BodyKind[] = ["sosis", "lontong", "bakso", "tahu", "pisang", "eslilin", "jagung"];
+const KINDS: readonly BodyKind[] = [
+  "sosis",
+  "lontong",
+  "bakso",
+  "tahu",
+  "pisang",
+  "eslilin",
+  "jagung",
+  "sate",
+  "klepon",
+  "kerupuk",
+  "tempe",
+  "cendol",
+];
 
 const HIP_Y = 0.42;
 const THIGH = 0.2;
@@ -333,7 +358,137 @@ export class FoodCharacter {
         this.wobble.push(add(silk, 0, 1.38));
         return { faceX: 0.3, faceY: 0.78, faceSize: 0.88, armY: 0.52, armZ: 0.32, legZ: 0.13 };
       }
+      case "sate": {
+        // Sate: tiga potong daging berbumbu kacang di tusuk bambu yang menjulang.
+        skin.color.setHex(0xb5623a);
+        const sauce = toon(0x7a3f1e);
+        const chunks: Array<[number, number, number]> = [[0.3, 0.3, 0.36], [0.62, 0.34, 0.4], [0.98, 0.3, 0.34]];
+        for (const [y, r, h] of chunks) {
+          add(part(roundedBox(r * 2, h, r * 1.9, 0.12), skin, 0.022), 0, y + 0.08).rotation.y = y * 1.7;
+          const drip = new THREE.Mesh(new THREE.TorusGeometry(r * 0.98, 0.03, 5, 16), sauce);
+          drip.rotation.x = Math.PI / 2;
+          add(drip, 0, y + 0.2);
+        }
+        const stick = part(new THREE.CylinderGeometry(0.022, 0.03, 0.62, 6), toon(0xe3c58a), 0.008);
+        stick.geometry.translate(0, 0.31, 0);
+        this.wobble.push(add(stick, 0, 1.18));
+        add(part(new THREE.CylinderGeometry(0.03, 0.01, 0.2, 6), toon(0xe3c58a), 0.008), 0, 0.04);
+        const band = part(new THREE.TorusGeometry(0.33, 0.04, 6, 4), accent, 0.01);
+        band.rotation.set(Math.PI / 2, 0, Math.PI / 4);
+        add(band, 0, 0.52);
+        return { faceX: 0.35, faceY: 0.74, faceSize: 0.9, armY: 0.56, armZ: 0.36, legZ: 0.14 };
+      }
+      case "klepon": {
+        // Klepon: bola hijau pandan bertabur kelapa parut, gula merah meleleh di ubun-ubun.
+        skin.color.setHex(0x6fbf4a);
+        add(part(new THREE.SphereGeometry(0.5, 24, 18), skin, 0.024), 0, 0.5);
+        const flake = toon(0xfffaf0);
+        for (let k = 0; k < 26; k++) {
+          const h = Math.imul(k + 3, 2654435761) >>> 0;
+          const th = ((h % 1000) / 1000) * Math.PI * 2;
+          const ph = 0.25 + (((h >>> 10) % 1000) / 1000) * 1.5;
+          const f = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.09, 0.02), flake);
+          f.rotation.set(th, ph, th * 2);
+          add(f, Math.sin(ph) * Math.cos(th) * 0.5, 0.5 + Math.cos(ph) * 0.5, Math.sin(ph) * Math.sin(th) * 0.5);
+        }
+        add(part(new THREE.SphereGeometry(0.2, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2), toon(0x8a4a1e), 0.012), 0, 0.93);
+        const drop = part(new THREE.SphereGeometry(0.07, 8, 8), toon(0x8a4a1e), 0.01);
+        drop.scale.y = 1.6;
+        this.wobble.push(add(drop, 0.16, 0.86, 0.12));
+        const band = part(new THREE.TorusGeometry(0.5, 0.04, 6, 24), accent, 0.01);
+        band.rotation.x = Math.PI / 2;
+        add(band, 0, 0.22).scale.setScalar(0.86);
+        return { faceX: 0.48, faceY: 0.54, faceSize: 1.15, armY: 0.48, armZ: 0.5, legZ: 0.2 };
+      }
+      case "kerupuk": {
+        // Kerupuk: lempeng lebar bergelombang yang tipis, ringan, dan gampang terbang.
+        skin.color.setHex(0xf6e6c0);
+        const pts: THREE.Vector2[] = [];
+        for (let k = 0; k <= 36; k++) {
+          const a = (k / 36) * Math.PI * 2;
+          const r = 0.56 + Math.sin(a * 9) * 0.045;
+          pts.push(new THREE.Vector2(Math.cos(a) * r, Math.sin(a) * r));
+        }
+        const slab = new THREE.ExtrudeGeometry(new THREE.Shape(pts), { depth: 0.16, bevelEnabled: true, bevelSize: 0.04, bevelThickness: 0.04, bevelSegments: 2 });
+        slab.translate(0, 0, -0.08);
+        slab.rotateY(Math.PI / 2);
+        add(part(slab, skin, 0.022), 0.02, 0.64);
+        const swirl = toon(0xe9b95a);
+        for (const r of [0.2, 0.34, 0.46]) {
+          for (const side of [-1, 1]) {
+            const ring = new THREE.Mesh(new THREE.TorusGeometry(r, 0.014, 4, 22), swirl);
+            ring.rotation.y = Math.PI / 2;
+            add(ring, 0.02 + side * 0.125, 0.64);
+          }
+        }
+        const crumb = part(new THREE.SphereGeometry(0.06, 6, 5), toon(0xe9b95a), 0.008);
+        this.wobble.push(add(crumb, 0, 1.24));
+        const band = part(new THREE.BoxGeometry(0.3, 0.07, 1.06), accent, 0.01);
+        add(band, 0.02, 0.2);
+        return { faceX: 0.165, faceY: 0.68, faceSize: 0.95, armY: 0.56, armZ: 0.5, legZ: 0.16 };
+      }
+      case "tempe": {
+        // Tempe: balok padat berbintik kedelai, dibungkus daun pisang di bagian bawah.
+        skin.color.setHex(0xeadfc6);
+        add(part(roundedBox(0.56, 1.02, 0.78, 0.09), skin, 0.022), 0, 0.56);
+        const bean = toon(0xd2b06a);
+        for (let k = 0; k < 22; k++) {
+          const h = Math.imul(k + 7, 2654435761) >>> 0;
+          const y = 0.48 + ((h % 100) / 100) * 0.56;
+          const z = (((h >>> 8) % 100) / 100 - 0.5) * 0.64;
+          const front = k % 3 !== 0;
+          const b = new THREE.Mesh(new THREE.SphereGeometry(0.04, 6, 5), bean);
+          b.scale.set(front ? 0.4 : 1, 1.2, front ? 1 : 0.4);
+          add(b, front ? 0.283 * (k % 2 ? 1 : -1) : (((h >>> 16) % 100) / 100 - 0.5) * 0.4, y, front ? z : 0.393 * (k % 2 ? 1 : -1));
+        }
+        add(part(roundedBox(0.6, 0.36, 0.82, 0.08), toon(0x3d8040), 0.016), 0, 0.2);
+        const tie = part(new THREE.TorusGeometry(0.36, 0.035, 6, 4), accent, 0.01);
+        tie.rotation.set(Math.PI / 2, 0, Math.PI / 4);
+        tie.scale.set(0.84, 1.16, 1);
+        add(tie, 0, 0.38);
+        const sprout = part(new THREE.ConeGeometry(0.07, 0.24, 5), toon(0x4fae5a), 0.01);
+        sprout.geometry.translate(0, 0.12, 0);
+        sprout.scale.z = 0.4;
+        this.wobble.push(add(sprout, 0, 1.07));
+        return { faceX: 0.285, faceY: 0.72, faceSize: 0.92, armY: 0.5, armZ: 0.41, legZ: 0.16 };
+      }
+      case "cendol": {
+        // Es cendol: gelas tinggi berisi santan, cendol hijau, dan sedotan.
+        skin.color.setHex(0xfbf3df);
+        const profile: Array<[number, number]> = [[0.001, 0.02], [0.27, 0.02], [0.3, 0.2], [0.37, 1.08], [0.39, 1.14], [0.001, 1.14]];
+        add(part(new THREE.LatheGeometry(profile.map(([r, y]) => new THREE.Vector2(r, y)), 20), skin, 0.022), 0, 0);
+        const gula = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.275, 0.2, 20), toon(0x9a5a26));
+        add(gula, 0, 0.14);
+        const cendol = toon(0x58b84a);
+        for (let k = 0; k < 16; k++) {
+          const a = (k / 16) * Math.PI * 2 + (k % 3);
+          const y = 0.3 + ((k * 37) % 60) / 100;
+          const r = 0.305 + (y - 0.2) * 0.075;
+          const worm = new THREE.Mesh(new THREE.CapsuleGeometry(0.028, 0.09, 3, 6), cendol);
+          worm.rotation.set(k, a, 0.8);
+          add(worm, Math.cos(a) * r, y, Math.sin(a) * r);
+        }
+        add(part(new THREE.SphereGeometry(0.36, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2), toon(0xeafcff), 0.014), 0, 1.12).scale.y = 0.5;
+        const straw = part(new THREE.CylinderGeometry(0.035, 0.035, 0.62, 8), accent, 0.01);
+        straw.geometry.translate(0, 0.31, 0);
+        straw.userData.rest = -0.3;
+        this.wobble.push(add(straw, -0.12, 1.1, 0.1));
+        const rim = part(new THREE.TorusGeometry(0.385, 0.025, 6, 22), toon(0xd9f6ff), 0.008);
+        rim.rotation.x = Math.PI / 2;
+        add(rim, 0, 1.13);
+        return { faceX: 0.345, faceY: 0.7, faceSize: 0.92, armY: 0.5, armZ: 0.36, legZ: 0.14 };
+      }
     }
+  }
+
+  // Pose diam untuk potret: menghadap kamera, satu tangan melambai.
+  pose(): void {
+    this.model.rotation.y = -0.7;
+    this.armL.rotation.z = 0.5;
+    this.armR.rotation.z = 2.7;
+    this.elbowR.rotation.z = 0.5;
+    this.legL.rotation.z = -0.12;
+    this.legR.rotation.z = 0.12;
   }
 
   play(kind: AnimKind, frame: number, roll = false): void {
@@ -382,7 +537,47 @@ export class FoodCharacter {
     }
 
     // Selebrasi dan lesu memakai waktu nyata, supaya tetap bergerak saat permainan berhenti.
-    if (mood === "win") {
+    // Tiap karakter punya satu dari tiga gaya selebrasi dan dua gaya lesu.
+    if (mood === "win" && this.charId % 3 === 1) {
+      // Berputar dengan tangan terentang.
+      const t = performance.now() / 1000;
+      a.spinY = t * 9;
+      a.lift = 0.12 + Math.abs(Math.sin(t * 9)) * 0.12;
+      a.squash = 0.06;
+      a.look = 0.4;
+      o.shL = 1.6;
+      o.shR = 1.6;
+      o.elL = o.elR = 0.1;
+      o.hipL = 0.25;
+      o.hipR = -0.25;
+      o.kneeL = o.kneeR = -0.3;
+    } else if (mood === "win" && this.charId % 3 === 2) {
+      // Goyang sambil mengepal bergantian.
+      const t = performance.now() / 1000;
+      const beat = Math.sin(t * 10);
+      a.lift = Math.abs(beat) * 0.1;
+      a.squash = beat * 0.12;
+      a.look = 0.35;
+      o.lean = beat * 0.22;
+      o.twist = beat * 0.5;
+      o.shL = 2.2 + beat * 0.9;
+      o.shR = 2.2 - beat * 0.9;
+      o.elL = o.elR = 1.2;
+      o.hipL = beat * 0.35;
+      o.hipR = -beat * 0.35;
+      o.kneeL = o.kneeR = -0.5 - Math.abs(beat) * 0.3;
+    } else if (mood === "lose" && this.charId % 2 === 1) {
+      // Geleng-geleng sambil memegang kepala.
+      const t = performance.now() / 1000;
+      a.look = -0.2;
+      a.squash = -0.06;
+      o.lean = -0.2;
+      o.twist = Math.sin(t * 7) * 0.45;
+      o.shL = o.shR = 2.6;
+      o.elL = o.elR = 1.7;
+      o.kneeL = o.kneeR = -0.35;
+      o.hipL = o.hipR = 0.2;
+    } else if (mood === "win") {
       const t = performance.now() / 1000;
       const hop = Math.abs(Math.sin(t * 7));
       a.lift = hop * 0.4;

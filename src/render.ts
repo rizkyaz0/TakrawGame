@@ -2,7 +2,7 @@ import * as THREE from "three";
 import type { AnimKind } from "./animator";
 import { FoodCharacter } from "./foodchar";
 import { Fx } from "./fx";
-import { Scenery } from "./scenery";
+import { Scenery, type ArenaId, type TimeId } from "./scenery";
 import {
   BALL_R,
   BODY_Y,
@@ -12,6 +12,7 @@ import {
   HEAT_MAX,
   SMASH_R,
   SPECIAL_R,
+  sideOf,
   type GameEvent,
   type GameState,
 } from "./sim";
@@ -26,7 +27,13 @@ interface PlayerView {
   cue: THREE.Mesh; // cincin petunjuk "tekan sekarang" (mode latihan)
   char: FoodCharacter | null;
   ring: THREE.Mesh;
+  disc: THREE.Mesh; // alas warna tim di lantai (mode tim)
+  tag: THREE.Mesh; // panah di atas kepala pemain yang dimainkan orang (mode tim)
 }
+
+// Di mode tim, anggota tim berdiri sedikit berbeda kedalamannya supaya tidak saling menutupi.
+const TEAM_Z = [0, -0.85, 0.85];
+const TEAM_COLORS = [0xff5a3c, 0x4a7de0];
 
 // Tekstur bola rotan anyaman, digambar ke canvas.
 function ballTexture(): THREE.CanvasTexture {
@@ -89,6 +96,7 @@ export class Renderer {
   // Petunjuk timing per pemain: "smash" (emas), "guard" (biru), atau null.
   cues: Array<"smash" | "guard" | null> = [null, null];
   shakeScale = 1; // dikecilkan lewat pengaturan "efek layar dikurangi"
+  humanSlots: number[] = []; // nomor pemain yang dimainkan orang di perangkat ini, urut P1, P2
   private sun!: THREE.DirectionalLight;
   private fullRatio = 1;
 
@@ -110,7 +118,8 @@ export class Renderer {
     document.body.prepend(this.renderer.domElement);
     styleUniforms.uPx.value = this.renderer.getPixelRatio();
 
-    this.scene.add(new THREE.HemisphereLight(0xfff6e0, 0x8a7fa8, 1.5));
+    const hemi = new THREE.HemisphereLight(0xfff6e0, 0x8a7fa8, 1.5);
+    this.scene.add(hemi);
     const sun = new THREE.DirectionalLight(0xfff1d6, 2.6);
     sun.position.set(-7, 15, 9);
     sun.castShadow = true;
@@ -124,25 +133,8 @@ export class Renderer {
     sun.shadow.bias = -0.0005;
     this.scene.add(sun);
 
-    this.scenery = new Scenery(this.scene);
+    this.scenery = new Scenery(this.scene, hemi, sun);
     this.fx = new Fx(this.scene);
-
-    for (let i = 0; i < 2; i++) {
-      // Cincin jangkauan smash/special; karakternya dibuat saat draw pertama.
-      const ring = new THREE.Mesh(
-        new THREE.TorusGeometry(SMASH_R, 0.04, 6, 36),
-        new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.7 }),
-      );
-      ring.visible = false;
-      this.scene.add(ring);
-      const cue = new THREE.Mesh(
-        new THREE.TorusGeometry(SMASH_R * 1.22, 0.07, 6, 40),
-        new THREE.MeshBasicMaterial({ color: 0xffd23f, transparent: true, opacity: 0.95 }),
-      );
-      cue.visible = false;
-      this.scene.add(cue);
-      this.players.push({ cue, char: null, ring });
-    }
 
     this.ballMat = toon(0xffffff, { map: ballTexture() });
     this.ball = addOutline(new THREE.Mesh(new THREE.SphereGeometry(BALL_R, 24, 16), this.ballMat), 0.03);
@@ -212,6 +204,111 @@ export class Renderer {
 
     window.addEventListener("resize", () => this.resize());
     this.resize();
+  }
+
+  // Tampilan pemain dibuat atau dibuang mengikuti jumlah pemain di state (2, 4, atau 6).
+  private syncPlayers(count: number): void {
+    while (this.players.length < count) {
+      const i = this.players.length;
+      // Cincin jangkauan smash/special; karakternya dibuat saat draw pertama.
+      const ring = new THREE.Mesh(
+        new THREE.TorusGeometry(SMASH_R, 0.04, 6, 36),
+        new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.7 }),
+      );
+      ring.visible = false;
+      this.scene.add(ring);
+      const cue = new THREE.Mesh(
+        new THREE.TorusGeometry(SMASH_R * 1.22, 0.07, 6, 40),
+        new THREE.MeshBasicMaterial({ color: 0xffd23f, transparent: true, opacity: 0.95 }),
+      );
+      cue.visible = false;
+      this.scene.add(cue);
+      const disc = new THREE.Mesh(
+        new THREE.RingGeometry(0.42, 0.56, 24),
+        new THREE.MeshBasicMaterial({ color: TEAM_COLORS[sideOf(i)], transparent: true, opacity: 0.85 }),
+      );
+      disc.rotation.x = -Math.PI / 2;
+      disc.visible = false;
+      this.scene.add(disc);
+      const tag = new THREE.Mesh(new THREE.ConeGeometry(0.2, 0.36, 4), new THREE.MeshBasicMaterial({ color: 0xffd23f }));
+      tag.rotation.x = Math.PI;
+      tag.visible = false;
+      this.scene.add(tag);
+      this.players.push({ cue, char: null, ring, disc, tag });
+    }
+    while (this.players.length > count) {
+      const v = this.players.pop()!;
+      for (const o of [v.cue, v.ring, v.disc, v.tag]) {
+        this.scene.remove(o);
+        o.geometry.dispose();
+        (o.material as THREE.Material).dispose();
+      }
+      if (v.char) {
+        this.scene.remove(v.char.root);
+        v.char.dispose();
+      }
+    }
+  }
+
+  // Ganti latar dan waktu.
+  setArena(arena: ArenaId, time: TimeId): void {
+    if (this.scenery.arena !== arena || this.scenery.time !== time) this.scenery.set(arena, time);
+  }
+  get arena(): ArenaId {
+    return this.scenery.arena;
+  }
+  get time(): TimeId {
+    return this.scenery.time;
+  }
+
+  // Potret karakter untuk layar pilih jagoan: model 3D-nya digambar ke gambar kecil.
+  portrait(charId: number, size = 160): string {
+    const scene = new THREE.Scene();
+    scene.add(new THREE.HemisphereLight(0xfff6e0, 0x8a7fa8, 1.7));
+    const key = new THREE.DirectionalLight(0xfff1d6, 2.4);
+    key.position.set(4, 6, 5);
+    scene.add(key);
+    const ch = new FoodCharacter(charId);
+    ch.pose();
+    scene.add(ch.root);
+    const cam = new THREE.PerspectiveCamera(26, 1, 0.1, 50);
+    cam.position.set(3.4, 1.5, 3.6);
+    cam.lookAt(0, 0.92, 0);
+    const target = new THREE.WebGLRenderTarget(size * 2, size * 2, { samples: 4 });
+    const prevTarget = this.renderer.getRenderTarget();
+    const prevClear = this.renderer.getClearAlpha();
+    this.renderer.setRenderTarget(target);
+    this.renderer.setClearAlpha(0);
+    this.renderer.clear();
+    this.renderer.render(scene, cam);
+    const px = new Uint8Array(size * 2 * size * 2 * 4);
+    this.renderer.readRenderTargetPixels(target, 0, 0, size * 2, size * 2, px);
+    this.renderer.setRenderTarget(prevTarget);
+    this.renderer.setClearAlpha(prevClear);
+    target.dispose();
+    ch.dispose();
+    // Hasil bacaan terbalik secara vertikal dan masih linear: balik dan ubah ke sRGB.
+    const big = document.createElement("canvas");
+    big.width = big.height = size * 2;
+    const g = big.getContext("2d")!;
+    const img = g.createImageData(size * 2, size * 2);
+    const W = size * 2;
+    const toSrgb = (v: number) => Math.round(255 * Math.pow(v / 255, 1 / 2.2));
+    for (let y = 0; y < W; y++) {
+      for (let x = 0; x < W; x++) {
+        const src = ((W - 1 - y) * W + x) * 4;
+        const dst = (y * W + x) * 4;
+        img.data[dst] = toSrgb(px[src]);
+        img.data[dst + 1] = toSrgb(px[src + 1]);
+        img.data[dst + 2] = toSrgb(px[src + 2]);
+        img.data[dst + 3] = px[src + 3];
+      }
+    }
+    g.putImageData(img, 0, 0);
+    const out = document.createElement("canvas");
+    out.width = out.height = size;
+    out.getContext("2d")!.drawImage(big, 0, 0, size, size);
+    return out.toDataURL("image/png");
   }
 
   private resize(): void {
@@ -342,9 +439,12 @@ export class Renderer {
     // Sorotan ulti berakhir begitu layar tidak lagi membeku.
     if (s.hitstop === 0) this.focus = -1;
 
-    for (let i = 0; i < 2; i++) {
+    this.syncPlayers(s.players.length);
+    const teamMode = s.players.length > 2;
+    for (let i = 0; i < s.players.length; i++) {
       const p = s.players[i];
       const v = this.players[i];
+      const z = teamMode ? TEAM_Z[i >> 1] : 0;
 
       // Karakter dibangun ulang kalau pemain ganti karakter.
       if (!v.char || v.char.charId !== s.chars[i]) {
@@ -357,20 +457,27 @@ export class Renderer {
       }
       // Setelah poin: pencetak poin selebrasi, lawannya lesu.
       const decided = s.phase === "point" || s.phase === "over";
-      const mood = !decided ? null : s.server === i ? "win" : "lose";
+      const mood = !decided ? null : s.server === sideOf(i) ? "win" : "lose";
       v.char.update(p, s.frame, s.ball, this.focus === i || p.specialTimer > 0, mood);
+      v.char.root.position.z = z;
+      v.disc.visible = teamMode;
+      v.disc.position.set(p.x, 0.03, z);
+      const human = this.humanSlots.indexOf(i);
+      v.tag.visible = teamMode && human >= 0;
+      v.tag.position.set(p.x, p.y + 2.25 + Math.sin(now * 5) * 0.07, z);
+      (v.tag.material as THREE.MeshBasicMaterial).color.setHex(human === 1 ? 0x4dffd2 : 0xffd23f);
 
       const c = CHARS[s.chars[i]];
       const special = p.specialTimer > 0;
-      const cueKind = this.cues[i];
+      const cueKind = this.cues[i] ?? null;
       v.cue.visible = cueKind !== null;
-      v.cue.position.set(p.x, p.y + BODY_Y, 0.05);
+      v.cue.position.set(p.x, p.y + BODY_Y, z + 0.05);
       (v.cue.material as THREE.MeshBasicMaterial).color.setHex(cueKind === "guard" ? 0x7fd4ff : 0xffd23f);
       v.cue.scale.setScalar(1 + Math.sin(now * 40) * 0.04);
 
       const guarding = p.guardTimer > 0;
       v.ring.visible = special || guarding || p.smashTimer > 0;
-      v.ring.position.set(p.x, p.y + BODY_Y, 0);
+      v.ring.position.set(p.x, p.y + BODY_Y, z);
       v.ring.scale.setScalar(special ? SPECIAL_R / SMASH_R : guarding ? GUARD_R / SMASH_R : 1);
       v.ring.rotation.z = Math.floor(s.frame / 2) * 0.4;
       (v.ring.material as THREE.MeshBasicMaterial).color.setHex(special ? c.color : guarding ? 0x7fd4ff : 0xffffff);
@@ -455,11 +562,17 @@ export class Renderer {
     // Saat ulti, kamera menyorot dekat ke pemakainya.
     // Kamera membingkai kedua pemain dan bola: makin rapat aksinya, makin dekat,
     // supaya karakter tampil besar. Lantai selalu tetap di tepi bawah layar.
-    const p0 = s.players[0];
-    const p1 = s.players[1];
-    const minX = Math.min(p0.x, p1.x, b.x) - 2.3;
-    const maxX = Math.max(p0.x, p1.x, b.x) + 2.3;
-    const top = Math.max(b.y, p0.y + 2, p1.y + 2) + 1.3;
+    let minX = b.x;
+    let maxX = b.x;
+    let top = b.y;
+    for (const p of s.players) {
+      minX = Math.min(minX, p.x);
+      maxX = Math.max(maxX, p.x);
+      top = Math.max(top, p.y + 2);
+    }
+    minX -= 2.3;
+    maxX += 2.3;
+    top += 1.3;
     let tz = THREE.MathUtils.clamp(Math.max((maxX - minX) / VIEW_W, (top + 1.1) / VIEW_H), 0.58, 1);
     const slack = ((1 - tz) * VIEW_W) / 2;
     let tx = THREE.MathUtils.clamp((minX + maxX) / 2, -slack, slack);

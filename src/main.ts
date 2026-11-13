@@ -1,5 +1,6 @@
 import { crowdSfx, getVolume, music, setBusLevel, setVolume, sfx, sillySfx, voice, VOLUME_STEPS } from "./audio";
 import { loadSettings, saveSettings, settings } from "./settings";
+import { ACHIEVEMENTS, checkAchievements, isUnlocked, loadProgress, progress, saveProgress, unlockWins } from "./progress";
 import {
   deviceActive,
   deviceLabel,
@@ -34,6 +35,7 @@ import {
   type GuestCommand,
 } from "./net";
 import { Renderer } from "./render";
+import { ARENAS, TIMES, type ArenaId, type TimeId } from "./scenery";
 import { initTouch, setSpecialReady, setTouchRole, touchCapable, touchState } from "./touch";
 import {
   BALL_R,
@@ -47,6 +49,7 @@ import {
   PERFECT_FROM,
   PERFECT_TO,
   SMASH_R,
+  sideOf,
   cpuInput,
   createState,
   DT,
@@ -55,7 +58,6 @@ import {
   gameWinner,
   matchPointMask,
   MAX_TOUCHES,
-  WIN_SCORE,
   METER_MAX,
   SPECIAL_COST,
   step,
@@ -92,10 +94,11 @@ const cards =[1, 2].map((n) => ({
   pips: Array.from($(`t${n}`).children) as HTMLElement[],
 }));
 
-const shown = { score: [-1, -1], char: [-1, -1], rally: -1, heat: -1, over: false, mp: -1, phase: "" };
+const shown = { score: [-1, -1], char: [-1, -1], rally: -1, heat: -1, over: false, mp: -1, phase: "", mates: ["", ""] };
+const elMates = [$("mates1"), $("mates2")];
 
 // ===== Alur aplikasi: judul -> pilih karakter -> pertandingan =====
-type Mode = "title" | "settings" | "join" | "controls" | "select" | "match";
+type Mode = "title" | "settings" | "profile" | "join" | "controls" | "select" | "match";
 const app = {
   mode: "title" as Mode,
   paused: false,
@@ -108,6 +111,12 @@ const app = {
   ctrlRow: 0, // baris yang disorot di layar pengaturan kontrol
   training: false,
   tutorial: false, // latihan terpandu langkah demi langkah
+  teamSize: 1 as 1 | 2 | 3, // pemain per sisi
+  mate: false, // mode tim dengan dua orang: pemain kedua jadi teman setim (bukan lawan)
+  winScore: 7, // poin untuk menang
+  arcade: { on: false, stage: 0, foes: [] as number[] }, // lima lawan berturut-turut, makin sulit
+  arena: "acak" as ArenaId | "acak",
+  time: "acak" as TimeId | "acak",
   setRow: 0, // baris yang disorot di layar pengaturan
   online: "off" as "off" | "host" | "client",
   seat: -1, // tamu online: 0/1 pemain, 2 penonton, -1 hanya menonton
@@ -235,7 +244,7 @@ function updateCue(): void {
 }
 const CPU_NAMES = ["Mudah", "Normal", "Sulit"];
 // Urutan menu utama saat dinavigasi, mengikuti letaknya di layar.
-const TITLE_ORDER = [0, 1, 3, 4, 5, 2, 6];
+const TITLE_ORDER = [0, 1, 7, 8, 9, 3, 4, 5, 2, 10, 6];
 const ROLES = ["Power", "Lincah", "Tank", "Teknis", "Pelari", "Pelompat", "Seimbang"];
 const SPECIAL_DESC: Record<string, string> = {
   fire: "Bola melesat lurus tanpa gravitasi.",
@@ -269,8 +278,52 @@ function setMode(mode: Mode): void {
   renderer.cues[0] = null;
 }
 
+// Nomor pemain di simulasi untuk orang kedua: lawan (1) atau teman setim (2).
+const slotOf = (human: number) => (human === 0 ? 0 : app.mate && app.teamSize > 1 ? 2 : 1);
+
+// Susunan karakter semua pemain. Kapten dipilih di layar pilih jagoan; sisanya diisi acak
+// dengan karakter yang belum dipakai.
+function buildLineup(): number[] {
+  const n = app.teamSize * 2;
+  const out = new Array<number>(n).fill(-1);
+  out[0] = app.chars[0];
+  out[slotOf(1)] = app.chars[1];
+  const free = CHARS.map((_, k) => k).filter((k) => !out.includes(k));
+  for (let i = 0; i < n; i++) {
+    if (out[i] >= 0) continue;
+    out[i] = free.splice(Math.floor(Math.random() * free.length), 1)[0] ?? i % CHARS.length;
+  }
+  return out;
+}
+
+const pick = <T,>(list: readonly T[]) => list[Math.floor(Math.random() * list.length)];
+function applyArena(): void {
+  const arena = app.arena === "acak" ? pick(ARENAS).id : app.arena;
+  // Pasar malam paling cocok malam hari; arena lain bebas.
+  const time = app.time !== "acak" ? app.time : arena === "pasarmalam" ? pick(["malam", "malam", "sore"] as const) : pick(TIMES).id;
+  renderer.setArena(arena, time);
+}
+const WIN_OPTIONS = [5, 7, 11, 15];
+const arenaName = () => (app.arena === "acak" ? "Acak" : ARENAS.find((a) => a.id === app.arena)!.name);
+const timeName = () => (app.time === "acak" ? "Acak" : TIMES.find((t) => t.id === app.time)!.name);
+function cycleOption(what: "arena" | "time" | "win"): void {
+  if (what === "arena") {
+    const ids: Array<ArenaId | "acak"> = ["acak", ...ARENAS.map((a) => a.id)];
+    app.arena = ids[(ids.indexOf(app.arena) + 1) % ids.length];
+  } else if (what === "time") {
+    const ids: Array<TimeId | "acak"> = ["acak", ...TIMES.map((t) => t.id)];
+    app.time = ids[(ids.indexOf(app.time) + 1) % ids.length];
+  } else {
+    app.winScore = WIN_OPTIONS[(WIN_OPTIONS.indexOf(app.winScore) + 1) % WIN_OPTIONS.length];
+  }
+  if (what !== "win") applyArena(); // pratinjau langsung di belakang layar pilih jagoan
+  sfx.swing();
+  renderSelect();
+}
+
 // Layar judul: pertandingan demo CPU lawan CPU berjalan di latar.
 function startDemo(): void {
+  renderer.setArena(pick(ARENAS).id, pick(TIMES).id);
   const a = Math.floor(Math.random() * CHARS.length);
   const b = (a + 1 + Math.floor(Math.random() * (CHARS.length - 1))) % CHARS.length;
   Object.assign(state, createState([a, b]));
@@ -293,6 +346,7 @@ function endOnline(): void {
 const elNetNote = $("netNote");
 let netNoteUntil = 0;
 function setNetNote(text: string, seconds = 0): void {
+  elNetNote.classList.remove("good");
   elNetNote.textContent = text;
   elNetNote.classList.toggle("on", text !== "");
   netNoteUntil = seconds > 0 ? performance.now() + seconds * 1000 : 0;
@@ -301,6 +355,7 @@ function setNetNote(text: string, seconds = 0): void {
 function goTitle(): void {
   endOnline();
   app.tutorial = false;
+  app.arcade.on = false;
   setMode("title");
   startDemo();
   renderMenus();
@@ -388,6 +443,18 @@ const SPEC_HELP: Record<SpecDevice["kind"], string> = {
   touch: "Stik di kiri layar geser bidikan · tombol PISANG dan SANDAL di kanan",
 };
 
+function setSecondPlayer(kind: "cpu" | "mate" | "foe"): void {
+  app.humans = kind === "cpu" ? 1 : 2;
+  app.mate = kind === "mate";
+  app.ctrlRow = Math.min(app.ctrlRow, ctrlTotal() - 1);
+  if (app.humans === 2 && sameDevice(devices[0], devices[1])) {
+    const other = deviceOptions().find((o) => !sameDevice(o, devices[0]));
+    if (other) devices[1] = other;
+  }
+  sfx.swing();
+  renderControls();
+}
+
 function goControls(fromPad: number | null = null): void {
   setMode("controls");
   app.ctrlRow = 0;
@@ -427,7 +494,7 @@ function renderControls(): void {
   const row = (i: number) => {
     const d = devices[i];
     const help = devHelp(d);
-    const who = i === 0 ? "PEMAIN 1" : "PEMAIN 2";
+    const who = i === 0 ? "PEMAIN 1" : app.teamSize > 1 ? (app.mate ? "PEMAIN 2 · TEMAN SETIM" : "PEMAIN 2 · LAWAN") : "PEMAIN 2";
     return (
       `<div class="crow${app.ctrlRow === i ? " on" : ""}" style="--pc:${hex(CHARS[app.chars[i]].color)}" data-tap="ctrlrow:${i}">` +
       `<div class="cwho display">${who}</div>` +
@@ -463,7 +530,18 @@ function renderControls(): void {
               `Atur siapa duduk di mana di bawah ini.`
             : "Membuat room…")
         }</div></div>`;
-  $("ctrlRows").innerHTML = room + row(0) + (rows === 2 ? row(1) : "") + specRow;
+  // Mode tim: orang kedua bisa tidak ada (CPU), jadi teman setim, atau jadi lawan.
+  const chip = (label: string, on: boolean, tap: string) =>
+    `<span class="chip${on ? " on" : ""}" data-tap="${tap}">${label}</span>`;
+  const teamRow =
+    app.teamSize === 1 || app.online !== "off"
+      ? ""
+      : `<div class="chips"><b class="display">TIM ${app.teamSize} LAWAN ${app.teamSize} · PEMAIN KEDUA</b>` +
+        chip("CPU", app.humans === 1, "p2:cpu") +
+        chip("TEMAN SETIM", app.humans === 2 && app.mate, "p2:mate") +
+        chip("LAWAN", app.humans === 2 && !app.mate, "p2:foe") +
+        `<small>Sisa pemain diisi CPU.${touchState.enabled ? "" : " <kbd>T</kbd> ganti"}</small></div>`;
+  $("ctrlRows").innerHTML = room + teamRow + row(0) + (rows === 2 ? row(1) : "") + specRow;
   const pads = listPads().length;
   const anyGone = guestGone(devices[0]) || guestGone(devices[1]) || guestGone(spectator.device);
   $("ctrlNote").innerHTML = anyGone
@@ -506,8 +584,26 @@ function goSelect(): void {
   renderSelect();
 }
 
+const ARCADE_LEVELS = [0, 0, 1, 1, 2];
+// Karakter terkunci hanya berlaku saat main sendiri di perangkat ini; online semua terbuka.
+const canPick = (k: number) => app.online !== "off" || isUnlocked(k);
+
 function startMatch(): void {
-  Object.assign(state, createState(app.chars));
+  if (app.arcade.on) {
+    app.chars[1] = app.arcade.foes[app.arcade.stage] ?? app.chars[1];
+    app.cpuLevel = ARCADE_LEVELS[app.arcade.stage] ?? 2;
+  }
+  Object.assign(state, createState(buildLineup()));
+  renderer.humanSlots = app.humans === 2 ? [0, slotOf(1)] : [0];
+  state.winScore = app.training ? 7 : app.winScore;
+  state.winCap = state.winScore + 3;
+  // Arena acak diundi tiap pertandingan baru; saat latihan dan online-tamu dibiarkan.
+  if (!app.training) applyArena();
+  if (!app.training && app.online !== "client" && !progress.arenas.includes(renderer.arena)) {
+    progress.arenas.push(renderer.arena);
+    saveProgress();
+  }
+  matchRecorded = false;
   resetShown();
   setMode("match");
   // Penonton: manusia (pemain ke-3), otomatis, atau tidak ada. Di latihan selalu tidak ada.
@@ -535,7 +631,38 @@ function startMatch(): void {
   };
   elHelp.innerHTML =
     (app.humans === 2 ? `${helpFor(0)}<br />${helpFor(1)}` : helpFor(0)) + " &nbsp;·&nbsp; <kbd>Esc</kbd> jeda";
-  callout("MULAI!", "#ffd23f", true);
+  callout(app.arcade.on ? `BABAK ${app.arcade.stage + 1} DARI ${ARCADE_LEVELS.length}` : "MULAI!", "#ffd23f", true);
+  if (app.arcade.on) voice("vo_mulai");
+}
+
+// Catat hasil pertandingan ke statistik, sekali per pertandingan.
+let matchRecorded = false;
+const counting = () => app.mode === "match" && !app.training && app.online !== "client";
+function toast(text: string): void {
+  toastQueue.push(text);
+}
+const toastQueue: string[] = [];
+function recordMatch(winnerSide: number): void {
+  if (matchRecorded || !counting()) return;
+  matchRecorded = true;
+  const before = CHARS.map((_, k) => isUnlocked(k));
+  progress.matches++;
+  if (winnerSide === 0) {
+    progress.wins++;
+    const name = CHARS[state.chars[0]].name;
+    progress.winsByChar[name] = (progress.winsByChar[name] ?? 0) + 1;
+    if (state.score[1] === 0) progress.shutouts++;
+    if (state.players.length > 2) progress.teamWins++;
+    if (app.arcade.on) {
+      progress.arcadeBest = Math.max(progress.arcadeBest, app.arcade.stage + 1);
+      if (app.arcade.stage === ARCADE_LEVELS.length - 1) progress.arcadeClears++;
+    }
+  }
+  for (const a of checkAchievements()) toast(`PENCAPAIAN: ${a.name.toUpperCase()}`);
+  CHARS.forEach((c, k) => {
+    if (!before[k] && isUnlocked(k)) toast(`JAGOAN BARU TERBUKA: ${c.name.toUpperCase()}`);
+  });
+  saveProgress();
 }
 
 function renderMenus(): void {
@@ -543,14 +670,20 @@ function renderMenus(): void {
   const item = (label: string, on: boolean, tap: string) =>
     `<div class="item${on ? " on" : ""}" data-tap="${tap}">${label}</div>`;
   $("titleMenu").innerHTML =
+    `<div class="mrow big">` +
     item("MAIN · LAWAN CPU", app.titleIndex === 0, "title:0") +
     item("MABAR · 2 PEMAIN", app.titleIndex === 1, "title:1") +
-    `<div class="mrow">` +
+    `</div><div class="mrow">` +
+    item("TIM · 2 LAWAN 2", app.titleIndex === 7, "title:7") +
+    item("TIM · 3 LAWAN 3", app.titleIndex === 8, "title:8") +
+    item("ARCADE", app.titleIndex === 9, "title:9") +
+    `</div><div class="mrow">` +
     item("ONLINE · BUAT ROOM", app.titleIndex === 3, "title:3") +
     item("ONLINE · GABUNG ROOM", app.titleIndex === 4, "title:4") +
     `</div><div class="mrow">` +
     item("TUTORIAL", app.titleIndex === 5, "title:5").replace('class="item', settings.tutorialDone ? 'class="item' : 'class="item new') +
     item("LATIHAN", app.titleIndex === 2, "title:2") +
+    item("PROFIL", app.titleIndex === 10, "title:10") +
     item("PENGATURAN", app.titleIndex === 6, "title:6") +
     `</div>`;
   if (app.online === "client") {
@@ -573,14 +706,25 @@ function statBar(key: "moveSpeed" | "jumpV" | "smashSpeed", value: number): numb
   return 0.25 + 0.75 * ((value - lo) / (hi - lo));
 }
 
+// Potret tiap karakter, digambar sekali dari model 3D-nya.
+const portraits: string[] = CHARS.map((_, k) => renderer.portrait(k));
+
 function renderSelect(): void {
   const cpu = app.humans === 1;
+  $("selectOpts").innerHTML =
+    app.online === "client" || app.training
+      ? ""
+      : `<span class="chip" data-tap="opt:arena"><kbd>1</kbd> ARENA: <b>${arenaName()}</b></span>` +
+        `<span class="chip" data-tap="opt:time"><kbd>2</kbd> WAKTU: <b>${timeName()}</b></span>` +
+        `<span class="chip" data-tap="opt:win"><kbd>3</kbd> MENANG DI: <b>${app.winScore} POIN</b></span>` +
+        (app.teamSize > 1 ? `<span class="chip on">TIM ${app.teamSize} LAWAN ${app.teamSize}</span>` : "");
   $("roster").innerHTML = CHARS.map((c, k) => {
-    const cls = ["card2", app.chars[0] === k ? "p1" : "", app.chars[1] === k ? "p2" : ""].join(" ");
+    const open = canPick(k);
+    const cls = ["card2", app.chars[0] === k ? "p1" : "", app.chars[1] === k ? "p2" : "", open ? "" : "shut"].join(" ");
     return (
       `<div class="${cls}" data-tap="char:${k}"><span class="tag2 a display${app.locked[0] ? " ok" : ""}">P1</span>` +
       `<span class="tag2 b display${app.locked[1] ? " ok" : ""}">${cpu ? "CPU" : "P2"}</span>` +
-      `<span class="ico k${k}"></span><div class="nm">${c.name}</div></div>`
+      `<img class="pic" src="${portraits[k]}" alt="" draggable="false" /><div class="nm">${open ? c.name : `Menang ${unlockWins(k)}×`}</div></div>`
     );
   }).join("");
 
@@ -662,6 +806,10 @@ function handleTap(v: string): void {
   } else if (cmd === "pause") {
     app.pauseIndex = Number(arg);
     menuKey("Enter");
+  } else if (cmd === "p2") {
+    setSecondPlayer(arg as "cpu" | "mate" | "foe");
+  } else if (cmd === "opt") {
+    cycleOption(arg as "arena" | "time" | "win");
   } else if (cmd === "set") {
     const [, row, dir] = v.split(":");
     app.setRow = Number(row);
@@ -699,6 +847,7 @@ function handleTap(v: string): void {
     // Tap kartu memilih karakter untuk yang sedang giliran; tap kartu yang sama mengunci.
     const who = chooser();
     if (app.locked[who] || devices[who].kind === "net") return;
+    if (!canPick(Number(arg))) return sfx.fault();
     const k = Number(arg);
     if (app.chars[who] === k) return lockChar(who);
     app.chars[who] = k;
@@ -730,6 +879,7 @@ document.addEventListener("click", (e) => {
 
 // ===== Pengaturan =====
 loadSettings();
+loadProgress();
 // Pemain baru: sorotan menu mulai di Tutorial.
 if (!settings.tutorialDone) app.titleIndex = 5;
 function applySettings(): void {
@@ -750,8 +900,9 @@ function buzz(player: number, ms: number): void {
     if (app.seat === player) navigator.vibrate?.(ms);
     return;
   }
-  if (app.mode !== "match" || (player === 1 && app.humans === 1)) return;
-  const d = devices[player];
+  if (app.mode !== "match") return;
+  if (player !== 0 && !(app.humans === 2 && player === slotOf(1))) return;
+  const d: Device = devices[player === 0 ? 0 : 1];
   if (d.kind === "touch") navigator.vibrate?.(ms);
   else if (d.kind === "pad") {
     type Rumble = { playEffect?: (kind: string, opts: Record<string, number>) => Promise<unknown> };
@@ -829,6 +980,37 @@ function renderSettings(): void {
     )
     .join("");
   $("setHint").innerHTML = backBtn();
+}
+
+function goProfile(): void {
+  setMode("profile");
+  const p = progress;
+  const stat = (label: string, value: string | number) => `<div class="pstat"><b class="display">${value}</b>${label}</div>`;
+  const rate = p.matches > 0 ? `${Math.round((p.wins / p.matches) * 100)}%` : "–";
+  const fav = Object.entries(p.winsByChar).sort((a, b) => b[1] - a[1])[0];
+  $("profBox").innerHTML =
+    `<div class="pstats">` +
+    stat("pertandingan", p.matches) +
+    stat("menang", p.wins) +
+    stat("tingkat menang", rate) +
+    stat("smash sempurna", p.perfectSmash) +
+    stat("terima sempurna", p.perfectReceive) +
+    stat("jurus kena", p.specials) +
+    stat("reli terpanjang", p.bestRally) +
+    stat("babak arcade terjauh", `${p.arcadeBest}/${ARCADE_LEVELS.length}`) +
+    `</div>` +
+    `<div class="pfav">Jagoan andalan: <b>${fav ? `${fav[0]} (${fav[1]} menang)` : "belum ada"}</b> · ` +
+    `Jagoan terbuka: <b>${CHARS.filter((_, k) => isUnlocked(k)).length}/${CHARS.length}</b> · ` +
+    `Pencapaian: <b>${p.achievements.length}/${ACHIEVEMENTS.length}</b></div>` +
+    `<div class="pach">` +
+    ACHIEVEMENTS.map((a) => {
+      const got = p.achievements.includes(a.id);
+      const c = a.count?.(p);
+      const prog = !got && c ? ` <i>${Math.min(c[0], c[1])}/${c[1]}</i>` : "";
+      return `<div class="ach${got ? " got" : ""}"><b>${got ? "★" : "☆"} ${a.name}</b>${a.desc}${prog}</div>`;
+    }).join("") +
+    `</div>`;
+  $("profHint").innerHTML = backBtn();
 }
 
 function goSettings(): void {
@@ -967,6 +1149,8 @@ function renderTut(): void {
 }
 
 function startTutorial(): void {
+  app.teamSize = 1;
+  app.mate = false;
   app.humans = 1;
   app.training = true;
   app.tutorial = true;
@@ -1050,7 +1234,13 @@ initTouch({ onPause: () => menuKey("Escape") });
 
 function moveChar(i: 0 | 1, d: number): void {
   if (app.locked[i]) return;
-  app.chars[i] = (app.chars[i] + d + CHARS.length) % CHARS.length;
+  let k = app.chars[i];
+  // Karakter yang masih terkunci dilewati.
+  for (let n = 0; n < CHARS.length; n++) {
+    k = (k + d + CHARS.length) % CHARS.length;
+    if (canPick(k)) break;
+  }
+  app.chars[i] = k;
   state.chars[i] = app.chars[i];
   sfx.swing();
   renderSelect();
@@ -1059,6 +1249,15 @@ function moveChar(i: 0 | 1, d: number): void {
 function lockChar(i: 0 | 1): void {
   if (app.locked[i]) return;
   app.locked[i] = true;
+  if (app.arcade.on && i === 0) {
+    // Arcade: lima lawan acak yang berbeda dari jagoanmu.
+    const pool = CHARS.map((_, k) => k).filter((k) => k !== app.chars[0]);
+    app.arcade.foes = ARCADE_LEVELS.map(() => pool.splice(Math.floor(Math.random() * pool.length), 1)[0]);
+    app.arcade.stage = 0;
+    app.chars[1] = app.arcade.foes[0];
+    state.chars[1] = app.chars[1];
+    app.locked[1] = true;
+  }
   sfx.receivePerfect();
   renderSelect();
   if (app.locked[0] && app.locked[1]) {
@@ -1098,8 +1297,13 @@ function menuKey(code: string): void {
     } else if (CONFIRM.has(code) && app.titleIndex === 6) {
       sfx.receivePerfect();
       goSettings();
+    } else if (CONFIRM.has(code) && app.titleIndex === 10) {
+      sfx.receivePerfect();
+      goProfile();
     } else if (CONFIRM.has(code) && app.titleIndex === 3) {
       // Buat room: host mengatur kursi di layar pengaturan kontrol.
+      app.teamSize = 1;
+      app.mate = false;
       app.humans = 2;
       app.training = false;
       app.online = "host";
@@ -1113,12 +1317,20 @@ function menuKey(code: string): void {
     } else if (CONFIRM.has(code)) {
       app.humans = app.titleIndex === 1 ? 2 : 1;
       app.training = app.titleIndex === 2;
+      app.teamSize = app.titleIndex === 7 ? 2 : app.titleIndex === 8 ? 3 : 1;
+      app.mate = false;
+      app.arcade.on = app.titleIndex === 9;
+      app.arcade.stage = 0;
       sfx.receivePerfect();
       goControls(menuPad);
     }
     return;
   }
 
+  if (app.mode === "profile") {
+    if (code === "Escape" || code === "Backspace" || CONFIRM.has(code)) goTitle();
+    return;
+  }
   if (app.mode === "settings") {
     const rows = settingRows();
     if (code === "Escape" || code === "Backspace" || code === "Enter") return goTitle();
@@ -1183,9 +1395,17 @@ function menuKey(code: string): void {
     // Hanya Enter yang melanjutkan. Tombol aksi (F, K, dan lain-lain) sengaja tidak
     // dipakai di sini supaya bisa ditekan bebas untuk mengetes lampu.
     else if (code === "Enter" || code === "NumpadEnter") confirmControls();
+    else if (code === "KeyT" && app.teamSize > 1 && app.online === "off") {
+      setSecondPlayer(app.humans === 1 ? "mate" : app.mate ? "foe" : "cpu");
+    }
     return;
   }
 
+  if (app.mode === "select" && !app.training) {
+    if (code === "Digit1") return cycleOption("arena");
+    if (code === "Digit2") return cycleOption("time");
+    if (code === "Digit3") return cycleOption("win");
+  }
   if (app.mode === "select") {
     if (code === "Escape" || code === "Backspace") {
       // Mundur selangkah: buka kunci terakhir, atau kembali ke pengaturan kontrol.
@@ -1228,8 +1448,17 @@ function menuKey(code: string): void {
 
   // Pertandingan.
   if (state.phase === "over") {
-    if (CONFIRM.has(code)) startMatch();
-    else if (code === "KeyC") goSelect();
+    if (CONFIRM.has(code)) {
+      if (app.arcade.on) {
+        const won = state.score[0] > state.score[1];
+        // Menang: lanjut ke lawan berikutnya. Kalah atau sudah tamat: mulai lagi dari babak 1.
+        app.arcade.stage = won && app.arcade.stage < ARCADE_LEVELS.length - 1 ? app.arcade.stage + 1 : 0;
+      }
+      startMatch();
+    } else if (code === "KeyC") {
+      app.arcade.stage = 0;
+      goSelect();
+    }
     else if (code === "KeyM" || code === "Escape") goTitle();
     return;
   }
@@ -1385,8 +1614,8 @@ function callout(text: string, color: string, mini = false): void {
 function pop(text: string, player: number, color: string): void {
   elPop.textContent = text;
   elPop.style.setProperty("--pc", color);
-  elPop.classList.toggle("left", player === 0);
-  elPop.classList.toggle("right", player === 1);
+  elPop.classList.toggle("left", sideOf(player) === 0);
+  elPop.classList.toggle("right", sideOf(player) === 1);
   replay(elPop, "show");
 }
 
@@ -1404,11 +1633,11 @@ function slowMo(scale: number, seconds: number): void {
 // Ketegangan 0..1: reli panjang, bola panas, dan match point membuat penonton makin ramai.
 function excitement(): number {
   if (state.phase !== "play") return state.phase === "over" ? 0.6 : 0.15;
-  const mp = matchPointMask(state.score) !== 0 ? 0.3 : 0;
+  const mp = matchPointMask(state.score, state.winScore, state.winCap) !== 0 ? 0.3 : 0;
   return Math.min(1, state.rally / 24 + (Math.min(state.heat, HEAT_MAX) / HEAT_MAX) * 0.5 + mp);
 }
 
-const isMatchPoint = () => state.phase !== "over" && matchPointMask(state.score) !== 0;
+const isMatchPoint = () => state.phase !== "over" && matchPointMask(state.score, state.winScore, state.winCap) !== 0;
 
 // Ulti diaktifkan: layar meredup, garis kecepatan memancar dari pemain, nama jurus masuk.
 function superCutin(player: number): void {
@@ -1500,6 +1729,13 @@ function handleEvent(e: GameEvent): void {
   else if (e.type === "specialHit") buzz(e.player, 80);
   else if (e.type === "slip") buzz(e.player, 90);
   else if (e.type === "bonk" && e.target === "player") buzz(e.player, 70);
+  if (counting() && "player" in e && e.player === 0) {
+    if (e.type === "smash" && e.perfect) progress.perfectSmash++;
+    else if (e.type === "receive" && e.perfect) progress.perfectReceive++;
+    else if (e.type === "specialHit") progress.specials++;
+  }
+  if (counting() && e.type === "score") progress.bestRally = Math.max(progress.bestRally, state.rally);
+  if (e.type === "over") recordMatch(e.winner);
   if (app.tutorial) tutEvent(e);
   if (app.training && trainEvent(e)) return;
   switch (e.type) {
@@ -1638,6 +1874,18 @@ function handleEvent(e: GameEvent): void {
   }
 }
 
+function overTitle(w: number): string {
+  if (app.arcade.on && w === 0 && app.arcade.stage === ARCADE_LEVELS.length - 1) return "JUARA ARCADE!";
+  if (state.players.length > 2) return `TIM ${charOf(w).name.toUpperCase()} MENANG!`;
+  return `${charOf(w).name.toUpperCase()} MENANG!`;
+}
+function againLabel(w: number): string {
+  if (!app.arcade.on) return "MAIN LAGI ▸";
+  if (w !== 0) return "COBA LAGI DARI BABAK 1 ▸";
+  if (app.arcade.stage === ARCADE_LEVELS.length - 1) return "MAIN ARCADE LAGI ▸";
+  return `LANJUT · BABAK ${app.arcade.stage + 2} ▸`;
+}
+
 // Panel kecil penonton: amunisi, sisi yang boleh diusili, dan pesan kalau lemparan ditolak.
 const elSpec = $("spec");
 let specMsg = "";
@@ -1672,7 +1920,7 @@ function updateHud(): void {
     if (shown.char[i] !== state.chars[i]) {
       shown.char[i] = state.chars[i];
       card.name.textContent = c.name;
-      card.sp.textContent = `P${i + 1} · ${c.specialName}`;
+      card.sp.textContent = `${state.players.length > 2 ? "KAPTEN" : `P${i + 1}`} · ${c.specialName}`;
       card.root.style.setProperty("--pc", hex(c.color));
       document.documentElement.style.setProperty(`--c${i + 1}`, hex(c.color));
     }
@@ -1692,6 +1940,21 @@ function updateHud(): void {
 
     const used = state.lastSide === i ? Math.min(state.touches, MAX_TOUCHES) : 0;
     for (let k = 0; k < card.pips.length; k++) card.pips[k].classList.toggle("used", k < used);
+
+    // Mode tim: teman setim tampil sebagai daftar kecil dengan meter jurusnya.
+    let mates = "";
+    for (let k = i + 2; k < state.players.length; k += 2) {
+      const mc = CHARS[state.chars[k]];
+      const pct = Math.round((state.players[k].meter / METER_MAX) * 20) * 5;
+      const you = app.online === "off" && app.humans === 2 && k === slotOf(1) ? " · P2" : "";
+      mates +=
+        `<div class="mate${state.players[k].meter >= SPECIAL_COST ? " ready" : ""}" style="--pc:${hex(mc.color)}">` +
+        `<span>${mc.name}${you}</span><i style="width:${pct}%"></i></div>`;
+    }
+    if (shown.mates[i] !== mates) {
+      shown.mates[i] = mates;
+      elMates[i].innerHTML = mates;
+    }
   }
 
   if (shown.rally !== state.rally) {
@@ -1712,7 +1975,7 @@ function updateHud(): void {
   }
 
   // Match point: label, bingkai merah berdenyut, dan pengumuman di awal servis.
-  const mask = state.phase === "over" ? 0 : matchPointMask(state.score);
+  const mask = state.phase === "over" ? 0 : matchPointMask(state.score, state.winScore, state.winCap);
   if (shown.mp !== mask) {
     shown.mp = mask;
     elMp.classList.toggle("on", mask !== 0);
@@ -1734,7 +1997,7 @@ function updateHud(): void {
       const [a, b] = state.score;
       if (mask === 3) callout("POIN PENENTUAN!", "#ffd23f", true);
       else if (mask !== 0) callout("MATCH POINT!", hex(charOf(mask === 1 ? 0 : 1).color), true);
-      else if (a === b && a >= WIN_SCORE - 1) callout("DEUCE!", "#8a7fa8", true);
+      else if (a === b && a >= state.winScore - 1) callout("DEUCE!", "#8a7fa8", true);
     }
   }
 
@@ -1747,12 +2010,12 @@ function updateHud(): void {
       const w = state.score[0] > state.score[1] ? 0 : 1;
       elBanner.style.setProperty("--cc", hex(charOf(w).color));
       elBanner.innerHTML =
-        `<div class="big display">${charOf(w).name.toUpperCase()} MENANG!</div>` +
+        `<div class="big display">${overTitle(w)}</div>` +
         `<div class="bscore display">${state.score[0]} – ${state.score[1]}</div>` +
         (app.online === "client"
           ? `<small>Menunggu host memilih: main lagi atau ganti jagoan…</small>` +
             `<div class="bbtns">${tapBtn("back", "KeyM", "KELUAR ROOM", "M")}</div>`
-          : `<div class="bbtns">${tapBtn("go", "KeyF", "MAIN LAGI ▸", "F")}` +
+          : `<div class="bbtns">${tapBtn("go", "KeyF", againLabel(w), "F")}` +
             `${tapBtn("back", "KeyC", "GANTI JAGOAN", "C")}${tapBtn("back", "KeyM", "MENU UTAMA", "M")}</div>`) +
         `<small style="display:none"><span data-tap="KeyF"><kbd>F</kbd> main lagi</span> &nbsp;·&nbsp; ` +
         `<span data-tap="KeyC"><kbd>C</kbd> pilih karakter</span> &nbsp;·&nbsp; ` +
@@ -1779,6 +2042,7 @@ function hostBroadcast(events: GameEvent[]): void {
     seats: [seatOf(devices[0]), seatOf(devices[1]), seatOf(spectator.device)],
     chars: app.chars,
     locked: app.locked,
+    ar: [renderer.arena, renderer.time],
     s: app.mode === "select" || app.mode === "match" ? { ...state, events: [] } : undefined,
     ev: events,
   });
@@ -1845,24 +2109,51 @@ function goJoin(code: string): void {
   }
   app.online = "client";
   app.seat = -1;
+  app.teamSize = 1;
+  app.mate = false;
   app.humans = 2;
   app.training = false;
   join.status = "connecting";
   join.text = code;
   renderJoin();
+  const wasPlaying = () => net.myId >= 0;
   void joinRoom(code, {
     onClose(text) {
+      // Putus di tengah jalan: coba sambung ulang beberapa kali sebelum menyerah. Host
+      // mengembalikan kursimu begitu kamu masuk lagi.
+      const dropped = text.startsWith("Sambungan ke host putus") && hadSeat;
       app.online = "off";
       app.seat = -1;
       mouse.capture = false;
       setNetNote("");
       setMode("join");
       startDemo();
+      if (dropped && rejoinTries < 3) {
+        rejoinTries++;
+        join.status = "connecting";
+        join.text = code;
+        renderJoin();
+        $("joinBox").innerHTML += `<br />Sambungan putus. Menyambung ulang (${rejoinTries}/3)…`;
+        window.setTimeout(() => {
+          if (app.mode === "join" && app.online === "off" && join.status === "connecting") goJoin(code);
+        }, 1500);
+        return;
+      }
+      rejoinTries = 0;
       join.status = "error";
       join.text = text;
       renderJoin();
     },
   });
+  // Dicatat lewat pemeriksaan berkala: begitu host memberi nomor, sambungan ini dianggap pernah hidup.
+  let hadSeat = false;
+  const watch = window.setInterval(() => {
+    if (app.online !== "client") return window.clearInterval(watch);
+    if (wasPlaying()) {
+      hadSeat = true;
+      if (app.mode !== "join") rejoinTries = 0;
+    }
+  }, 500);
 }
 
 const SEAT_NAMES = ["PEMAIN 1", "PEMAIN 2", "PENONTON USIL"];
@@ -1896,6 +2187,7 @@ interface FrameMsg {
   m: "lobby" | "select" | "match";
   p: boolean;
   seats: number[];
+  ar?: [ArenaId, TimeId];
   chars: [number, number];
   locked: [boolean, boolean];
   s?: GameState;
@@ -1916,6 +2208,13 @@ function clientHelp(): void {
 }
 
 function applyFrame(m: FrameMsg): void {
+  if (
+    Array.isArray(m.ar) &&
+    ARENAS.some((a) => a.id === m.ar![0]) &&
+    TIMES.some((t) => t.id === m.ar![1])
+  ) {
+    renderer.setArena(m.ar[0], m.ar[1]);
+  }
   const seat = Array.isArray(m.seats) ? m.seats.indexOf(net.myId) : -1;
   const seatChanged = seat !== app.seat;
   app.seat = seat;
@@ -1961,6 +2260,9 @@ function applyFrame(m: FrameMsg): void {
 }
 
 let hostPaused = false;
+let clientAcc = 0;
+let clientLast = performance.now();
+let rejoinTries = 0;
 let sentBits = -1;
 let sentAim: number | null = null;
 let sentAt = 0;
@@ -1971,9 +2273,17 @@ function clientUpdate(now: number): void {
     join.status = "waiting";
     renderJoin();
   }
-  const frames = net.inbox.splice(0);
-  for (const raw of frames) {
-    const m = raw as FrameMsg;
+  // Penyangga kecil: kiriman host sering datang bergerombol. Daripada menampilkan semuanya
+  // sekaligus (gerakan jadi loncat-loncat), diputar satu per satu seirama 60 kali per detik,
+  // dan baru dikejar kalau tumpukannya terlalu panjang.
+  clientAcc = Math.min(0.1, clientAcc + Math.max(0, (now - clientLast) / 1000));
+  clientLast = now;
+  let budget = Math.floor(clientAcc / DT);
+  clientAcc -= budget * DT;
+  if (net.inbox.length > 6) budget = Math.max(budget, net.inbox.length - 2);
+  if (app.mode !== "match") budget = net.inbox.length; // di menu tidak perlu dihaluskan
+  while (budget-- > 0 && net.inbox.length > 0) {
+    const m = net.inbox.shift() as FrameMsg;
     if (m.t !== "f" || !Array.isArray(m.chars) || !Array.isArray(m.locked)) continue;
     try {
       applyFrame(m);
@@ -2027,6 +2337,11 @@ function update(now: number): void {
     return;
   }
   if (netNoteUntil > 0 && now > netNoteUntil) setNetNote("");
+  if (toastQueue.length > 0 && elNetNote.textContent === "") {
+    setNetNote(toastQueue.shift()!, 3.2);
+    elNetNote.classList.add("good");
+    sfx.receivePerfect();
+  }
   if (app.online === "client") {
     last = now;
     acc = 0;
@@ -2038,7 +2353,7 @@ function update(now: number): void {
   const inMatch = app.mode === "match";
 
   // Bola hampir jatuh di sisi yang akan kalah saat match point: detik-detik lambat.
-  const mpMask = inMatch && isMatchPoint() ? matchPointMask(state.score) : 0;
+  const mpMask = inMatch && isMatchPoint() ? matchPointMask(state.score, state.winScore, state.winCap) : 0;
   if (mpMask !== 0 && state.phase === "play" && state.ball.y < 1.5 && state.ball.vy < -3) {
     const losingSide = state.ball.x < 0 ? 0 : 1; // pemain yang kebobolan kalau bola jatuh di sini
     if (mpMask & (losingSide === 0 ? 2 : 1)) slowMo(0.4, 0.08);
@@ -2050,6 +2365,7 @@ function update(now: number): void {
   while (acc >= DT) {
     let in0 = 0;
     let in1 = 0;
+    let team: number[] | null = null; // input semua pemain di mode tim
     if (app.mode === "title") {
       // Demo: dua CPU bertanding; selesai satu pertandingan, mulai pasangan baru.
       in0 = cpuInput(state, 0, 2);
@@ -2078,6 +2394,9 @@ function update(now: number): void {
         train.forceSpecial--;
         in1 = train.forceSpecial === 1 ? 0 : 128; // lepas dulu, lalu tekan: butuh tepi naik
       }
+    } else if (state.phase !== "over" && state.players.length > 2) {
+      const second = app.humans === 2 ? slotOf(1) : -1;
+      team = state.players.map((_, i) => (i === 0 ? seatInput(0) : i === second ? seatInput(1) : cpuInput(state, i, app.cpuLevel)));
     } else if (state.phase !== "over") {
       in0 = seatInput(0);
       in1 = app.humans === 2 ? seatInput(1) : cpuInput(state, 1, app.cpuLevel);
@@ -2096,7 +2415,7 @@ function update(now: number): void {
         if (sd.kind === "mouse") state.spec.x = Math.min(lim, Math.max(-lim, renderer.worldX(mouse.x, mouse.y)));
       }
     }
-    step(state, [in0, in1], specIn);
+    step(state, team ?? [in0, in1], specIn);
     stepped = true;
     for (const e of state.events) {
       handleEvent(e);
@@ -2127,6 +2446,19 @@ function frame(now: number): void {
   requestAnimationFrame(frame);
 }
 goTitle();
+document.getElementById("boot")?.remove();
+
+// Host online: browser menghentikan animasi saat tab disembunyikan, dan pertandingan ikut
+// berhenti untuk semua tamu. Pekerja latar ini tetap berdetak, jadi simulasi dan kiriman ke
+// tamu jalan terus walau host pindah tab.
+try {
+  const ticker = new Worker(URL.createObjectURL(new Blob(["setInterval(()=>postMessage(0),16)"], { type: "text/javascript" })));
+  ticker.onmessage = () => {
+    if (document.hidden && app.online === "host" && !debug.manual) update(performance.now());
+  };
+} catch {
+  // tanpa pekerja latar: host harus tetap membuka tabnya
+}
 // Simpan game di perangkat (bisa dipasang ke layar utama dan dibuka tanpa internet).
 if (import.meta.env.PROD && "serviceWorker" in navigator) {
   window.addEventListener("load", () => void navigator.serviceWorker.register("/sw.js").catch(() => undefined));

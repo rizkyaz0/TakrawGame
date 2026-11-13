@@ -1,0 +1,374 @@
+<!doctype html>
+<html lang="id">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Takraw Clash — prototipe</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Bungee&family=Rubik:wght@500;700;800&display=swap" rel="stylesheet" />
+    <style>
+      :root { --ink: #17131c; --paper: #fff6e0; --sun: #ffd23f; --c1: #ff5a3c; --c2: #35c9a5; }
+      html, body { margin: 0; height: 100%; overflow: hidden; background: var(--ink); }
+      body { font-family: "Rubik", system-ui, sans-serif; color: var(--paper); }
+      canvas { display: block; }
+      .display { font-family: "Bungee", "Impact", "Arial Black", sans-serif; letter-spacing: 0.02em; }
+      #hud { position: fixed; inset: 0; pointer-events: none; user-select: none; overflow: hidden; }
+
+      /* Tekstur kertas dan vinyet di atas seluruh layar. */
+      #grain {
+        position: absolute; inset: 0; mix-blend-mode: multiply; opacity: 0.5;
+        background:
+          radial-gradient(circle at 50% 45%, transparent 55%, rgba(60, 30, 60, 0.45) 100%),
+          radial-gradient(rgba(23, 19, 28, 0.16) 1px, transparent 1.4px) 0 0 / 5px 5px;
+      }
+
+      /* Papan skor: lempeng tinta miring dengan angka besar. */
+      #top { position: absolute; top: 14px; left: 50%; transform: translateX(-50%) rotate(-2deg); text-align: center; }
+      .scorebox {
+        display: inline-flex; align-items: center; gap: 14px; padding: 2px 26px 6px;
+        background: var(--ink); border: 4px solid var(--paper);
+        box-shadow: 7px 7px 0 rgba(23, 19, 28, 0.55); transform: skewX(-8deg);
+        font-size: 58px; line-height: 1; font-variant-numeric: tabular-nums;
+      }
+      .scorebox span { display: inline-block; min-width: 0.8em; transform: skewX(8deg); text-shadow: 3px 3px 0 #000; }
+      .scorebox i { font-style: normal; font-size: 32px; color: var(--paper); opacity: 0.6; }
+      #s1 { color: var(--c1); }
+      #s2 { color: var(--c2); }
+      .scorebox span.bump { animation: bump 0.45s cubic-bezier(0.2, 1.8, 0.4, 1); }
+      @keyframes bump { 0% { transform: skewX(8deg) scale(2.1) rotate(-8deg); } 100% { transform: skewX(8deg) scale(1); } }
+      #rally {
+        display: inline-block; margin-top: 8px; padding: 1px 12px; font-size: 20px;
+        background: var(--sun); color: var(--ink); border: 3px solid var(--ink);
+        transform: rotate(3deg); opacity: 0; transition: opacity 0.15s;
+      }
+      #rally.on { opacity: 1; }
+      #rally.hot { background: #ff4f6d; color: var(--paper); animation: wiggle 0.3s infinite alternate; }
+      @keyframes wiggle { from { transform: rotate(1deg) scale(1); } to { transform: rotate(5deg) scale(1.1); } }
+
+      /* Indikator panas reli: makin merah dan makin besar seiring bola makin kencang. */
+      #heat {
+        display: inline-block; margin: 8px 0 0 6px; padding: 1px 12px; font-size: 20px;
+        color: var(--paper); border: 3px solid var(--ink); opacity: 0; transition: opacity 0.15s;
+        background: color-mix(in srgb, #ff2d2d calc(var(--h, 0) * 100%), #ff9a3d);
+        transform: rotate(-3deg) scale(calc(1 + var(--h, 0) * 0.35));
+        -webkit-text-stroke: 4px var(--ink); paint-order: stroke fill;
+      }
+      #heat.on { opacity: 1; }
+      #heat.bump { animation: heatbump 0.3s cubic-bezier(0.2, 1.8, 0.4, 1); }
+      #heat.max { animation: wiggle 0.18s infinite alternate; }
+      @keyframes heatbump { 0% { transform: rotate(-3deg) scale(calc(1.6 + var(--h, 0) * 0.35)); } }
+
+      /* Match point: label di bawah skor dan bingkai merah yang berdenyut. */
+      #mp {
+        display: none; margin-top: 8px; padding: 1px 14px; font-size: 17px; white-space: nowrap;
+        background: var(--pc, var(--sun)); color: var(--paper); border: 3px solid var(--ink);
+        -webkit-text-stroke: 4px var(--ink); paint-order: stroke fill; transform: rotate(1.5deg);
+      }
+      #mp.on { display: inline-block; animation: mpPulse 0.6s ease-in-out infinite alternate; }
+      @keyframes mpPulse { from { transform: rotate(1.5deg) scale(1); } to { transform: rotate(1.5deg) scale(1.09); } }
+      #tension { position: absolute; inset: 0; opacity: 0; box-shadow: inset 0 0 150px 30px rgba(255, 45, 45, 0.6); }
+      #tension.on { animation: tension 0.9s ease-in-out infinite alternate; }
+      @keyframes tension { from { opacity: 0.25; } to { opacity: 0.8; } }
+
+      /* ===== Layar menu ===== */
+      .screen { position: absolute; inset: 0; display: none; }
+      #hud[data-mode="title"] #title, #hud[data-mode="select"] #select, #hud[data-paused="1"] #pause { display: block; }
+      /* Elemen pertandingan disembunyikan di luar pertandingan. */
+      #hud:not([data-mode="match"]) > :is(#top, #c1, #c2, #help, #banner, #callout, #pop, #cutin, #dim, #lines, #flash, #tension) { display: none !important; }
+      #title, #pause { background: radial-gradient(ellipse at 50% 40%, rgba(23, 19, 28, 0.25), rgba(23, 19, 28, 0.78)); }
+      .logo { position: absolute; top: 13%; left: 0; right: 0; text-align: center; line-height: 0.92; transform: rotate(-4deg); }
+      .logo span, .logo b {
+        display: inline-block; padding: 0 22px 6px; border: 8px solid var(--ink); box-shadow: 12px 12px 0 var(--ink);
+        color: var(--paper); -webkit-text-stroke: 10px var(--ink); paint-order: stroke fill; font-weight: 400;
+      }
+      .logo span { font-size: clamp(54px, 11vw, 120px); background: #ff5a3c; transform: skewX(-8deg); }
+      .logo b { font-size: clamp(64px, 13vw, 144px); background: var(--sun); transform: skewX(-8deg) translate(8%, -8%) rotate(3deg); }
+      .tagline {
+        position: absolute; top: 55%; left: 50%; transform: translateX(-50%) rotate(-2deg); white-space: nowrap;
+        padding: 3px 16px; font-weight: 800; font-size: 17px; background: var(--paper); color: var(--ink); border: 3px solid var(--ink);
+      }
+      .menu { position: absolute; left: 50%; top: 64%; transform: translateX(-50%); display: flex; flex-direction: column; gap: 12px; align-items: center; }
+      #pause .menu { top: 38%; }
+      .menu .item {
+        min-width: 300px; padding: 4px 26px 6px; text-align: center; font-size: 26px; white-space: nowrap;
+        font-family: "Bungee", "Impact", sans-serif; background: var(--ink); color: var(--paper);
+        border: 4px solid var(--paper); transform: skewX(-8deg); opacity: 0.8;
+      }
+      .menu .item.on { background: var(--sun); color: var(--ink); border-color: var(--ink); box-shadow: 7px 7px 0 var(--ink); opacity: 1; animation: itemPulse 0.5s ease-in-out infinite alternate; }
+      @keyframes itemPulse { from { transform: skewX(-8deg) scale(1); } to { transform: skewX(-8deg) scale(1.06); } }
+      .hint {
+        position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%); white-space: nowrap;
+        padding: 4px 14px; font-size: 13px; font-weight: 700; background: rgba(23, 19, 28, 0.85); color: var(--paper); border: 2px solid var(--ink);
+      }
+      .heading {
+        position: absolute; top: 14px; left: 50%; transform: translateX(-50%) rotate(-2deg); white-space: nowrap;
+        padding: 0 22px 4px; font-size: 40px; background: var(--sun); color: var(--paper); border: 6px solid var(--ink);
+        box-shadow: 8px 8px 0 var(--ink); -webkit-text-stroke: 7px var(--ink); paint-order: stroke fill;
+      }
+      #pause .heading { top: 20%; font-size: 64px; }
+
+      /* Deretan kartu karakter. */
+      .roster { position: absolute; top: 92px; left: 50%; transform: translateX(-50%); display: flex; gap: 10px; }
+      .card2 {
+        position: relative; width: 86px; padding: 8px 4px 6px; text-align: center; background: var(--paper);
+        border: 4px solid var(--ink); box-shadow: 5px 5px 0 rgba(23, 19, 28, 0.6); transform: skewX(-4deg);
+      }
+      .card2 .nm { margin-top: 6px; font-size: 11px; font-weight: 800; color: var(--ink); line-height: 1.1; }
+      .card2.p1 { border-color: var(--c1); transform: skewX(-4deg) translateY(-8px); }
+      .card2.p2 { border-color: var(--c2); transform: skewX(-4deg) translateY(-8px); }
+      .card2.p1.p2 { border-color: var(--ink); background: var(--sun); }
+      .card2 .tag2 {
+        position: absolute; top: -15px; padding: 0 6px; font-size: 13px; color: var(--paper); border: 3px solid var(--ink);
+        font-family: "Bungee", sans-serif; display: none;
+      }
+      .card2 .tag2.a { left: -8px; background: var(--c1); transform: rotate(-8deg); }
+      .card2 .tag2.b { right: -8px; background: var(--c2); transform: rotate(8deg); }
+      .card2.p1 .tag2.a, .card2.p2 .tag2.b { display: block; }
+      .card2 .tag2.ok::after { content: " ✓"; }
+      /* Ikon jajanan dari bentuk CSS; dua titik mata digambar dengan gradien. */
+      .ico {
+        --eyes: radial-gradient(circle at 36% 40%, #17131c 0 2.6px, transparent 3.2px), radial-gradient(circle at 64% 40%, #17131c 0 2.6px, transparent 3.2px);
+        display: inline-block; border: 3px solid var(--ink); vertical-align: bottom;
+      }
+      .ico.k0 { width: 24px; height: 50px; border-radius: 13px; background: var(--eyes), #d4583c; }
+      .ico.k1 { width: 30px; height: 48px; border-radius: 12px 12px 6px 6px; background: var(--eyes), linear-gradient(#fbf7e6 0 24%, #5aa852 24%); }
+      .ico.k2 { width: 46px; height: 46px; border-radius: 50%; background: var(--eyes), #a98470; margin-top: 4px; }
+      .ico.k3 { width: 40px; height: 42px; border-radius: 7px; background: var(--eyes), linear-gradient(#fbeec2 0 16%, #e9b95a 16%); margin-top: 8px; }
+      .ico.k4 { width: 23px; height: 50px; border-radius: 60% 40% 40% 60% / 50%; background: var(--eyes), #f6cf2f; transform: rotate(14deg); }
+      .ico.k5 { width: 30px; height: 44px; border-radius: 11px; background: var(--eyes), linear-gradient(#d9f6ff 0 26%, #86dcf0 26%); border-bottom-width: 9px; border-bottom-color: #b08a5a; }
+      .ico.k6 { width: 28px; height: 50px; border-radius: 50% 50% 38% 38% / 70% 70% 30% 30%; background: var(--eyes), #f7d03a; border-bottom: 9px solid #5aa852; }
+
+      /* Panel detail karakter yang sedang disorot. */
+      .detail { position: absolute; bottom: 52px; width: 270px; padding: 8px 12px 10px; background: var(--ink); border: 4px solid var(--pc, var(--paper)); box-shadow: 7px 7px 0 rgba(23, 19, 28, 0.55); }
+      #d1 { left: 18px; transform: rotate(-2deg); }
+      #d2 { right: 18px; transform: rotate(2deg); }
+      .detail .who { font-size: 12px; font-weight: 800; color: var(--pc); letter-spacing: 0.08em; }
+      .detail .nm { font-family: "Bungee", sans-serif; font-size: 24px; line-height: 1.1; color: var(--paper); }
+      .detail .role { display: inline-block; margin: 3px 0 6px; padding: 0 8px; font-size: 12px; font-weight: 800; background: var(--pc); color: var(--ink); }
+      .detail .stat { display: grid; grid-template-columns: 62px 1fr; align-items: center; gap: 6px; font-size: 11px; font-weight: 700; margin-top: 3px; }
+      .detail .bar { height: 9px; background: rgba(255, 246, 224, 0.18); }
+      .detail .bar i { display: block; height: 100%; background: var(--pc); }
+      .detail .sp { margin-top: 8px; padding-top: 6px; border-top: 2px dashed rgba(255, 246, 224, 0.3); font-size: 12px; line-height: 1.35; }
+      .detail .sp b { display: block; font-family: "Bungee", sans-serif; font-weight: 400; font-size: 14px; color: var(--sun); }
+      .detail .lock { position: absolute; top: -14px; right: -10px; padding: 0 8px; font-family: "Bungee", sans-serif; font-size: 14px; background: var(--sun); color: var(--ink); border: 3px solid var(--ink); transform: rotate(6deg); display: none; }
+      .detail.locked .lock { display: block; }
+
+      /* Panel mode latihan di kiri atas. */
+      #train {
+        position: absolute; top: 14px; left: 14px; width: 318px; padding: 8px 12px 10px; display: none;
+        background: rgba(23, 19, 28, 0.9); border: 4px solid var(--sun); box-shadow: 6px 6px 0 rgba(23, 19, 28, 0.5);
+        transform: rotate(-1deg); font-size: 12px; font-weight: 700;
+      }
+      #hud[data-mode="match"][data-training="1"] #train { display: block; }
+      #hud[data-training="1"] .scorebox, #hud[data-training="1"] #mp { display: none !important; }
+      #train .tt { font-size: 20px; color: var(--sun); }
+      #train .drills { margin: 4px 0 6px; display: grid; gap: 3px; }
+      #train .drill { padding: 2px 8px; background: rgba(255, 246, 224, 0.1); border-left: 5px solid transparent; }
+      #train .drill.on { background: var(--sun); color: var(--ink); border-left-color: var(--ink); }
+      #train .drill small { display: block; font-weight: 500; opacity: 0.85; }
+      #train .tstats { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; padding: 6px 0; border-block: 2px dashed rgba(255, 246, 224, 0.25); }
+      #train .tstats b { color: var(--sun); font-variant-numeric: tabular-nums; }
+      #train .tkeys { margin-top: 6px; line-height: 1.7; font-weight: 500; }
+
+      /* Plat nama di pojok bawah. */
+      .plate { position: absolute; bottom: 44px; width: 300px; }
+      #c1 { left: 22px; transform: rotate(-3deg); }
+      #c2 { right: 22px; transform: rotate(3deg); text-align: right; }
+      .pname {
+        display: inline-block; padding: 0 14px 2px; font-size: 28px; line-height: 1.2; white-space: nowrap;
+        color: var(--paper); background: var(--pc); border: 4px solid var(--ink);
+        box-shadow: 6px 6px 0 var(--ink); transform: skewX(-8deg);
+        -webkit-text-stroke: 5px var(--ink); paint-order: stroke fill;
+      }
+      .psub {
+        display: inline-block; margin-top: 8px; padding: 2px 12px; font-weight: 800; font-size: 14px;
+        background: var(--paper); color: var(--ink); border: 3px solid var(--ink); transform: skewX(-8deg);
+      }
+      .meter {
+        position: relative; height: 18px; margin-top: 9px; background: var(--ink);
+        border: 3px solid var(--ink); box-shadow: 4px 4px 0 rgba(23, 19, 28, 0.5); transform: skewX(-8deg);
+      }
+      .meter i { position: absolute; inset: 0 auto 0 0; width: 0; background: var(--pc); transition: width 0.12s; }
+      #c2 .meter i { inset: 0 0 0 auto; }
+      .meter::after { content: ""; position: absolute; top: 0; bottom: 0; left: 50%; width: 3px; margin-left: -1.5px; background: var(--ink); }
+      .meter.ready i {
+        background-image: repeating-linear-gradient(115deg, transparent 0 9px, rgba(255, 255, 255, 0.55) 9px 15px);
+        background-size: 34px 100%; animation: slide 0.45s linear infinite;
+      }
+      @keyframes slide { to { background-position: 34px 0; } }
+      .tag { display: none; position: absolute; top: -17px; font-size: 13px; padding: 0 7px; background: var(--sun); color: var(--ink); border: 2px solid var(--ink); }
+      #c1 .tag { right: -6px; transform: rotate(5deg); }
+      #c2 .tag { left: -6px; transform: rotate(-5deg); }
+      .meter.ready .tag { display: block; animation: wiggle 0.25s infinite alternate; }
+      .pips { margin-top: 8px; display: flex; gap: 6px; }
+      #c2 .pips { justify-content: flex-end; }
+      .pips b { width: 15px; height: 15px; border: 3px solid var(--ink); background: var(--paper); transform: rotate(45deg); }
+      .pips b.used { background: var(--ink); }
+
+      /* Callout: pita miring yang menyapu layar. */
+      #callout {
+        position: absolute; left: -15%; right: -15%; top: 27%; height: 118px;
+        display: flex; align-items: center; justify-content: center;
+        background: var(--cc, var(--sun)); border-block: 9px solid var(--ink);
+        font-size: min(82px, 6.6vw); white-space: nowrap; color: var(--paper); -webkit-text-stroke: 9px var(--ink); paint-order: stroke fill;
+        opacity: 0; transform: rotate(-4deg);
+        background-image: radial-gradient(rgba(23, 19, 28, 0.22) 2.2px, transparent 2.6px); background-size: 12px 12px;
+      }
+      /* Versi kecil untuk special di tengah reli, supaya bola tetap kelihatan. */
+      #callout.mini { top: 15%; height: 66px; font-size: 44px; border-block-width: 6px; -webkit-text-stroke-width: 7px; }
+      #callout.show { animation: sweep 1.15s cubic-bezier(0.2, 1.3, 0.3, 1) both; }
+      #callout.mini.show { animation-duration: 0.85s; }
+      @keyframes sweep {
+        0% { transform: rotate(-4deg) translateX(-70%) scaleY(0.2); opacity: 0; }
+        14% { transform: rotate(-4deg) translateX(0) scaleY(1); opacity: 1; }
+        78% { transform: rotate(-4deg) translateX(2%) scaleY(1); opacity: 1; }
+        100% { transform: rotate(-4deg) translateX(60%) scaleY(0.1); opacity: 0; }
+      }
+
+      /* Pop: teks kecil yang meletup di sisi pemukul. */
+      #pop {
+        position: absolute; top: 20%; font-size: 46px; color: var(--pc, var(--sun));
+        -webkit-text-stroke: 8px var(--ink); paint-order: stroke fill; opacity: 0; white-space: nowrap;
+      }
+      #pop.left { left: 9%; --r: -9deg; }
+      #pop.right { right: 9%; --r: 9deg; }
+      #pop.show { animation: pop 0.7s cubic-bezier(0.2, 1.6, 0.4, 1) both; }
+      @keyframes pop {
+        0% { transform: rotate(var(--r)) scale(0.2); opacity: 0; }
+        25% { transform: rotate(var(--r)) scale(1.15); opacity: 1; }
+        75% { transform: rotate(var(--r)) scale(1); opacity: 1; }
+        100% { transform: rotate(var(--r)) scale(0.9) translateY(-14px); opacity: 0; }
+      }
+
+      /* Ulti: layar meredup di sekitar pemain, garis kecepatan, lalu pita nama jurus. */
+      #dim {
+        position: absolute; inset: 0; opacity: 0;
+        background: radial-gradient(circle at var(--fx, 50%) 62%, transparent 9%, rgba(23, 19, 28, 0.82) 46%);
+      }
+      #dim.show { animation: dim 0.5s ease-out both; }
+      @keyframes dim { 0% { opacity: 0; } 12% { opacity: 1; } 70% { opacity: 1; } 100% { opacity: 0; } }
+      #lines {
+        position: absolute; inset: 0; opacity: 0; mix-blend-mode: screen;
+        background: repeating-conic-gradient(from 0deg at var(--fx, 50%) 62%, transparent 0 5deg, var(--pc) 5deg 6.2deg, transparent 6.2deg 11deg, #fff6e0 11deg 11.6deg);
+        -webkit-mask-image: radial-gradient(circle at var(--fx, 50%) 62%, transparent 14%, #000 40%);
+        mask-image: radial-gradient(circle at var(--fx, 50%) 62%, transparent 14%, #000 40%);
+      }
+      #lines.show { animation: lines 0.5s steps(5) both; }
+      @keyframes lines {
+        0% { opacity: 0; transform: scale(1.5) rotate(0deg); }
+        15% { opacity: 0.8; }
+        70% { opacity: 0.8; }
+        100% { opacity: 0; transform: scale(1.1) rotate(14deg); }
+      }
+      #cutin {
+        position: absolute; top: 34%; padding: 2px 70px 8px; font-size: 54px; line-height: 1.05; white-space: nowrap;
+        color: var(--paper); background: var(--pc); border: 8px solid var(--ink); box-shadow: 10px 10px 0 var(--ink);
+        -webkit-text-stroke: 8px var(--ink); paint-order: stroke fill; opacity: 0;
+      }
+      #cutin small { display: block; font-size: 20px; color: var(--ink); -webkit-text-stroke: 0; }
+      #cutin.left { left: -30px; --from: -110%; }
+      #cutin.right { right: -30px; --from: 110%; text-align: right; }
+      #cutin.show { animation: cutin 0.62s cubic-bezier(0.2, 1.25, 0.3, 1) both; }
+      @keyframes cutin {
+        0% { transform: translateX(var(--from)) skewX(-10deg); opacity: 1; }
+        20% { transform: translateX(0) skewX(-10deg); opacity: 1; }
+        72% { transform: translateX(0) skewX(-10deg); opacity: 1; }
+        100% { transform: translateX(var(--from)) skewX(-10deg); opacity: 0; }
+      }
+      /* Kilatan satu-dua frame saat ulti mengenai bola. */
+      #flash { position: absolute; inset: 0; background: var(--pc, #fff); opacity: 0; }
+      #flash.show { animation: flash 0.22s ease-out both; }
+      @keyframes flash { 0% { opacity: 0.95; } 100% { opacity: 0; } }
+
+      #banner { position: absolute; top: 30%; left: 0; right: 0; text-align: center; display: none; }
+      #banner.on { display: block; }
+      #banner .big {
+        display: inline-block; padding: 4px 34px 10px; font-size: 76px; color: var(--paper);
+        background: var(--cc, var(--sun)); border: 8px solid var(--ink); box-shadow: 12px 12px 0 var(--ink);
+        transform: rotate(-3deg) skewX(-8deg); -webkit-text-stroke: 9px var(--ink); paint-order: stroke fill;
+      }
+      #banner small {
+        display: block; width: fit-content; margin: 22px auto 0; padding: 3px 14px; font-weight: 800; font-size: 16px;
+        background: var(--paper); color: var(--ink); border: 3px solid var(--ink);
+      }
+
+      #help {
+        position: absolute; bottom: 6px; left: 50%; transform: translateX(-50%); white-space: nowrap;
+        padding: 3px 12px; font-size: 11.5px; font-weight: 700; line-height: 1.55; text-align: center;
+        background: rgba(23, 19, 28, 0.82); border: 2px solid var(--ink); color: var(--paper);
+      }
+      kbd { display: inline-block; padding: 0 5px; margin: 0 1px; background: var(--paper); color: var(--ink); font: inherit; font-weight: 800; }
+    </style>
+  </head>
+  <body>
+    <div id="hud">
+      <div id="grain"></div>
+      <div id="tension"></div>
+      <div id="top">
+        <div class="scorebox display"><span id="s1">0</span><i>:</i><span id="s2">0</span></div>
+        <br />
+        <div id="rally" class="display"></div>
+        <div id="heat" class="display"></div>
+        <br />
+        <div id="mp" class="display"></div>
+      </div>
+
+      <div class="plate" id="c1">
+        <div class="pname display" id="n1"></div><br />
+        <div class="psub" id="sp1"></div>
+        <div class="meter" id="m1"><i></i><span class="tag display">SIAP!</span></div>
+        <div class="pips" id="t1"><b></b><b></b><b></b></div>
+      </div>
+      <div class="plate" id="c2">
+        <div class="pname display" id="n2"></div><br />
+        <div class="psub" id="sp2"></div>
+        <div class="meter" id="m2"><i></i><span class="tag display">SIAP!</span></div>
+        <div class="pips" id="t2"><b></b><b></b><b></b></div>
+      </div>
+
+      <div id="dim"></div>
+      <div id="lines"></div>
+      <div id="cutin" class="display"></div>
+      <div id="flash"></div>
+      <div id="callout" class="display"></div>
+      <div id="pop" class="display"></div>
+      <div id="banner"></div>
+
+      <div id="help"></div>
+
+      <!-- Panel mode latihan -->
+      <div id="train">
+        <div class="tt display">LATIHAN</div>
+        <div class="drills" id="drills"></div>
+        <div class="tstats" id="tstats"></div>
+        <div class="tkeys"><kbd>1</kbd>–<kbd>4</kbd> ganti latihan · <kbd>R</kbd> ulang bola · <kbd>N</kbd> meter penuh: <b id="tmeter">ya</b> · <kbd>B</kbd> petunjuk: <b id="tcue">ya</b></div>
+      </div>
+
+      <!-- Layar judul -->
+      <div id="title" class="screen">
+        <div class="logo display"><span>TAKRAW</span><b>CLASH</b></div>
+        <div class="tagline">jajanan kampung adu sepak di lapangan 17-an</div>
+        <div class="menu" id="titleMenu"></div>
+        <div class="hint"><kbd>W</kbd><kbd>S</kbd> pilih &nbsp;·&nbsp; <kbd>F</kbd> atau <kbd>Enter</kbd> lanjut</div>
+      </div>
+
+      <!-- Layar pilih karakter -->
+      <div id="select" class="screen">
+        <div class="heading display">PILIH JAGOAN</div>
+        <div class="roster" id="roster"></div>
+        <div class="detail" id="d1"></div>
+        <div class="detail" id="d2"></div>
+        <div class="hint" id="selectHint"></div>
+      </div>
+
+      <!-- Jeda -->
+      <div id="pause" class="screen">
+        <div class="heading display">JEDA</div>
+        <div class="menu" id="pauseMenu"></div>
+        <div class="hint"><kbd>W</kbd><kbd>S</kbd> pilih &nbsp;·&nbsp; <kbd>F</kbd> atau <kbd>Enter</kbd> pilih &nbsp;·&nbsp; <kbd>Esc</kbd> lanjut main</div>
+      </div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

@@ -1,0 +1,975 @@
+// Simulasi murni: tanpa DOM, tanpa Math.random, langkah tetap 60 Hz.
+// State + input yang sama selalu menghasilkan hasil yang sama, supaya nanti
+// bisa dipakai untuk rollback netcode.
+
+export const FPS = 60;
+export const DT = 1 / FPS;
+
+export const COURT_HALF = 8;
+export const CEILING = 13;
+export const NET_H = 2.2;
+export const NET_R = 0.08;
+export const BALL_R = 0.3;
+export const BODY_R = 0.75; // lingkaran badan pemain untuk sentuhan bola
+export const BODY_Y = 0.8; // tinggi pusat lingkaran dari kaki
+export const SMASH_R = 1.15;
+export const WIN_SCORE = 7;
+export const WIN_CAP = 10; // deuce: harus unggul 2, tapi skor 10 selalu menang
+
+// Pemenang pertandingan untuk skor tertentu, atau -1 kalau belum ada.
+export function gameWinner(a: number, b: number): number {
+  if (a >= WIN_CAP || (a >= WIN_SCORE && a - b >= 2)) return 0;
+  if (b >= WIN_CAP || (b >= WIN_SCORE && b - a >= 2)) return 1;
+  return -1;
+}
+
+// Bit 1 = P1 menang kalau dapat poin berikutnya, bit 2 = P2. Bisa dua-duanya (9-9).
+export function matchPointMask(score: readonly [number, number]): number {
+  if (gameWinner(score[0], score[1]) >= 0) return 0; // pertandingan sudah selesai
+  return(gameWinner(score[0] + 1, score[1]) === 0 ? 1 : 0) | (gameWinner(score[0], score[1] + 1) === 1 ? 2 : 0);
+}
+export const MAX_TOUCHES = 3;
+
+export const Btn = {
+  LEFT: 1,
+  RIGHT: 2,
+  UP: 4,
+  DOWN: 8,
+  JUMP: 16,
+  SMASH: 32,
+  DASH: 64,
+  SPECIAL: 128,
+  GUARD: 256,
+} as const;
+
+export type SpecialKind = "fire" | "curve" | "zigzag" | "meteor" | "ghost";
+
+export interface CharDef {
+  name: string;
+  color: number;
+  moveSpeed: number;
+  jumpV: number;
+  smashSpeed: number;
+  special: SpecialKind;
+  specialName: string;
+}
+
+// Roster jajanan. Tampilan tiap karakter ada di foodchar.ts, urutannya harus sama.
+export const CHARS: readonly CharDef[] = [
+  {
+    name: "Bang Sosis",
+    color: 0xff5a3c,
+    moveSpeed: 6.3,
+    jumpV: 12.5,
+    smashSpeed: 18.2,
+    special: "fire",
+    specialName: "Tendangan Bakar",
+  },
+  {
+    name: "Mbak Lontong",
+    color: 0x2f9e6b,
+    moveSpeed: 7.2,
+    jumpV: 13.2,
+    smashSpeed: 15.9,
+    special: "curve",
+    specialName: "Bola Pelintir",
+  },
+  {
+    name: "Pak Bakso",
+    color: 0xc9743a,
+    moveSpeed: 6.0,
+    jumpV: 12.3,
+    smashSpeed: 19.5,
+    special: "fire",
+    specialName: "Bom Bakso",
+  },
+  {
+    name: "Mas Tahu",
+    color: 0x4a7de0,
+    moveSpeed: 6.6,
+    jumpV: 12.8,
+    smashSpeed: 16.5,
+    special: "curve",
+    specialName: "Tahu Dadakan",
+  },
+  {
+    name: "Kak Pisang",
+    color: 0xd9a016,
+    moveSpeed: 7.4,
+    jumpV: 12.6,
+    smashSpeed: 15.9,
+    special: "zigzag",
+    specialName: "Kulit Licin",
+  },
+  {
+    name: "Dek Lilin",
+    color: 0x2fb4d6,
+    moveSpeed: 7.0,
+    jumpV: 13.6,
+    smashSpeed: 16.3,
+    special: "ghost",
+    specialName: "Bola Mencair",
+  },
+  {
+    name: "Bung Jagung",
+    color: 0x9a66e0,
+    moveSpeed: 6.3,
+    jumpV: 13.0,
+    smashSpeed: 16.7,
+    special: "meteor",
+    specialName: "Hujan Jagung",
+  },
+];
+
+// Panas reli: tiap smash yang masuk menaikkan kecepatan bola sampai servis berikutnya.
+export const HEAT_MAX = 25;
+const HEAT_STEP = 0.02;
+// Smash sempurna: tombol ditekan sedikit SEBELUM bola masuk jangkauan, sehingga bola
+// kena 2 sampai 5 frame setelah ditekan. Menekan saat bola sudah di dalam jangkauan
+// (terlambat) atau jauh sebelumnya (terlalu cepat) hanya menghasilkan smash biasa.
+export const PERFECT_FROM = 2;
+export const PERFECT_TO = 5;
+const PERFECT_BOOST = 1.18;
+const METER_PERFECT = 26;
+
+// Bertahan. Bola yang datang lebih kencang dari HARD_SPEED (atau bola jurus) akan
+// terpental liar kalau cuma mengenai badan; tombol terima menjinakkannya.
+export const GUARD_R = 1.25;
+const HARD_SPEED = 14.5;
+const GUARD_ACTIVE = 12;
+const GUARD_RECOVER = 12;
+export const GUARD_PERFECT = 4; // terima sempurna: bola kena dalam 4 frame pertama
+const METER_RECEIVE = 10;
+const METER_RECEIVE_PERFECT = 22;
+
+export const METER_MAX = 100;
+export const SPECIAL_COST = 50;
+export const SPECIAL_R = 1.5;
+const SPECIAL_ACTIVE = 16;
+const SPECIAL_RECOVER = 20;
+export const SUPER_FREEZE = 18;
+const FIRE_SPEED = 27;
+const FIRE_FRAMES = 32; // cukup lama supaya masih "api" saat sampai ke lawan
+const WAVE_FRAMES = 50; // cukup lama supaya gelombangnya masih hidup saat sampai ke lawan
+const WAVE_OMEGA = 0.25;
+const WAVE_AMP = 0.85;
+const WAVE_SPEED = 14.5;
+const WAVE_HEIGHT = 3.7;
+const WAVE_LOW = 2.1;
+const METEOR_RISE = 24;
+const METEOR_TOP = 10.5;
+const METEOR_SPEED = 30;
+const GHOST_FRAMES = 42;
+const GHOST_SPEED = 22;
+const METER_TOUCH = 8;
+const METER_SMASH = 14;
+const METER_CONCEDE = 15;
+
+const BALL_GRAVITY = 16;
+const BALL_MAX_SPEED = 24;
+const BALL_POWER_MAX_SPEED = 30;
+const BALL_SUBSTEPS = 4;
+const PLAYER_GRAVITY = 34;
+const DASH_SPEED = 15;
+const DASH_FRAMES = 8;
+const DASH_COOLDOWN = 30;
+const SMASH_ACTIVE = 10;
+const SMASH_RECOVER = 14;
+const HIT_COOLDOWN = 12;
+const PLAYER_MIN_X = 0.5;
+const PLAYER_MAX_X = COURT_HALF - 0.4;
+
+export interface Player {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  facing: number;
+  grounded: boolean;
+  jumpsLeft: number;
+  dashTimer: number;
+  dashCd: number;
+  airDashUsed: boolean;
+  smashTimer: number;
+  smashRecover: number;
+  specialTimer: number;
+  guardTimer: number;
+  stun: number; // sisa frame terhuyung setelah kewalahan: tidak bisa bergerak atau menyerang
+  meter: number;
+  hitCd: number;
+  prev: number;
+}
+
+export interface Ball {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  power: number; // sisa frame "bola api": tanpa gravitasi, batas kecepatan naik
+  curveSide: number; // pemilik Bola Pelintir yang belum menukik, -1 = tidak ada
+  wave: number; // sisa frame zig-zag
+  waveT: number;
+  waveBase: number; // tinggi tengah gelombang zig-zag
+  rise: number; // sisa frame naik sebelum jatuh lurus (Bola Blusukan)
+  tx: number; // titik jatuh Bola Blusukan
+  ghost: number; // sisa frame bola nyaris tak terlihat
+}
+
+function clearBallFx(b: Ball): void {
+  b.power = 0;
+  b.curveSide = -1;
+  b.wave = 0;
+  b.waveT = 0;
+  b.waveBase = 0;
+  b.rise = 0;
+  b.tx = 0;
+  b.ghost = 0;
+}
+
+export type Phase = "serve" | "play" | "point" | "over";
+
+export type GameEvent =
+  | { type: "touch"; player: number; x: number; y: number; weak: boolean }
+  | { type: "guard"; player: number }
+  // elapsed = jumlah frame antara tombol ditekan dan bola kena; dipakai mode latihan.
+  | { type: "receive"; player: number; x: number; y: number; perfect: boolean; elapsed: number }
+  | { type: "smash"; player: number; x: number; y: number; perfect: boolean; elapsed: number }
+  | { type: "miss"; player: number; kind: "smash" | "guard" }
+  | { type: "bounce" }
+  | { type: "jump"; player: number }
+  | { type: "dash"; player: number; dir: number }
+  | { type: "land"; player: number }
+  | { type: "whiff"; player: number }
+  | { type: "special"; player: number }
+  | { type: "specialHit"; player: number; kind: SpecialKind; x: number; y: number }
+  | { type: "curveDrop" }
+  | { type: "score"; winner: number; fault: boolean }
+  | { type: "over"; winner: number };
+
+export interface GameState {
+  frame: number;
+  phase: Phase;
+  timer: number;
+  hitstop: number;
+  chars: [number, number];
+  players: [Player, Player];
+  ball: Ball;
+  score: [number, number];
+  server: number;
+  rally: number; // jumlah pukulan dalam reli yang sedang berjalan
+  heat: number; // panas reli, naik tiap smash yang masuk
+  lastSide: number; // sisi yang terakhir menyentuh bola, -1 = belum ada
+  touches: number;
+  events: GameEvent[];
+}
+
+function makePlayer(side: number): Player {
+  return {
+    x: side === 0 ? -4 : 4,
+    y: 0,
+    vx: 0,
+    vy: 0,
+    facing: side === 0 ? 1 : -1,
+    grounded: true,
+    jumpsLeft: 2,
+    dashTimer: 0,
+    dashCd: 0,
+    airDashUsed: false,
+    smashTimer: 0,
+    smashRecover: 0,
+    specialTimer: 0,
+    guardTimer: 0,
+    stun: 0,
+    meter: 0,
+    hitCd: 0,
+    prev: 0,
+  };
+}
+
+export function createState(chars: [number, number] = [0, 1]): GameState {
+  const s: GameState = {
+    frame: 0,
+    phase: "serve",
+    timer: 0,
+    hitstop: 0,
+    chars: [chars[0], chars[1]],
+    players: [makePlayer(0), makePlayer(1)],
+    ball: { x: 0, y: 0, vx: 0, vy: 0, power: 0, curveSide: -1, wave: 0, waveT: 0, waveBase: 0, rise: 0, tx: 0, ghost: 0 },
+    score: [0, 0],
+    server: 0,
+    rally: 0,
+    heat: 0,
+    lastSide: -1,
+    touches: 0,
+    events: [],
+  };
+  startServe(s);
+  return s;
+}
+
+function startServe(s: GameState): void {
+  const old = s.players;
+  s.players = [makePlayer(0), makePlayer(1)];
+  for (let i = 0; i < 2; i++) {
+    s.players[i].prev = old[i].prev;
+    s.players[i].meter = old[i].meter;
+  }
+  s.ball.x = s.server === 0 ? -4 : 4;
+  s.ball.y = 4.5;
+  s.ball.vx = 0;
+  s.ball.vy = 0;
+  clearBallFx(s.ball);
+  s.lastSide = -1;
+  s.touches = 0;
+  s.rally = 0;
+  s.heat = 0;
+  s.phase = "serve";
+  s.timer = 45;
+}
+
+function award(s: GameState, winner: number, fault: boolean): void {
+  s.score[winner]++;
+  addMeter(s.players[1 - winner], METER_CONCEDE);
+  clearBallFx(s.ball);
+  s.server = winner;
+  s.phase = "point";
+  s.timer = 75;
+  s.events.push({ type: "score", winner, fault });
+}
+
+// Pengali kecepatan bola dari panas reli: 1.0 sampai 1.5.
+export function heatMul(s: GameState): number {
+  return 1 + HEAT_STEP * Math.min(s.heat, HEAT_MAX);
+}
+
+function addMeter(p: Player, amount: number): void {
+  p.meter = Math.min(METER_MAX, p.meter + amount);
+}
+
+function pressed(p: Player, input: number, bit: number): boolean {
+  return (input & bit) !== 0 && (p.prev & bit) === 0;
+}
+
+function stepPlayer(s: GameState, i: number, rawInput: number): void {
+  const p = s.players[i];
+  // Terhuyung: semua input diabaikan sampai pulih.
+  let input = rawInput;
+  if (p.stun > 0) {
+    p.stun--;
+    input = 0;
+  }
+  const c = CHARS[s.chars[i]];
+  const side = i === 0 ? -1 : 1;
+  const ax = (input & Btn.RIGHT ? 1 : 0) - (input & Btn.LEFT ? 1 : 0);
+
+  if (p.dashCd > 0) p.dashCd--;
+  if (p.hitCd > 0) p.hitCd--;
+
+  // Special dan smash: jendela aktif, lalu recovery (tidak bisa menyerang lagi).
+  if (p.specialTimer > 0) {
+    p.specialTimer--;
+    if (p.specialTimer === 0) p.smashRecover = SPECIAL_RECOVER;
+  } else if (p.smashTimer > 0) {
+    p.smashTimer--;
+    if (p.smashTimer === 0) {
+      p.smashRecover = SMASH_RECOVER;
+      s.events.push({ type: "miss", player: i, kind: "smash" });
+    }
+  } else if (p.guardTimer > 0) {
+    p.guardTimer--;
+    if (p.guardTimer === 0) {
+      p.smashRecover = GUARD_RECOVER;
+      s.events.push({ type: "miss", player: i, kind: "guard" });
+    }
+  } else if (p.smashRecover > 0) {
+    p.smashRecover--;
+  } else if (pressed(p, input, Btn.GUARD)) {
+    p.guardTimer = GUARD_ACTIVE;
+    s.events.push({ type: "guard", player: i });
+  } else if (pressed(p, input, Btn.SPECIAL) && p.meter >= SPECIAL_COST) {
+    p.meter -= SPECIAL_COST;
+    p.specialTimer = SPECIAL_ACTIVE;
+    s.hitstop = SUPER_FREEZE; // semua membeku sesaat: momen "ulti"
+    s.events.push({ type: "special", player: i });
+  } else if (pressed(p, input, Btn.SMASH)) {
+    p.smashTimer = SMASH_ACTIVE;
+    s.events.push({ type: "whiff", player: i });
+  }
+
+  // Dash: sekali di udara, cooldown di darat.
+  if (p.dashTimer === 0 && pressed(p, input, Btn.DASH)) {
+    const canDash = p.grounded ? p.dashCd === 0 : !p.airDashUsed;
+    if (canDash) {
+      const dir = ax !== 0 ? ax : p.facing;
+      p.dashTimer = DASH_FRAMES;
+      p.dashCd = DASH_COOLDOWN;
+      p.vx = dir * DASH_SPEED;
+      p.vy = 0;
+      if (!p.grounded) p.airDashUsed = true;
+      s.events.push({ type: "dash", player: i, dir });
+    }
+  }
+
+  if (p.dashTimer > 0) {
+    p.dashTimer--;
+    if (p.dashTimer === 0) p.vx *= 0.45;
+  } else {
+    const target = ax * c.moveSpeed;
+    p.vx += (target - p.vx) * (p.grounded ? 0.35 : 0.16);
+    const fastFall = !p.grounded && (input & Btn.DOWN) !== 0 && p.vy < 2;
+    p.vy -= PLAYER_GRAVITY * (fastFall ? 1.7 : 1) * DT;
+  }
+
+  if (pressed(p, input, Btn.JUMP) && p.jumpsLeft > 0) {
+    p.vy = p.grounded ? c.jumpV : c.jumpV * 0.88;
+    p.jumpsLeft--;
+    p.grounded = false;
+    p.dashTimer = 0;
+    s.events.push({ type: "jump", player: i });
+  }
+
+  p.x += p.vx * DT;
+  p.y += p.vy * DT;
+
+  if (p.y <= 0) {
+    p.y = 0;
+    p.vy = 0;
+    if (!p.grounded) s.events.push({ type: "land", player: i });
+    p.grounded = true;
+    p.jumpsLeft = 2;
+    p.airDashUsed = false;
+  } else {
+    p.grounded = false;
+    if (p.jumpsLeft === 2) p.jumpsLeft = 1; // jatuh dari darat tanpa lompat
+  }
+
+  // Pemain tidak boleh menyeberang net atau keluar lapangan.
+  const ox = p.x * side;
+  if (ox < PLAYER_MIN_X) {
+    p.x = PLAYER_MIN_X * side;
+    p.vx = 0;
+  } else if (ox > PLAYER_MAX_X) {
+    p.x = PLAYER_MAX_X * side;
+    p.vx = 0;
+  }
+}
+
+function tryHit(s: GameState, i: number, input: number): void {
+  const p = s.players[i];
+  const b = s.ball;
+  if (p.hitCd > 0) return;
+  // Pemain yang sedang terhuyung tidak bisa menyentuh bola sama sekali; kalau tidak,
+  // bola yang baru saja membuatnya kewalahan akan "terselamatkan" sendiri oleh badannya.
+  if (p.stun > 0) return;
+  // Bola jurus tidak melukai pemukulnya sendiri: selama efeknya masih aktif, bola itu
+  // menembus badan pemiliknya.
+  const ownFx =
+    s.lastSide === i && (b.power > 0 || b.curveSide >= 0 || b.wave > 0 || b.rise > 0 || b.ghost > 0);
+  if (ownFx) return;
+
+  const c = CHARS[s.chars[i]];
+  const special = p.specialTimer > 0;
+  const smashing = p.smashTimer > 0;
+  const guarding = p.guardTimer > 0;
+  // Bola jurus hanya bisa di-smash balik dengan timing sempurna.
+  const smashElapsed = SMASH_ACTIVE - p.smashTimer;
+  const smashPerfect = smashing && smashElapsed >= PERFECT_FROM && smashElapsed <= PERFECT_TO;
+  const reach = (special ? SPECIAL_R : smashing ? SMASH_R : guarding ? GUARD_R : BODY_R) + BALL_R;
+  const dx = b.x - p.x;
+  const dy = b.y - (p.y + BODY_Y);
+  if (dx * dx + dy * dy > reach * reach) return;
+
+  if (s.lastSide !== i) {
+    s.lastSide = i;
+    s.touches = 0;
+  }
+  s.touches++;
+  if (s.touches > MAX_TOUCHES) {
+    award(s, 1 - i, true);
+    return;
+  }
+
+  s.rally++;
+
+  const dir = i === 0 ? 1 : -1;
+  const ax = (input & Btn.RIGHT ? 1 : 0) - (input & Btn.LEFT ? 1 : 0);
+  const ay = (input & Btn.UP ? 1 : 0) - (input & Btn.DOWN ? 1 : 0);
+  p.hitCd = HIT_COOLDOWN;
+  // Seberapa berbahaya bola yang datang, dicatat sebelum efeknya dihapus.
+  const speedIn = Math.hypot(b.vx, b.vy);
+  const hadFx = b.power > 0 || b.curveSide >= 0 || b.wave > 0 || b.rise > 0 || b.ghost > 0;
+  // Hanya jurus api yang "berat": kalau kena badan tanpa diterima, hampir pasti jadi poin.
+  // Jurus lain mengandalkan tipuan arah atau mata, jadi hukumannya seperti smash biasa.
+  const heavyFx = b.power > 0 && b.rise === 0 && Math.abs(b.vx) > 1;
+  const hard = speedIn > HARD_SPEED || hadFx;
+  clearBallFx(b);
+
+  if (special) {
+    p.specialTimer = 0;
+    p.smashRecover = SPECIAL_RECOVER;
+    if (c.special === "fire") {
+      // Jurus api: bola melesat lurus tanpa gravitasi, dibidik ke lantai lapangan lawan.
+      // Tahan maju = jauh, tahan mundur = dekat net, netral = tengah.
+      const fwdHeld = ax * dir;
+      const tx = dir * (fwdHeld > 0 ? 6.4 : fwdHeld < 0 ? 2.3 : 4.3);
+      let nx = tx - b.x;
+      let ny = -b.y;
+      // Kalau garis lurus ke sasaran tersangkut net, bidik sedikit di atas pita net saja.
+      const span = (tx - b.x) * dir;
+      const yAtNet = span > 0.01 ? b.y * (1 - Math.max(0, -b.x * dir) / span) : 0;
+      let frames = FIRE_FRAMES;
+      b.tx = tx;
+      if (b.x * dir < 0 && yAtNet < NET_H + 0.45) {
+        // Dua ruas: naik dulu ke titik di atas net, lalu berbelok ke sasaran di lantai.
+        nx = dir * 0.35 - b.x;
+        ny = NET_H + 0.9 - b.y;
+        frames = Math.max(2, Math.ceil(Math.hypot(nx, ny) / (FIRE_SPEED * DT)));
+        b.waveBase = 1; // penanda: belok setelah ruas pertama habis
+      }
+      const len = Math.hypot(nx, ny) || 1;
+      b.vx = (nx / len) * FIRE_SPEED;
+      b.vy = (ny / len) * FIRE_SPEED;
+      b.power = frames;
+      s.hitstop = 9;
+    } else if (c.special === "curve") {
+      // Bola Pelintir: lob tinggi yang menukik tajam begitu melewati net.
+      const tApex = 0.62;
+      b.vx = dir * Math.max(4, (Math.abs(b.x) + 1) / tApex);
+      b.vy = 13;
+      b.curveSide = i;
+      s.hitstop = 6;
+    } else if (c.special === "zigzag") {
+      // Zig-zag: bola melaju mendatar sambil naik-turun, susah ditebak tingginya.
+      b.vx = dir * WAVE_SPEED;
+      b.vy = 0;
+      b.wave = WAVE_FRAMES;
+      b.waveT = 0;
+      b.tx = dir;
+      b.waveBase = Math.max(b.y, NET_H + 1.0);
+      s.hitstop = 6;
+    } else if (c.special === "meteor") {
+      // Blusukan: bola naik tinggi lalu jatuh lurus di titik pilihan.
+      // Tahan maju = jauh, tahan mundur = dekat net, netral = tengah.
+      const fwdHeld = ax * dir;
+      b.tx = dir * (fwdHeld > 0 ? 6.3 : fwdHeld < 0 ? 1.7 : 4.0);
+      b.rise = METEOR_RISE;
+      b.vx = (b.tx - b.x) / (METEOR_RISE * DT);
+      b.vy = (METEOR_TOP - b.y) / (METEOR_RISE * DT);
+      s.hitstop = 7;
+    } else {
+      // Siluman: smash cepat yang bolanya nyaris tak terlihat untuk sesaat.
+      let nx = ax;
+      let ny = ay;
+      if (nx === 0 && ny === 0) {
+        nx = dir;
+        ny = p.grounded ? 0.45 : -0.3;
+      } else if (nx !== 0 && ny === 0) {
+        ny = p.grounded ? 0.25 : -0.1;
+      }
+      const len = Math.hypot(nx, ny);
+      b.vx = (nx / len) * GHOST_SPEED;
+      b.vy = (ny / len) * GHOST_SPEED;
+      b.ghost = GHOST_FRAMES;
+      s.hitstop = 6;
+    }
+    s.heat += 2;
+    s.events.push({ type: "specialHit", player: i, kind: c.special, x: b.x, y: b.y });
+  } else if (smashing && (!hadFx || smashPerfect)) {
+    let nx = ax;
+    let ny = ay;
+    if (nx === 0 && ny === 0) {
+      nx = dir;
+      ny = p.grounded ? 0.6 : -0.35;
+    } else if (nx !== 0 && ny === 0) {
+      ny = p.grounded ? 0.25 : -0.12;
+    }
+    const len = Math.hypot(nx, ny);
+    const elapsed = SMASH_ACTIVE - p.smashTimer;
+    const perfect = elapsed >= PERFECT_FROM && elapsed <= PERFECT_TO;
+    const speed = c.smashSpeed * heatMul(s) * (perfect ? PERFECT_BOOST : 1);
+    b.vx = (nx / len) * speed + p.vx * 0.3;
+    b.vy = (ny / len) * speed;
+    p.smashTimer = 0;
+    p.smashRecover = SMASH_RECOVER;
+    addMeter(p, perfect ? METER_PERFECT : METER_SMASH);
+    s.heat += perfect ? 2 : 1;
+    s.hitstop = 5 + Math.floor(Math.min(s.heat, HEAT_MAX) / 6) + (perfect ? 3 : 0);
+    s.events.push({ type: "smash", player: i, x: b.x, y: b.y, perfect, elapsed });
+  } else {
+    const d = Math.hypot(dx, dy);
+    const ux = d > 1e-6 ? dx / d : 0;
+    const uy = d > 1e-6 ? dy / d : 1;
+    const guardElapsed = GUARD_ACTIVE - p.guardTimer;
+    const perfect = guarding && guardElapsed <= GUARD_PERFECT;
+    if (guarding) {
+      // Terima: bola dijinakkan jadi umpan pelan di dekat badan.
+      b.vx = dir * 0.8 + ax * 2;
+      b.vy = perfect ? 11 : 9.5;
+      p.guardTimer = 0;
+      p.smashRecover = perfect ? 0 : 6; // terima sempurna: langsung bisa menyerang balik
+      addMeter(p, (perfect ? METER_RECEIVE_PERFECT : METER_RECEIVE) + (hadFx ? 10 : 0));
+      s.hitstop = perfect ? 6 : 3;
+      s.events.push({ type: "receive", player: i, x: b.x, y: b.y, perfect, elapsed: guardElapsed });
+    } else if (hard) {
+      // Kewalahan: bola kencang cuma kesenggol badan (atau bola api menjebol terima biasa),
+      // terpental tak terkendali.
+      if (guarding) {
+        p.guardTimer = 0;
+        p.smashRecover = GUARD_RECOVER;
+      }
+      if (smashing) {
+        p.smashTimer = 0;
+        p.smashRecover = SMASH_RECOVER;
+      }
+      // Bola menyerempet badan dan terus melaju ke belakang dengan sebagian kecepatannya.
+      // (Tidak dipantulkan balik: itu sama saja mengembalikan bola ke lawan.)
+      // Bola jurus yang sama sekali tidak diterima jatuhnya dekat dan cepat, dan pemain
+      // terhuyung sebentar: hanya karakter gesit yang masih sempat mengejar. Kalau sempat
+      // memasang terima (walau tidak sempurna), akibatnya seringan smash biasa.
+      const harsh = heavyFx && !guarding;
+      p.stun = harsh ? 24 : guarding ? 0 : 9;
+      b.vx *= harsh ? 0.2 : 0.35;
+      if (Math.abs(b.vx) < 2.5) b.vx = -dir * 3.5; // bola dari atas terpental ke arah belakang
+      b.vy = harsh ? 1.6 : speedIn * 0.18 + 3;
+      s.events.push({ type: "touch", player: i, x: b.x, y: b.y, weak: true });
+    } else {
+      // Sentuhan biasa: bola diangkat, arah stick menentukan ke mana.
+      b.vx = dir * 2.5 + ax * 3 + p.vx * 0.5;
+      b.vy = 10 + (ay > 0 ? 2 : 0) + Math.max(0, p.vy) * 0.25;
+      addMeter(p, METER_TOUCH);
+      s.events.push({ type: "touch", player: i, x: b.x, y: b.y, weak: false });
+    }
+    b.x = p.x + ux * reach;
+    b.y = Math.max(BALL_R + 0.01, p.y + BODY_Y + uy * reach);
+  }
+}
+
+function stepBall(s: GameState, inputs: readonly [number, number]): void {
+  const b = s.ball;
+  const h = DT / BALL_SUBSTEPS;
+  let powered = b.power > 0;
+  if (powered) b.power--;
+  // Jurus api ruas kedua: sampai di atas net, berbelok lurus ke sasaran di lantai.
+  if (powered && b.power === 0 && b.waveBase === 1 && b.wave === 0 && b.rise === 0) {
+    const nx = b.tx - b.x;
+    const ny = -b.y;
+    const len = Math.hypot(nx, ny) || 1;
+    b.vx = (nx / len) * FIRE_SPEED;
+    b.vy = (ny / len) * FIRE_SPEED;
+    b.waveBase = 0;
+    b.power = FIRE_FRAMES;
+  }
+  if (b.ghost > 0) b.ghost--;
+
+  if (b.rise > 0) {
+    // Fase naik Bola Blusukan; di puncak bola berhenti lalu jatuh lurus.
+    powered = true;
+    if (--b.rise === 0) {
+      b.vx = 0;
+      b.vy = -METEOR_SPEED;
+      b.power = 40;
+      s.events.push({ type: "curveDrop" });
+    }
+  } else if (b.wave > 0) {
+    // Zig-zag: kecepatan vertikal diatur supaya bola mengikuti gelombang.
+    powered = true;
+    // b.tx menyimpan arah maju bola zig-zag (+1 atau -1).
+    const wdir = b.tx >= 0 ? 1 : -1;
+    // Selama masih rendah di sisi sendiri, bola naik dulu hampir tegak supaya tidak
+    // menabrak net; gelombangnya baru berjalan setelah cukup tinggi.
+    const climbing = b.x * wdir < 0 && b.y < NET_H + 0.75;
+    if (b.x * wdir > 5.6) {
+      // Sudah jauh di lapangan lawan: gelombang selesai dan bola menukik ke lantai belakang.
+      b.wave = 0;
+      b.vy = Math.min(b.vy, -7);
+    } else if (climbing) {
+      b.vy = 16;
+      b.vx = wdir * 2.5;
+      b.waveBase = Math.max(b.waveBase, b.y);
+    } else {
+      b.wave--;
+      b.waveT++;
+      // Tinggi di sisi sendiri supaya lolos dari net, lalu turun setinggi badan di sisi lawan.
+      const center = b.x * wdir > 0.6 ? WAVE_LOW : WAVE_HEIGHT;
+      b.waveBase += Math.min(0.24, Math.max(-0.24, (center - b.waveBase) * 0.2));
+      const want = b.waveBase + WAVE_AMP * Math.sin(WAVE_OMEGA * b.waveT);
+      b.vy = Math.min(16, Math.max(-16, (want - b.y) / DT));
+      b.vx = wdir * WAVE_SPEED;
+    }
+  }
+  const maxSpeed = powered ? BALL_POWER_MAX_SPEED : BALL_MAX_SPEED * heatMul(s);
+
+  for (let n = 0; n < BALL_SUBSTEPS; n++) {
+    if (!powered) b.vy -= BALL_GRAVITY * h;
+    const speed = Math.hypot(b.vx, b.vy);
+    if (speed > maxSpeed) {
+      b.vx *= maxSpeed / speed;
+      b.vy *= maxSpeed / speed;
+    }
+    b.x += b.vx * h;
+    b.y += b.vy * h;
+
+    // Bola Pelintir menukik setelah melewati net ke sisi lawan.
+    if (b.curveSide >= 0) {
+      const dir = b.curveSide === 0 ? 1 : -1;
+      if (b.x * dir > 0.5) {
+        b.vx = dir * 1.2;
+        b.vy = -15.5;
+        b.curveSide = -1;
+        s.events.push({ type: "curveDrop" });
+      }
+    }
+
+    // Dinding samping dan langit-langit.
+    if (b.x < -COURT_HALF + BALL_R) {
+      b.x = -COURT_HALF + BALL_R;
+      b.vx = Math.abs(b.vx) * 0.8;
+      s.events.push({ type: "bounce" });
+    } else if (b.x > COURT_HALF - BALL_R) {
+      b.x = COURT_HALF - BALL_R;
+      b.vx = -Math.abs(b.vx) * 0.8;
+      s.events.push({ type: "bounce" });
+    }
+    if (b.y > CEILING - BALL_R) {
+      b.y = CEILING - BALL_R;
+      b.vy = -Math.abs(b.vy) * 0.8;
+    }
+
+    // Net: kapsul dari (0,0) sampai (0,NET_H).
+    const cy = Math.min(Math.max(b.y, 0), NET_H);
+    const nx = b.x;
+    const ny = b.y - cy;
+    const dist = Math.hypot(nx, ny);
+    const minDist = BALL_R + NET_R;
+    if (dist < minDist) {
+      let ux: number;
+      let uy: number;
+      if (dist > 1e-6) {
+        ux = nx / dist;
+        uy = ny / dist;
+      } else {
+        ux = b.vx > 0 ? -1 : 1;
+        uy = 0;
+      }
+      b.x = ux * minDist;
+      b.y = cy + uy * minDist;
+      const vn = b.vx * ux + b.vy * uy;
+      if (vn < 0) {
+        b.vx -= 1.6 * vn * ux;
+        b.vy -= 1.6 * vn * uy;
+        s.events.push({ type: "bounce" });
+      }
+    }
+
+    tryHit(s, 0, inputs[0]);
+    if (s.phase !== "play") return;
+    tryHit(s, 1, inputs[1]);
+    if (s.phase !== "play") return;
+    if (s.hitstop > 0) return;
+
+    // Bola menyentuh lantai: poin untuk sisi seberang.
+    if (b.y <= BALL_R) {
+      b.y = BALL_R;
+      b.vx = 0;
+      b.vy = 0;
+      award(s, b.x < 0 ? 1 : 0, false);
+      return;
+    }
+  }
+}
+
+export function step(s: GameState, inputs: readonly [number, number]): void {
+  s.events.length = 0;
+
+  // Hitstop: semua membeku beberapa frame setelah smash kena.
+  if (s.hitstop > 0) {
+    s.hitstop--;
+    return;
+  }
+  s.frame++;
+
+  if (s.phase === "over") {
+    const any =
+      pressed(s.players[0], inputs[0], Btn.JUMP | Btn.SMASH) ||
+      pressed(s.players[1], inputs[1], Btn.JUMP | Btn.SMASH);
+    s.players[0].prev = inputs[0];
+    s.players[1].prev = inputs[1];
+    if (s.timer > 0) s.timer--;
+    else if (any) {
+      s.score = [0, 0];
+      s.players[0].meter = 0;
+      s.players[1].meter = 0;
+      s.server = 0;
+      startServe(s);
+    }
+    return;
+  }
+
+  stepPlayer(s, 0, inputs[0]);
+  stepPlayer(s, 1, inputs[1]);
+
+  if (s.phase === "serve") {
+    if (--s.timer <= 0) s.phase = "play";
+  } else if (s.phase === "play") {
+    stepBall(s, inputs);
+  } else if (s.phase === "point") {
+    if (--s.timer <= 0) {
+      const winner = gameWinner(s.score[0], s.score[1]);
+      if (winner >= 0) {
+        s.phase = "over";
+        s.timer = 40;
+        s.events.push({ type: "over", winner });
+      } else {
+        startServe(s);
+      }
+    }
+  }
+
+  s.players[0].prev = inputs[0];
+  s.players[1].prev = inputs[1];
+}
+
+// CPU sederhana untuk sisi kanan. Deterministik: hanya membaca state.
+// Tingkat CPU: 0 mudah, 1 normal, 2 sulit. Angkanya peluang (persen) tiap keputusan.
+const CPU_LEVELS = [
+  { jump: 40, smash: 45, perfect: 2, special: 30, sharp: 4, guard: 26, lazy: 3, miss: 24 },
+  { jump: 70, smash: 85, perfect: 18, special: 60, sharp: 25, guard: 62, lazy: 0, miss: 9 },
+  { jump: 85, smash: 94, perfect: 42, special: 78, sharp: 55, guard: 92, lazy: 0, miss: 0 },
+] as const;
+
+export function cpuInput(s: GameState, i: number, level = 1): number {
+  const L = CPU_LEVELS[Math.min(2, Math.max(0, level))];
+  const p = s.players[i];
+  const b = s.ball;
+  const side = i === 0 ? -1 : 1;
+  const toward = side === 1 ? Btn.LEFT : Btn.RIGHT; // arah ke net
+  const away = side === 1 ? Btn.RIGHT : Btn.LEFT;
+  let out = 0;
+
+  if (s.phase === "over") return 0;
+
+  const ballOnMySide = b.x * side > -0.3;
+  const incoming = b.vx * side > 0.5;
+  let targetX = 4 * side;
+
+  if (s.phase !== "point" && (ballOnMySide || incoming)) {
+    // Perkiraan titik jatuh bola di ketinggian badan (balistik, tanpa pantulan).
+    const hitY = 1.3;
+    const disc = b.vy * b.vy + 2 * BALL_GRAVITY * Math.max(0, b.y - hitY);
+    const t = (b.vy + Math.sqrt(disc)) / BALL_GRAVITY;
+    let px = b.x + b.vx * t;
+    const lim = COURT_HALF - BALL_R;
+    if (px > lim) px = lim - (px - lim) * 0.8;
+    if (px < -lim) px = -lim + (-lim - px) * 0.8;
+    if (px * side > 0.2) targetX = px + 0.35 * side; // berdiri sedikit di belakang bola
+  }
+  // Bola Blusukan lawan: CPU kadang membaca titik jatuhnya selagi bola masih naik.
+  if (b.rise > 0 && b.tx * side > 0 && (Math.imul(s.rally + s.score[0] + 3, 40503) >>> 0) % 100 < 68) {
+    targetX = b.tx + 0.3 * side;
+  }
+  // Bola Siluman: CPU juga "tidak melihat" bolanya, jadi tebakannya meleset.
+  if (b.ghost > 0) {
+    targetX += (((Math.imul(s.rally + 11, 2654435761) >>> 0) % 5) - 2) * 1.8;
+  }
+  // Bola Pelintir lawan akan menukik dekat net; CPU kadang membacanya, kadang tidak.
+  if (b.curveSide === 1 - i && (Math.imul(s.score[0] + s.score[1] + 7, 40503) >>> 0) % 100 < 45) {
+    targetX = 1.5 * side;
+  }
+
+  // Salah baca posisi: di sebagian reli CPU berdiri agak meleset dari titik jatuh bola.
+  if ((Math.imul(s.rally * 3 + i * 7 + (s.score[0] + s.score[1]) * 5, 40503) >>> 0) % 100 < L.miss) {
+    targetX += 1.3 * side;
+  }
+  const ox = Math.min(Math.max(targetX * side, PLAYER_MIN_X + 0.2), PLAYER_MAX_X - 0.2);
+  const dxT = ox - p.x * side;
+  // CPU mudah bergerak tersendat: tiap beberapa frame dia diam.
+  const moving = L.lazy === 0 || s.frame % L.lazy !== 0;
+  if (moving && dxT > 0.25) out |= away;
+  else if (moving && dxT < -0.25) out |= toward;
+
+  const dx = Math.abs(b.x - p.x);
+  const dy = b.y - (p.y + BODY_Y);
+  const roll = (Math.imul(s.frame >>> 3, 2654435761) >>> 0) % 100;
+
+  if (s.phase === "play" && ballOnMySide) {
+    // Lompat menyambut bola tinggi yang sedang turun.
+    // Jauh dari net smash hampir pasti nyangkut, jadi CPU cukup mengoper.
+    const nearNet = p.x * side < 3.4;
+    if (nearNet && p.grounded && dx < 1.3 && b.y > 2.6 && b.y < 4.8 && b.vy < 1 && roll < L.jump) {
+      if ((p.prev & Btn.JUMP) === 0) out |= Btn.JUMP;
+    }
+    // Smash kalau bola dalam jangkauan di udara dan sudah di atas net.
+    // Sesekali CPU mengincar smash sempurna: menekan sekitar 3 frame sebelum bola
+    // masuk jangkauan, dengan memperkirakan posisi bola dan dirinya sendiri.
+    const LEAD = 3 * DT;
+    const dNow = Math.hypot(b.x - p.x, dy);
+    const dSoon = Math.hypot(
+      b.x + b.vx * LEAD - (p.x + p.vx * LEAD),
+      b.y + b.vy * LEAD - (p.y + p.vy * LEAD + BODY_Y),
+    );
+    const wantsPerfect = (Math.imul(s.rally * 7 + i * 13 + s.score[0] + s.score[1], 40503) >>> 0) % 100 < L.perfect;
+    const anticipate = wantsPerfect && dNow > SMASH_R + BALL_R + 0.03 && dSoon < SMASH_R + BALL_R - 0.08;
+    const inRange = dx < 1.3 && Math.abs(dy) < 1.2;
+    if (
+      nearNet &&
+      !p.grounded &&
+      (inRange || anticipate) &&
+      b.y > NET_H + 0.5 &&
+      p.smashRecover === 0 &&
+      (roll < L.smash || anticipate)
+    ) {
+      // Pilih arah yang benar-benar melewati net: menukik kalau bisa, datar kalau tidak.
+      // Kalau dua-duanya bakal nyangkut, CPU tidak memaksa smash.
+      const smashV = CHARS[s.chars[i]].smashSpeed * heatMul(s);
+      const clearsNet = (ny: number): boolean => {
+        const len = Math.hypot(1, ny);
+        const vx = smashV / len;
+        const vy = (ny / len) * smashV;
+        const t = Math.abs(b.x) / vx;
+        const yAtNet = b.y + vy * t - 0.5 * BALL_GRAVITY * t * t;
+        return yAtNet > NET_H + NET_R + BALL_R + 0.25;
+      };
+      const down = clearsNet(-1);
+      const flat = clearsNet(-0.12);
+      if (down || flat) {
+        if ((p.prev & Btn.SMASH) === 0) out |= Btn.SMASH;
+        out = (out & ~away) | toward;
+        if (down) out |= Btn.DOWN;
+      }
+    }
+    // Special kalau meter cukup: Bola Pelintir dari mana saja, Tendangan Api hanya dekat net.
+    const kind = CHARS[s.chars[i]].special;
+    const fromAnywhere = kind === "curve" || kind === "zigzag" || kind === "meteor";
+    const specialOk = fromAnywhere
+      ? dx < 1.4 && Math.abs(dy) < 1.4 && s.touches >= 1 && s.lastSide === i
+      : nearNet && !p.grounded && dx < 1.5 && Math.abs(dy) < 1.4 && b.y > NET_H + 0.5;
+    if (p.meter >= SPECIAL_COST && specialOk && roll < L.special && p.smashRecover === 0) {
+      out &= ~Btn.SMASH;
+      if ((p.prev & Btn.SPECIAL) === 0) out |= Btn.SPECIAL;
+      out = (out & ~away) | toward;
+    }
+    // Bertahan: bola berbahaya yang sebentar lagi sampai diterima dulu, tapi tidak selalu,
+    // supaya serangan keras tetap bisa menembus.
+    const speedNow = Math.hypot(b.vx, b.vy);
+    // Bola Mencair tidak masuk hitungan: CPU sama butanya dengan pemain, jadi tidak bersiap menerima.
+    const dangerous = b.ghost === 0 && (speedNow > HARD_SPEED || b.power > 0 || b.curveSide >= 0 || b.wave > 0);
+    // Biasanya CPU menekan agak awal (terima biasa); sesekali pas di detik terakhir (sempurna).
+    const sharp = (Math.imul(s.rally * 5 + i * 17 + s.score[0] + s.score[1] * 3, 40503) >>> 0) % 100 < L.sharp;
+    const G_LEAD = (sharp ? 3 : 8) * DT;
+    const dGuard = Math.hypot(
+      b.x + b.vx * G_LEAD - (p.x + p.vx * G_LEAD),
+      b.y + b.vy * G_LEAD - (p.y + p.vy * G_LEAD + BODY_Y),
+    );
+    const guardSkill = (Math.imul(s.rally * 11 + i * 29 + s.score[0] * 3 + s.score[1], 40503) >>> 0) % 100 < L.guard;
+    const idle = p.smashTimer === 0 && p.specialTimer === 0 && p.guardTimer === 0 && p.smashRecover === 0;
+    if (dangerous && guardSkill && idle && s.lastSide !== i && dGuard < GUARD_R + BALL_R - 0.05) {
+      out &= ~(Btn.SMASH | Btn.SPECIAL);
+      if ((p.prev & Btn.GUARD) === 0) out |= Btn.GUARD;
+    }
+    // Sentuhan terakhir harus dikirim ke seberang.
+    if (dx < 1.4 && Math.abs(dy) < 1.5 && s.lastSide === i && s.touches >= 2) {
+      out = (out & ~away) | toward;
+    }
+  }
+  return out;
+}

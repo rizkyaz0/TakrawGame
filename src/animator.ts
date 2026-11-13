@@ -54,12 +54,19 @@ interface Anim {
   aim: number | null; // sudut kaki menuju bola saat kontak; null = belum kena apa-apa
   reach: number; // seberapa jauh kaki harus memanjang supaya sampai ke bola
   part: Part; // bagian badan yang dipakai untuk sentuhan biasa
+  roll: boolean; // roll spike: smash sambil salto di udara
+  dur: number; // lama animasi dalam frame
 }
+
+const ROLL_FRAMES = 24;
+// Sudut putar badan selama roll spike. Di momen kontak badan sedang terbalik.
+const rollAngle = (u: number) => Math.PI * 2 * ease(u / 0.86);
 
 export interface PoseOut {
   pose: Pose;
   df: number; // frame simulasi yang berlalu sejak update terakhir
   spinY: number; // putaran penuh badan (Tendangan Api)
+  flipZ: number; // salto ke belakang (roll spike)
   lift: number; // badan terangkat sedikit
   nod: number; // kepala mendongak (sundulan)
   look: number; // arah pandang kepala ke bola
@@ -90,9 +97,11 @@ export class Animator {
   ) {}
 
   // Ayunan dimulai (tombol ditekan), belum tentu kena bola.
-  play(kind: AnimKind, frame: number): void {
+  // roll = true untuk smash di udara dengan bola di atas kepala (roll spike).
+  play(kind: AnimKind, frame: number, roll = false): void {
     if (kind === "touch" && this.anim && this.anim.kind !== "touch") return;
-    this.anim = { kind, start: frame, aim: null, reach: 1, part: "foot" };
+    const dur = roll ? ROLL_FRAMES : ANIM_FRAMES[kind];
+    this.anim = { kind, start: frame, aim: null, reach: 1, part: "foot", roll, dur };
   }
 
   // Bola benar-benar kena: arahkan kaki ke titik kontak dan lompat ke momen sabetan,
@@ -117,7 +126,11 @@ export class Animator {
       part = rel > 1.75 ? "head" : rel > 1.05 ? "knee" : "foot";
       lead = 0.4;
     }
-    this.anim = { kind, start: frame - lead * ANIM_FRAMES[kind], aim, reach, part };
+    // Kalau ayunannya sudah berjalan sebagai roll spike, tetap roll spike.
+    const running = this.anim && this.anim.kind === kind ? this.anim : null;
+    const roll = running ? running.roll : false;
+    const dur = running ? running.dur : ANIM_FRAMES[kind];
+    this.anim = { kind, start: frame - lead * dur, aim, reach, part, roll, dur };
   }
 
   compute(
@@ -215,6 +228,7 @@ export class Animator {
     // Animasi serangan menimpa pose dasar selama durasinya.
     const o: Pose = { ...this.pose };
     let spinY = 0;
+    let flipZ = 0;
     let glow = 0;
     let legStretch = 1;
     let lift = 0;
@@ -222,7 +236,7 @@ export class Animator {
     let face = 0;
     if (this.anim) {
       const an = this.anim;
-      const u = (frame - an.start) / ANIM_FRAMES[an.kind];
+      const u = (frame - an.start) / an.dur;
       if (u >= 1 || u < 0) {
         this.anim = null;
       } else if (an.kind === "guard") {
@@ -300,7 +314,28 @@ export class Animator {
         // Kaki memanjang di sekitar momen kontak supaya telapak sampai ke bola.
         const near = clamp01(1 - Math.abs(u - STRIKE_U) / 0.16);
         legStretch = 1 + (Math.max(an.reach, 1.25) - 1) * near;
-        if (an.kind === "smash" || special === "meteor") {
+        if (an.kind === "smash" && an.roll) {
+          // Roll spike: badan berputar ke belakang di udara, lutut ditekuk rapat, lalu kaki
+          // penyabet melecut ke bola tepat saat badan terbalik, dan mendarat tegak.
+          flipZ = rollAngle(u);
+          const strikeFlip = rollAngle(STRIKE_U);
+          // Sudut kaki dihitung terhadap badan yang sedang terbalik supaya di dunia tetap ke bola.
+          let local = (an.aim ?? 2.4) - strikeFlip;
+          while (local < -Math.PI) local += Math.PI * 2;
+          const whip = clamp01(1 - Math.abs(u - STRIKE_U) / 0.2);
+          const tuck = bell(u) * (1 - whip);
+          o.hipR = lerp(lerp(o.hipR, 1.5, tuck), local, whip);
+          o.kneeR = lerp(lerp(o.kneeR, -2.0, tuck), 0, whip);
+          o.hipL = lerp(o.hipL, 1.6, w);
+          o.kneeL = lerp(o.kneeL, -2.0, w);
+          o.lean = lerp(o.lean, -0.25, w);
+          o.shL = lerp(o.shL, -0.9, w);
+          o.shR = lerp(o.shR, 0.9, w);
+          o.elL = lerp(o.elL, 0.6, w);
+          o.elR = lerp(o.elR, 0.6, w);
+          lift = 0.15 * w;
+          face = 1;
+        } else if (an.kind === "smash" || special === "meteor") {
           o.hipR = kickHip(u, an.aim ?? 2.1);
           o.kneeR = kickKnee(u);
           o.hipL = lerp(o.hipL, -0.3, w);
@@ -376,6 +411,7 @@ export class Animator {
       pose: o,
       df,
       spinY,
+      flipZ,
       lift,
       nod,
       look: this.look,

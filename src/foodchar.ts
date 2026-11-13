@@ -20,6 +20,7 @@ const FOREARM = 0.2;
 const MODEL_SCALE = 1.15;
 const LEG_LEN = (THIGH + SHIN + 0.05) * MODEL_SCALE;
 const LIMB = 0x2a2733;
+const FLIP_Y = 0.95;
 
 // Kotak dengan sudut membulat: tiap titik ditarik ke kotak dalam lalu didorong keluar sejauh r.
 function roundedBox(w: number, h: number, d: number, r: number, seg = 5): THREE.BufferGeometry {
@@ -55,6 +56,7 @@ export class FoodCharacter {
   readonly charId: number;
 
   private model = new THREE.Group();
+  private flip = new THREE.Group(); // titik putar salto, di tengah badan
   private body = new THREE.Group();
   private spine = new THREE.Group();
   private legL = new THREE.Group();
@@ -90,7 +92,10 @@ export class FoodCharacter {
     };
 
     this.root.add(this.model);
-    this.model.add(this.body);
+    this.model.add(this.flip);
+    this.flip.position.y = FLIP_Y;
+    this.flip.add(this.body);
+    this.body.position.y = -FLIP_Y;
     this.spine.position.y = HIP_Y;
     this.body.add(this.spine);
 
@@ -331,8 +336,8 @@ export class FoodCharacter {
     }
   }
 
-  play(kind: AnimKind, frame: number): void {
-    this.animator.play(kind, frame);
+  play(kind: AnimKind, frame: number, roll = false): void {
+    this.animator.play(kind, frame, roll);
   }
 
   strike(kind: AnimKind, frame: number, p: Player, bx: number, by: number): void {
@@ -397,7 +402,8 @@ export class FoodCharacter {
     this.root.position.set(p.x + a.jitterX, p.y, 0);
     const yaw = lerp(0.55, 0.15, a.face);
     this.model.rotation.y = (p.facing > 0 ? -yaw : Math.PI + yaw) + a.spinY * p.facing;
-    this.body.position.y = o.bob + a.lift;
+    this.flip.rotation.z = a.flipZ;
+    this.body.position.y = -FLIP_Y + o.bob + a.lift;
     // Badan empuk: melar dan gepengnya lebih kuat daripada karakter biasa.
     const sq = a.squash * 1.5;
     this.body.scale.set(1 - sq * 0.6, 1 + sq, 1 - sq * 0.6);

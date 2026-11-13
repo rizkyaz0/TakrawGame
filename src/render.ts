@@ -153,8 +153,8 @@ export class Renderer {
     this.camera.updateProjectionMatrix();
   }
 
-  private playAnim(i: number, kind: AnimKind, f: number): void {
-    this.players[i].char?.play(kind, f);
+  private playAnim(i: number, kind: AnimKind, f: number, roll = false): void {
+    this.players[i].char?.play(kind, f, roll);
   }
 
   private strikeAnim(i: number, kind: AnimKind, s: GameState, x: number, y: number): void {
@@ -184,7 +184,12 @@ export class Renderer {
         if (e.perfect) this.fx.burst(f, e.x, e.y, 0x7fd4ff, 0.8);
         break;
       case "whiff":
-        this.playAnim(e.player, "smash", f);
+        {
+          // Smash di udara dengan bola di atas kepala jadi roll spike (salto).
+          const pl = s.players[e.player];
+          const roll = !pl.grounded && pl.y > 0.5 && s.ball.y - pl.y > 1.5;
+          this.playAnim(e.player, "smash", f, roll);
+        }
         break;
       case "special":
         this.playAnim(e.player, "special", f);

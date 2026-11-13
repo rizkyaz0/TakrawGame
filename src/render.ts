@@ -86,7 +86,9 @@ export class Renderer {
 
   constructor() {
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    // HP: resolusi dan bayangan diturunkan supaya tetap lancar.
+    const mobile = window.matchMedia("(pointer: coarse)").matches;
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, mobile ? 1.5 : 2));
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     document.body.prepend(this.renderer.domElement);
@@ -96,7 +98,7 @@ export class Renderer {
     const sun = new THREE.DirectionalLight(0xfff1d6, 2.6);
     sun.position.set(-7, 15, 9);
     sun.castShadow = true;
-    sun.shadow.mapSize.set(2048, 2048);
+    sun.shadow.mapSize.set(mobile ? 1024 : 2048, mobile ? 1024 : 2048);
     sun.shadow.camera.left = -13;
     sun.shadow.camera.right = 13;
     sun.shadow.camera.top = 14;

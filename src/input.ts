@@ -1,4 +1,5 @@
 import { Btn } from "./sim";
+import { touchState } from "./touch";
 
 const keys = new Set<string>();
 
@@ -58,6 +59,7 @@ function readGamepad(i: number): number {
 export function readInput(i: 0 | 1): number {
   let out = readGamepad(i);
   for (const [code, bits] of KEYMAPS[i]) if (keys.has(code)) out |= bits;
+  if (i === 0) out |= touchState.bits; // tombol sentuh selalu milik pemain 1
   return out;
 }
 

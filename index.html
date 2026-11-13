@@ -2,14 +2,15 @@
 <html lang="id">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <title>Takraw Clash — prototipe</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Bungee&family=Rubik:wght@500;700;800&display=swap" rel="stylesheet" />
     <style>
       :root { --ink: #17131c; --paper: #fff6e0; --sun: #ffd23f; --c1: #ff5a3c; --c2: #35c9a5; }
-      html, body { margin: 0; height: 100%; overflow: hidden; background: var(--ink); }
+      html, body { margin: 0; height: 100%; overflow: hidden; background: var(--ink); touch-action: none; overscroll-behavior: none; }
+      body { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
       body { font-family: "Rubik", system-ui, sans-serif; color: var(--paper); }
       canvas { display: block; }
       .display { font-family: "Bungee", "Impact", "Arial Black", sans-serif; letter-spacing: 0.02em; }
@@ -170,6 +171,64 @@
       #train .tstats { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; padding: 6px 0; border-block: 2px dashed rgba(255, 246, 224, 0.25); }
       #train .tstats b { color: var(--sun); font-variant-numeric: tabular-nums; }
       #train .tkeys { margin-top: 6px; line-height: 1.7; font-weight: 500; }
+
+      /* Semua yang ber-data-tap bisa diklik atau di-tap (HUD lainnya tembus sentuhan). */
+      [data-tap] { pointer-events: auto; cursor: pointer; }
+      .tapbtn {
+        display: inline-block; margin: 0 6px; padding: 8px 22px; font-family: "Bungee", sans-serif; font-size: 20px;
+        border: 4px solid var(--ink); box-shadow: 5px 5px 0 var(--ink); transform: skewX(-8deg);
+      }
+      .tapbtn.go { background: var(--sun); color: var(--ink); }
+      .tapbtn.back { background: var(--paper); color: var(--ink); }
+      body.touch #selectHint { background: none; border: none; bottom: 18px; }
+
+      /* ===== Layar sentuh ===== */
+      #touch { position: fixed; inset: 0; pointer-events: none; display: none; touch-action: none; }
+      body.touch #touch { display: block; }
+      #touch .ctl { pointer-events: auto; touch-action: none; }
+      /* Kontrol hanya tampil saat pertandingan berjalan. */
+      #hud:not([data-mode="match"]) ~ #touch .ctl, #hud[data-paused="1"] ~ #touch .ctl, #hud[data-over="1"] ~ #touch .ctl { display: none; }
+      #tzone { position: absolute; left: 0; bottom: 0; width: 46%; height: 68%; }
+      #tbase {
+        position: absolute; left: 96px; top: calc(100% - 96px); width: 112px; height: 112px; margin: -56px 0 0 -56px;
+        border-radius: 50%; background: rgba(23, 19, 28, 0.32); border: 4px solid rgba(255, 246, 224, 0.55); opacity: 0.75;
+      }
+      #tbase.on { opacity: 1; background: rgba(23, 19, 28, 0.5); }
+      #tknob {
+        position: absolute; left: 50%; top: 50%; width: 52px; height: 52px; margin: -26px 0 0 -26px; border-radius: 50%;
+        background: var(--paper); border: 4px solid var(--ink); box-shadow: 3px 3px 0 rgba(23, 19, 28, 0.5);
+      }
+      .tb {
+        position: absolute; border-radius: 50%; border: 4px solid var(--ink); color: var(--ink); padding: 0;
+        font-family: "Bungee", "Impact", sans-serif; font-size: 12px; line-height: 1; opacity: 0.9;
+        box-shadow: 4px 4px 0 rgba(23, 19, 28, 0.55); -webkit-tap-highlight-color: transparent;
+      }
+      .tb.on { transform: scale(0.9); filter: brightness(1.25); box-shadow: 1px 1px 0 rgba(23, 19, 28, 0.55); }
+      .tb[data-b="smash"] { right: calc(18px + env(safe-area-inset-right)); bottom: 22px; width: 88px; height: 88px; background: #ff5a3c; color: var(--paper); font-size: 15px; }
+      .tb[data-b="jump"] { right: calc(118px + env(safe-area-inset-right)); bottom: 14px; width: 74px; height: 74px; background: var(--sun); }
+      .tb[data-b="guard"] { right: calc(40px + env(safe-area-inset-right)); bottom: 122px; width: 70px; height: 70px; background: #7fd4ff; }
+      .tb[data-b="dash"] { right: calc(126px + env(safe-area-inset-right)); bottom: 100px; width: 60px; height: 60px; background: var(--paper); }
+      .tb[data-b="special"] { right: calc(204px + env(safe-area-inset-right)); bottom: 24px; width: 62px; height: 62px; background: #6a6478; color: var(--paper); }
+      .tb[data-b="special"].ready { background: var(--c1); animation: tbReady 0.5s ease-in-out infinite alternate; }
+      @keyframes tbReady { from { box-shadow: 0 0 0 0 var(--sun), 4px 4px 0 rgba(23, 19, 28, 0.55); } to { box-shadow: 0 0 0 6px var(--sun), 4px 4px 0 rgba(23, 19, 28, 0.55); } }
+      #tpause {
+        position: absolute; top: calc(8px + env(safe-area-inset-top)); left: 50%; margin-left: 96px; width: 42px; height: 42px;
+        border: 3px solid var(--paper); background: rgba(23, 19, 28, 0.8); color: var(--paper);
+        font-family: "Bungee", sans-serif; font-size: 14px; padding: 0;
+      }
+      /* Di layar sentuh, plat nama pindah ke atas supaya tidak tertutup jempol. */
+      body.touch #help { display: none !important; }
+      body.touch .plate { bottom: auto; top: 12px; }
+      body.touch .plate .psub, body.touch .plate .pips { display: none; }
+      body.touch #train { top: 96px; width: 280px; }
+      body.touch #train .tkeys { display: none; }
+      body.touch #title .hint, body.touch #pause .hint { display: none; }
+      /* HP dalam posisi tegak: minta diputar. */
+      #rotate {
+        position: fixed; inset: 0; z-index: 50; display: none; align-items: center; justify-content: center; text-align: center;
+        background: var(--ink); color: var(--paper); font-family: "Bungee", sans-serif; font-size: 22px; line-height: 1.5; padding: 24px;
+      }
+      @media (orientation: portrait) and (pointer: coarse) { #rotate { display: flex; } }
 
       /* Plat nama di pojok bawah. */
       .plate { position: absolute; bottom: 44px; width: 300px; }
@@ -369,6 +428,7 @@
         <div class="hint"><kbd>W</kbd><kbd>S</kbd> pilih &nbsp;·&nbsp; <kbd>F</kbd> atau <kbd>Enter</kbd> pilih &nbsp;·&nbsp; <kbd>Esc</kbd> lanjut main</div>
       </div>
     </div>
+    <div id="rotate">Putar HP ke posisi mendatar<br />untuk bermain ↻</div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

@@ -1,6 +1,7 @@
 import { crowdSfx, sfx } from "./audio";
 import { readInput } from "./input";
 import { Renderer } from "./render";
+import { initTouch, setSpecialReady, touchState } from "./touch";
 import {
   BALL_R,
   BODY_Y,
@@ -94,7 +95,8 @@ const train = {
 
 function renderTrain(): void {
   $("drills").innerHTML = DRILLS.map(
-    (d, k) => `<div class="drill${k === train.drill ? " on" : ""}">${k + 1}. ${d.name}<small>${d.desc}</small></div>`,
+    (d, k) =>
+      `<div class="drill${k === train.drill ? " on" : ""}" data-tap="drill:${k}">${k + 1}. ${d.name}<small>${d.desc}</small></div>`,
   ).join("");
   $("tstats").innerHTML =
     `<span>Smash sempurna</span><b>${train.smashPerfect} / ${train.smash}</b>` +
@@ -254,16 +256,18 @@ function startMatch(): void {
 }
 
 function renderMenus(): void {
-  const item = (label: string, on: boolean) => `<div class="item${on ? " on" : ""}">${label}</div>`;
+  // data-tap membuat tiap pilihan bisa diklik atau di-tap.
+  const item = (label: string, on: boolean, tap: string) =>
+    `<div class="item${on ? " on" : ""}" data-tap="${tap}">${label}</div>`;
   $("titleMenu").innerHTML =
-    item("1 PEMAIN · LAWAN CPU", app.titleIndex === 0) +
-    item("2 PEMAIN · SATU KEYBOARD", app.titleIndex === 1) +
-    item("LATIHAN", app.titleIndex === 2);
+    item("1 PEMAIN · LAWAN CPU", app.titleIndex === 0, "title:0") +
+    item("2 PEMAIN · SATU KEYBOARD", app.titleIndex === 1, "title:1") +
+    item("LATIHAN", app.titleIndex === 2, "title:2");
   $("pauseMenu").innerHTML =
-    item("LANJUT MAIN", app.pauseIndex === 0) +
-    item("ULANG PERTANDINGAN", app.pauseIndex === 1) +
-    item("PILIH KARAKTER", app.pauseIndex === 2) +
-    item("MENU UTAMA", app.pauseIndex === 3);
+    item("LANJUT MAIN", app.pauseIndex === 0, "pause:0") +
+    item("ULANG PERTANDINGAN", app.pauseIndex === 1, "pause:1") +
+    item("PILIH KARAKTER", app.pauseIndex === 2, "pause:2") +
+    item("MENU UTAMA", app.pauseIndex === 3, "pause:3");
 }
 
 // Skala 0..1 untuk batang statistik, dari rentang nilai seluruh roster.
@@ -279,7 +283,7 @@ function renderSelect(): void {
   $("roster").innerHTML = CHARS.map((c, k) => {
     const cls = ["card2", app.chars[0] === k ? "p1" : "", app.chars[1] === k ? "p2" : ""].join(" ");
     return (
-      `<div class="${cls}"><span class="tag2 a display${app.locked[0] ? " ok" : ""}">P1</span>` +
+      `<div class="${cls}" data-tap="char:${k}"><span class="tag2 a display${app.locked[0] ? " ok" : ""}">P1</span>` +
       `<span class="tag2 b display${app.locked[1] ? " ok" : ""}">${cpu ? "CPU" : "P2"}</span>` +
       `<span class="ico k${k}"></span><div class="nm">${c.name}</div></div>`
     );
@@ -288,7 +292,12 @@ function renderSelect(): void {
   for (let i = 0; i < 2; i++) {
     const c = CHARS[app.chars[i]];
     const el = $(`d${i + 1}`);
-    const who = i === 0 ? "PEMAIN 1" : cpu ? `CPU · ${CPU_NAMES[app.cpuLevel].toUpperCase()}` : "PEMAIN 2";
+    const who =
+      i === 0
+        ? "PEMAIN 1"
+        : cpu
+          ? `<span data-tap="KeyW">CPU · ${CPU_NAMES[app.cpuLevel].toUpperCase()} ▸</span>`
+          : "PEMAIN 2";
     const stat = (label: string, v: number) =>
       `<div class="stat">${label}<div class="bar"><i style="width:${Math.round(v * 100)}%"></i></div></div>`;
     el.style.setProperty("--pc", hex(c.color));
@@ -303,11 +312,63 @@ function renderSelect(): void {
     document.documentElement.style.setProperty(`--c${i + 1}`, hex(c.color));
   }
 
+  if (touchState.enabled) {
+    // Layar sentuh: tap kartu untuk memilih, lalu tombol besar untuk mengunci.
+    const whoNow = app.locked[0] ? (cpu ? "LAWAN" : "P2") : cpu ? "JAGOANMU" : "P1";
+    $("selectHint").innerHTML =
+      `<span class="tapbtn back" data-tap="Escape">◂ KEMBALI</span>` +
+      `<span class="tapbtn go" data-tap="lock">KUNCI ${whoNow} ✓</span>`;
+    return;
+  }
   $("selectHint").innerHTML = cpu
     ? `<kbd>A</kbd><kbd>D</kbd> pilih ${app.locked[0] ? "lawan" : "jagoanmu"} &nbsp;·&nbsp; <kbd>F</kbd> kunci &nbsp;·&nbsp; ` +
       `<kbd>W</kbd><kbd>S</kbd> tingkat CPU: <b>${CPU_NAMES[app.cpuLevel]}</b> &nbsp;·&nbsp; <kbd>Esc</kbd> kembali`
     : `<b>P1</b> <kbd>A</kbd><kbd>D</kbd> pilih <kbd>F</kbd> kunci &nbsp;·&nbsp; <b>P2</b> <kbd>←</kbd><kbd>→</kbd> pilih <kbd>K</kbd> kunci &nbsp;·&nbsp; <kbd>Esc</kbd> kembali`;
 }
+
+// Tap atau klik pada elemen ber-data-tap. Nilainya nama tombol keyboard, atau perintah khusus.
+function chooser(): 0 | 1 {
+  return app.locked[0] ? 1 : 0;
+}
+function handleTap(v: string): void {
+  const [cmd, arg] = v.split(":");
+  if (cmd === "title") {
+    app.titleIndex = Number(arg);
+    menuKey("Enter");
+  } else if (cmd === "pause") {
+    app.pauseIndex = Number(arg);
+    menuKey("Enter");
+  } else if (cmd === "char") {
+    // Tap kartu memilih karakter untuk yang sedang giliran; tap kartu yang sama mengunci.
+    const who = chooser();
+    if (app.locked[who]) return;
+    const k = Number(arg);
+    if (app.chars[who] === k) return lockChar(who);
+    app.chars[who] = k;
+    state.chars[who] = k;
+    sfx.swing();
+    renderSelect();
+  } else if (cmd === "lock") {
+    lockChar(chooser());
+  } else if (cmd === "drill") {
+    menuKey(`Digit${Number(arg) + 1}`);
+  } else {
+    menuKey(v);
+  }
+}
+document.addEventListener("click", (e) => {
+  const el = (e.target as HTMLElement | null)?.closest<HTMLElement>("[data-tap]");
+  if (el?.dataset.tap) handleTap(el.dataset.tap);
+});
+
+// Seluruh HUD diperkecil di layar pendek atau sempit, supaya tidak saling tumpuk.
+function fitUi(): void {
+  const z = Math.max(0.42, Math.min(1, window.innerHeight / 640, window.innerWidth / 880));
+  elHud.style.setProperty("zoom", String(z));
+}
+window.addEventListener("resize", fitUi);
+fitUi();
+initTouch({ onPause: () => menuKey("Escape") });
 
 function moveChar(i: 0 | 1, d: number): void {
   if (app.locked[i]) return;
@@ -714,6 +775,7 @@ function updateHud(): void {
     }
 
     const meter = state.players[i].meter;
+    if (i === 0) setSpecialReady(meter >= SPECIAL_COST);
     card.fill.style.width = `${(meter / METER_MAX) * 100}%`;
     card.meter.classList.toggle("ready", meter >= SPECIAL_COST);
 
@@ -768,12 +830,15 @@ function updateHud(): void {
   if (shown.over !== over) {
     shown.over = over;
     elBanner.classList.toggle("on", over);
+    elHud.dataset.over = over ? "1" : "0";
     if (over) {
       const w = state.score[0] > state.score[1] ? 0 : 1;
       elBanner.style.setProperty("--cc", hex(charOf(w).color));
       elBanner.innerHTML =
         `<div class="big display">${charOf(w).name.toUpperCase()} MENANG!</div>` +
-        `<small><kbd>F</kbd> main lagi &nbsp;·&nbsp; <kbd>C</kbd> pilih karakter &nbsp;·&nbsp; <kbd>M</kbd> menu utama</small>`;
+        `<small><span data-tap="KeyF"><kbd>F</kbd> main lagi</span> &nbsp;·&nbsp; ` +
+        `<span data-tap="KeyC"><kbd>C</kbd> pilih karakter</span> &nbsp;·&nbsp; ` +
+        `<span data-tap="KeyM"><kbd>M</kbd> menu utama</span></small>`;
     }
   }
 }

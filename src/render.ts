@@ -194,7 +194,7 @@ export class Renderer {
         }
         break;
       case "special":
-        this.playAnim(e.player, "special", f);
+        // Gerakan jurusnya baru dimainkan saat bola kena; sebelum itu karakter bersiaga.
         this.focus = e.player;
         break;
       case "smash":
@@ -267,7 +267,7 @@ export class Renderer {
       // Setelah poin: pencetak poin selebrasi, lawannya lesu.
       const decided = s.phase === "point" || s.phase === "over";
       const mood = !decided ? null : s.server === i ? "win" : "lose";
-      v.char.update(p, s.frame, s.ball, this.focus === i, mood);
+      v.char.update(p, s.frame, s.ball, this.focus === i || p.specialTimer > 0, mood);
 
       const c = CHARS[s.chars[i]];
       const special = p.specialTimer > 0;

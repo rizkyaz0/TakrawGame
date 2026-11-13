@@ -37,70 +37,112 @@ const KEYMAPS: [KeyMap, KeyMap] = [
   ],
 ];
 
-// ===== Stick / gamepad =====
-// Stick didaftarkan ke pemain berdasarkan urutan menekan tombol, bukan nomor urut dari
-// browser. Nomor urut tidak bisa dipercaya: di PC satu stick PS sering terbaca sebagai dua
-// perangkat sekaligus (misalnya lewat DS4Windows atau Steam), sehingga "nomor 0" dan
-// "nomor 1" bisa stick yang sama.
-//
-// padSlots[0] = nomor perangkat milik P1, padSlots[1] = milik P2, null = belum ada.
-export const padSlots: [number | null, number | null] = [null, null];
-let twoPlayers = false;
+// ===== Alat kontrol per pemain =====
+// Tiap pemain memakai satu alat yang dipilih di layar pengaturan: salah satu dari dua
+// set tombol keyboard, atau salah satu stick yang terhubung.
+export type Device = { kind: "kbd"; set: 0 | 1 } | { kind: "pad"; index: number };
 
-export function setTwoPlayers(on: boolean): void {
-  twoPlayers = on;
+export const devices: [Device, Device] = [
+  { kind: "kbd", set: 0 },
+  { kind: "kbd", set: 1 },
+];
+
+const STORE_KEY = "takraw.devices";
+
+export function saveDevices(): void {
+  try {
+    localStorage.setItem(STORE_KEY, JSON.stringify(devices));
+  } catch {
+    // penyimpanan diblokir: pilihan hanya berlaku untuk sesi ini
+  }
 }
 
-export function resetPadSlots(): void {
-  padSlots[0] = null;
-  padSlots[1] = null;
+export function loadDevices(): boolean {
+  try {
+    const raw = JSON.parse(localStorage.getItem(STORE_KEY) ?? "null") as unknown;
+    if (!Array.isArray(raw) || raw.length !== 2) return false;
+    for (let i = 0; i < 2; i++) {
+      const d = raw[i] as Partial<Device> & { set?: number; index?: number };
+      if (d.kind === "kbd" && (d.set === 0 || d.set === 1)) devices[i] = { kind: "kbd", set: d.set };
+      else if (d.kind === "pad" && typeof d.index === "number") devices[i] = { kind: "pad", index: d.index };
+      else return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
 }
 
-function listPads(): Gamepad[] {
+export function sameDevice(a: Device, b: Device): boolean {
+  if (a.kind === "kbd" && b.kind === "kbd") return a.set === b.set;
+  if (a.kind === "pad" && b.kind === "pad") return a.index === b.index;
+  return false;
+}
+
+// ----- Stick -----
+// Di PC satu stick sering terbaca sebagai dua perangkat sekaligus (misalnya lewat
+// DS4Windows atau Steam). Kembaran seperti itu selalu aktif bersamaan dengan aslinya
+// dan tidak pernah aktif sendirian, jadi bisa dikenali dan disembunyikan dari daftar.
+const together = new Map<string, number>();
+const alone = new Map<number, number>();
+
+function standardPads(): Gamepad[] {
   const all = Array.from(navigator.getGamepads?.() ?? []).filter((g): g is Gamepad => g !== null);
-  // Kalau ada perangkat dengan pemetaan standar, yang tidak standar diabaikan: itu biasanya
+  // Kalau ada perangkat berpemetaan standar, yang tidak standar diabaikan: itu biasanya
   // versi "mentah" dari stick yang sama, dengan letak tombol yang tidak bisa ditebak.
   const standard = all.filter((g) => g.mapping === "standard");
-  return standard.length > 0 ? standard : all;
+  return (standard.length > 0 ? standard : all).sort((a, b) => a.index - b.index);
 }
 
-// Apakah ada tombol atau stick yang sedang digerakkan di perangkat ini.
 function isActive(pad: Gamepad): boolean {
   if (pad.buttons.some((b) => b.pressed)) return true;
   return Math.abs(pad.axes[0] ?? 0) > 0.6 || Math.abs(pad.axes[1] ?? 0) > 0.6;
 }
 
-// Dipanggil tiap frame. Mengembalikan true kalau pembagian stick berubah.
-export function updatePadSlots(): boolean {
-  const pads = listPads();
-  const byIndex = (n: number | null) => pads.find((g) => g.index === n) ?? null;
-  let changed = false;
-
-  // Stick dicabut: tempatnya dikosongkan.
-  for (let s = 0; s < 2; s++) {
-    if (padSlots[s] !== null && !byIndex(padSlots[s])) {
-      padSlots[s] = null;
-      changed = true;
+// Dipanggil tiap frame untuk mencatat stick mana yang aktif bersamaan.
+export function trackPads(): void {
+  const active = standardPads().filter(isActive);
+  if (active.length === 1) alone.set(active[0].index, (alone.get(active[0].index) ?? 0) + 1);
+  for (let a = 0; a < active.length; a++) {
+    for (let b = a + 1; b < active.length; b++) {
+      const key = `${active[a].index}-${active[b].index}`;
+      together.set(key, (together.get(key) ?? 0) + 1);
     }
   }
+}
 
-  for (const pad of pads) {
-    if (pad.index === padSlots[0] || pad.index === padSlots[1] || !isActive(pad)) continue;
-    if (padSlots[0] === null) {
-      padSlots[0] = pad.index;
-      changed = true;
-      continue;
-    }
-    // Perangkat kembaran selalu bergerak bersamaan dengan aslinya. Jadi stick kedua
-    // hanya didaftarkan kalau ia ditekan saat stick P1 sedang benar-benar diam.
-    const first = byIndex(padSlots[0]);
-    if (first && isActive(first)) continue;
-    if (padSlots[1] === null) {
-      padSlots[1] = pad.index;
-      changed = true;
-    }
+// Daftar stick tanpa kembaran.
+export function listPads(): Gamepad[] {
+  const out: Gamepad[] = [];
+  for (const pad of standardPads()) {
+    const twin = out.some(
+      // Cukup sekali terlihat aktif bersamaan: kalau menunggu lebih lama, tekanan pertama
+      // dari stick kembaran sempat terhitung dua kali. Stick sungguhan akan muncul lagi
+      // begitu ia aktif sendirian.
+      (o) => (together.get(`${o.index}-${pad.index}`) ?? 0) >= 1 && (alone.get(pad.index) ?? 0) === 0,
+    );
+    if (!twin) out.push(pad);
   }
-  return changed;
+  return out;
+}
+
+function padByIndex(index: number): Gamepad | null {
+  return standardPads().find((g) => g.index === index) ?? null;
+}
+
+export function deviceLabel(d: Device): string {
+  if (d.kind === "kbd") return d.set === 0 ? "KEYBOARD · WASD" : "KEYBOARD · PANAH";
+  const n = listPads().findIndex((g) => g.index === d.index);
+  return n >= 0 ? `STICK ${n + 1}` : "STICK (TIDAK TERHUBUNG)";
+}
+
+// Semua pilihan alat yang tersedia saat ini.
+export function deviceOptions(): Device[] {
+  return [
+    { kind: "kbd", set: 0 },
+    { kind: "kbd", set: 1 },
+    ...listPads().map((g): Device => ({ kind: "pad", index: g.index })),
+  ];
 }
 
 function padBits(pad: Gamepad): number {
@@ -120,28 +162,23 @@ function padBits(pad: Gamepad): number {
   return out;
 }
 
-function readGamepad(i: number): number {
-  const pads = listPads();
-  let out = 0;
-  for (const pad of pads) {
-    const mine = twoPlayers
-      ? pad.index === padSlots[i]
-      : // Satu pemain: stick mana pun yang sudah terdaftar mengendalikan P1.
-        i === 0 && (pad.index === padSlots[0] || pad.index === padSlots[1]);
-    if (mine) out |= padBits(pad);
+function deviceBits(d: Device): number {
+  if (d.kind === "kbd") {
+    let out = 0;
+    for (const [code, bits] of KEYMAPS[d.set]) if (keys.has(code)) out |= bits;
+    return out;
   }
-  return out;
+  const pad = padByIndex(d.index);
+  return pad ? padBits(pad) : 0;
+}
+
+// Apakah alat ini sedang ditekan; dipakai untuk lampu tes di layar pengaturan.
+export function deviceActive(d: Device): boolean {
+  return deviceBits(d) !== 0;
 }
 
 export function readInput(i: 0 | 1): number {
-  let out = readGamepad(i);
-  for (const [code, bits] of KEYMAPS[i]) if (keys.has(code)) out |= bits;
+  let out = deviceBits(devices[i]);
   if (i === 0) out |= touchState.bits; // tombol sentuh selalu milik pemain 1
   return out;
-}
-
-export function onKey(code: string, fn: () => void): void {
-  window.addEventListener("keydown", (e) => {
-    if (e.code === code && !e.repeat) fn();
-  });
 }

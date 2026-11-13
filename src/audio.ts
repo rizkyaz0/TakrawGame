@@ -121,6 +121,101 @@ export const crowdSfx = {
   },
 };
 
+// ===== Suara konyol =====
+// Satu suku "ha": gelombang gergaji lewat saringan forman supaya mirip suara mulut.
+function ha(freq: number, at: number, dur: number, gain: number, formant: number): void {
+  if (!ctx || ctx.state !== "running") return;
+  const t = ctx.currentTime + at;
+  const osc = ctx.createOscillator();
+  osc.type = "sawtooth";
+  osc.frequency.setValueAtTime(freq * 1.12, t);
+  osc.frequency.exponentialRampToValueAtTime(freq * 0.9, t + dur);
+  const f = ctx.createBiquadFilter();
+  f.type = "bandpass";
+  f.frequency.value = formant;
+  f.Q.value = 2.2;
+  const g = ctx.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(gain, t + dur * 0.25);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  osc.connect(f).connect(g).connect(ctx.destination);
+  osc.start(t);
+  osc.stop(t + dur + 0.02);
+}
+
+export const sillySfx = {
+  // Penonton tertawa: beberapa suara dengan nada berbeda, masing-masing "ha-ha-ha" menurun.
+  laugh(): void {
+    const voices = [
+      { pitch: 290, start: 0, step: 0.125, formant: 950 },
+      { pitch: 370, start: 0.05, step: 0.115, formant: 1150 },
+      { pitch: 215, start: 0.09, step: 0.14, formant: 800 },
+      { pitch: 440, start: 0.16, step: 0.105, formant: 1300 },
+    ];
+    for (const v of voices) {
+      for (let k = 0; k < 8; k++) {
+        ha(v.pitch * Math.pow(0.955, k), v.start + k * v.step, 0.09, 0.11 * (1 - k * 0.07), v.formant);
+      }
+    }
+  },
+  // Trombon sedih: "wah, wah, wah, waaah".
+  trombone(): void {
+    if (!ctx || ctx.state !== "running") return;
+    const notes: Array<[number, number, number]> = [
+      [311, 0, 0.3],
+      [294, 0.32, 0.3],
+      [277, 0.64, 0.3],
+      [262, 0.96, 0.85],
+    ];
+    for (const [freq, at, dur] of notes) {
+      const t = ctx.currentTime + at;
+      const osc = ctx.createOscillator();
+      osc.type = "sawtooth";
+      osc.frequency.setValueAtTime(freq, t);
+      osc.frequency.linearRampToValueAtTime(freq * (dur > 0.5 ? 0.86 : 0.97), t + dur);
+      const f = ctx.createBiquadFilter();
+      f.type = "lowpass";
+      f.Q.value = 5;
+      f.frequency.setValueAtTime(400, t);
+      f.frequency.linearRampToValueAtTime(1500, t + dur * 0.3);
+      f.frequency.linearRampToValueAtTime(350, t + dur);
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, t);
+      g.gain.exponentialRampToValueAtTime(0.16, t + 0.04);
+      g.gain.setValueAtTime(0.16, t + dur * 0.7);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+      osc.connect(f).connect(g).connect(ctx.destination);
+      osc.start(t);
+      osc.stop(t + dur + 0.02);
+    }
+  },
+  // "Boing" pegas: nada turun dengan getaran cepat.
+  boing(): void {
+    if (!ctx || ctx.state !== "running") return;
+    const t = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(420, t);
+    osc.frequency.exponentialRampToValueAtTime(110, t + 0.4);
+    const lfo = ctx.createOscillator();
+    lfo.frequency.value = 22;
+    const depth = ctx.createGain();
+    depth.gain.setValueAtTime(70, t);
+    depth.gain.exponentialRampToValueAtTime(4, t + 0.4);
+    lfo.connect(depth).connect(osc.frequency);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.14, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.42);
+    osc.connect(g).connect(ctx.destination);
+    osc.start(t);
+    lfo.start(t);
+    osc.stop(t + 0.45);
+    lfo.stop(t + 0.45);
+  },
+  // Peluit meluncur turun.
+  slide: () => tone("sine", 1500, 260, 0.5, 0.12),
+};
+
 export const sfx = {
   touch: () => tone("triangle", 520, 300, 0.09, 0.25),
   // Nada smash naik mengikuti panas reli (0..1).

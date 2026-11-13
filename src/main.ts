@@ -1,5 +1,17 @@
-import { crowdSfx, sfx } from "./audio";
-import { padSlots, readInput, resetPadSlots, setTwoPlayers, updatePadSlots } from "./input";
+import { crowdSfx, sfx, sillySfx } from "./audio";
+import {
+  deviceActive,
+  deviceLabel,
+  deviceOptions,
+  devices,
+  listPads,
+  loadDevices,
+  readInput,
+  sameDevice,
+  saveDevices,
+  trackPads,
+  type Device,
+} from "./input";
 import { Renderer } from "./render";
 import { initTouch, setSpecialReady, touchState } from "./touch";
 import {
@@ -59,7 +71,7 @@ const cards =[1, 2].map((n) => ({
 const shown = { score: [-1, -1], char: [-1, -1], rally: -1, heat: -1, over: false, mp: -1, phase: "" };
 
 // ===== Alur aplikasi: judul -> pilih karakter -> pertandingan =====
-type Mode = "title" | "select" | "match";
+type Mode = "title" | "controls" | "select" | "match";
 const app = {
   mode: "title" as Mode,
   paused: false,
@@ -69,6 +81,7 @@ const app = {
   locked: [false, false] as [boolean, boolean],
   titleIndex: 0,
   pauseIndex: 0,
+  ctrlRow: 0, // baris yang disorot di layar pengaturan kontrol
   training: false,
 };
 
@@ -229,16 +242,116 @@ function startDemo(): void {
 
 function goTitle(): void {
   setMode("title");
-  // Pembagian stick diulang dari awal tiap kembali ke judul.
-  resetPadSlots();
-  setTwoPlayers(false);
   startDemo();
   renderMenus();
 }
 
+// ===== Pengaturan kontrol =====
+// Tiap pemain memilih alatnya sendiri: keyboard WASD, keyboard panah, atau salah satu stick.
+const KEY_HELP = [
+  "A D gerak · W lompat · S bawah · F smash · E terima · G dash · H jurus",
+  "← → gerak · ↑ lompat · ↓ bawah · K smash · O terima · L dash · ; jurus",
+];
+const PAD_HELP = "D-pad/stick gerak · ✕ lompat · □ smash · L1 terima · ○ dash · △ jurus";
+let hadSavedDevices = loadDevices();
+
+// Pilihan awal yang masuk akal: kalau menu dibuka pakai stick, stick itu jadi milik P1,
+// dan stick lain (kalau ada) jadi milik P2.
+function defaultDevices(fromPad: number | null): void {
+  const pads = listPads();
+  const valid = (d: Device) => d.kind === "kbd" || pads.some((g) => g.index === d.index);
+  if (hadSavedDevices && valid(devices[0]) && valid(devices[1]) && !sameDevice(devices[0], devices[1])) {
+    // Pilihan tersimpan masih berlaku. Tapi kalau menu dibuka pakai stick yang belum
+    // dipakai siapa pun, stick itu diusulkan untuk P1: itu alat yang sedang dipegang.
+    const holding: Device | null =
+      fromPad !== null && pads.some((g) => g.index === fromPad) ? { kind: "pad", index: fromPad } : null;
+    if (holding && !sameDevice(devices[0], holding) && !sameDevice(devices[1], holding)) devices[0] = holding;
+    return;
+  }
+  hadSavedDevices = false;
+  const first = fromPad !== null && pads.some((g) => g.index === fromPad) ? fromPad : null;
+  devices[0] = first !== null ? { kind: "pad", index: first } : { kind: "kbd", set: 0 };
+  const other = pads.find((g) => g.index !== first);
+  devices[1] = other ? { kind: "pad", index: other.index } : first !== null ? { kind: "kbd", set: 0 } : { kind: "kbd", set: 1 };
+}
+
+function ctrlRows(): number {
+  return app.humans === 2 ? 2 : 1;
+}
+
+function ctrlConflict(): boolean {
+  return app.humans === 2 && sameDevice(devices[0], devices[1]);
+}
+
+function goControls(fromPad: number | null = null): void {
+  setMode("controls");
+  app.ctrlRow = 0;
+  defaultDevices(fromPad);
+  renderControls();
+}
+
+function cycleDevice(player: number, dir: number): void {
+  const opts = deviceOptions();
+  const at = Math.max(0, opts.findIndex((o) => sameDevice(o, devices[player])));
+  devices[player] = opts[(at + dir + opts.length) % opts.length];
+  sfx.swing();
+  renderControls();
+}
+
+function confirmControls(): void {
+  if (ctrlConflict()) {
+    sfx.fault();
+    return;
+  }
+  saveDevices();
+  hadSavedDevices = true;
+  sfx.receivePerfect();
+  goSelect();
+}
+
+function renderControls(): void {
+  const rows = ctrlRows();
+  const row = (i: number) => {
+    const d = devices[i];
+    const help = d.kind === "kbd" ? KEY_HELP[d.set] : PAD_HELP;
+    const who = i === 0 ? "PEMAIN 1" : "PEMAIN 2";
+    return (
+      `<div class="crow${app.ctrlRow === i ? " on" : ""}" style="--pc:${hex(CHARS[app.chars[i]].color)}" data-tap="ctrlrow:${i}">` +
+      `<div class="cwho display">${who}</div>` +
+      `<div class="cpick"><span class="carr" data-tap="ctrl:${i}:-1">◂</span>` +
+      `<span class="cdev display">${deviceLabel(d)}</span>` +
+      `<span class="carr" data-tap="ctrl:${i}:1">▸</span><i class="lamp" id="lamp${i}"></i></div>` +
+      `<div class="chelp">${help}</div></div>`
+    );
+  };
+  $("ctrlRows").innerHTML = row(0) + (rows === 2 ? row(1) : "");
+  const pads = listPads().length;
+  $("ctrlNote").innerHTML = ctrlConflict()
+    ? `<b class="bad">Dua pemain tidak boleh memakai alat yang sama.</b>`
+    : `${pads} stick terhubung. Tes alatmu dengan tombol smash atau lompat: lampunya menyala kalau benar.` +
+      (pads === 0 ? "<br />Stick belum terbaca? Tekan salah satu tombolnya sekali." : "");
+  $("ctrlHint").innerHTML = touchState.enabled
+    ? `<span class="tapbtn back" data-tap="Escape">◂ KEMBALI</span><span class="tapbtn go" data-tap="Enter">LANJUT ▸</span>`
+    : `${rows === 2 ? "<kbd>W</kbd><kbd>S</kbd> pilih pemain &nbsp;·&nbsp; " : ""}<kbd>A</kbd><kbd>D</kbd> ganti alat &nbsp;·&nbsp; ` +
+      `<kbd>Enter</kbd> atau <kbd>Options</kbd> lanjut &nbsp;·&nbsp; <kbd>Esc</kbd> kembali`;
+}
+
+// Lampu tes diperbarui tiap frame; daftar stick digambar ulang kalau jumlahnya berubah.
+let padCountShown = -1;
+function updateControlsLive(): void {
+  if (app.mode !== "controls") return;
+  const count = listPads().length;
+  if (count !== padCountShown) {
+    padCountShown = count;
+    renderControls();
+  }
+  for (let i = 0; i < ctrlRows(); i++) {
+    document.getElementById(`lamp${i}`)?.classList.toggle("on", deviceActive(devices[i]));
+  }
+}
+
 function goSelect(): void {
   setMode("select");
-  setTwoPlayers(app.humans === 2);
   app.locked = [false, false];
   Object.assign(state, createState(app.chars));
   renderSelect();
@@ -253,9 +366,13 @@ function startMatch(): void {
     trainRestart();
     renderTrain();
   }
-  const p1 = "<b>P1</b> <kbd>A</kbd><kbd>D</kbd> gerak <kbd>W</kbd> lompat <kbd>F</kbd> smash <kbd>E</kbd> terima <kbd>G</kbd> dash <kbd>H</kbd> jurus";
-  const p2 = "<b>P2</b> <kbd>←</kbd><kbd>→</kbd> <kbd>↑</kbd> <kbd>K</kbd> smash <kbd>O</kbd> terima <kbd>L</kbd> dash <kbd>;</kbd> jurus";
-  elHelp.innerHTML = (app.humans === 2 ? `${p1} &nbsp;·&nbsp; ${p2}` : p1) + " &nbsp;·&nbsp; <kbd>Esc</kbd> jeda";
+  // Petunjuk tombol mengikuti alat yang dipilih tiap pemain.
+  const helpFor = (i: number) => {
+    const d = devices[i];
+    return `<b>P${i + 1} · ${deviceLabel(d)}</b> ${d.kind === "kbd" ? KEY_HELP[d.set] : PAD_HELP}`;
+  };
+  elHelp.innerHTML =
+    (app.humans === 2 ? `${helpFor(0)}<br />${helpFor(1)}` : helpFor(0)) + " &nbsp;·&nbsp; <kbd>Esc</kbd> jeda";
   callout("MULAI!", "#ffd23f", true);
 }
 
@@ -282,6 +399,18 @@ function statBar(key: "moveSpeed" | "jumpV" | "smashSpeed", value: number): numb
   return 0.25 + 0.75 * ((value - lo) / (hi - lo));
 }
 
+// Tombol memilih karakter untuk satu pemain, sesuai alat yang dipakainya.
+function pickHelp(i: number): string {
+  const d = devices[i];
+  const keysHelp =
+    d.kind === "pad"
+      ? "D-pad pilih <kbd>✕</kbd> kunci"
+      : d.set === 0
+        ? "<kbd>A</kbd><kbd>D</kbd> pilih <kbd>F</kbd> kunci"
+        : "<kbd>←</kbd><kbd>→</kbd> pilih <kbd>K</kbd> kunci";
+  return `<b>P${i + 1}</b> ${keysHelp}`;
+}
+
 function renderSelect(): void {
   const cpu = app.humans === 1;
   $("roster").innerHTML = CHARS.map((c, k) => {
@@ -302,14 +431,8 @@ function renderSelect(): void {
         : cpu
           ? `<span data-tap="KeyW">CPU · ${CPU_NAMES[app.cpuLevel].toUpperCase()} ▸</span>`
           : "PEMAIN 2";
-    // Mode 2 pemain: tunjukkan alat yang dipakai tiap pemain, supaya jelas stick siapa milik siapa.
-    const device = cpu
-      ? ""
-      : padSlots[i] !== null
-        ? `<div class="dev ok">🎮 STICK ${i + 1} TERHUBUNG</div>`
-        : i === 0
-          ? `<div class="dev">KEYBOARD: A D pilih, F kunci<br />atau tekan tombol di stick</div>`
-          : `<div class="dev wait">TEKAN TOMBOL DI STICK KEDUA<br />atau keyboard: ← → pilih, K kunci</div>`;
+    // Tunjukkan alat yang dipakai tiap pemain, supaya jelas siapa memegang apa.
+    const device = cpu && i === 1 ? "" : `<div class="dev ok">${deviceLabel(devices[i])}</div>`;
     const stat = (label: string, v: number) =>
       `<div class="stat">${label}<div class="bar"><i style="width:${Math.round(v * 100)}%"></i></div></div>`;
     el.style.setProperty("--pc", hex(c.color));
@@ -336,7 +459,7 @@ function renderSelect(): void {
   $("selectHint").innerHTML = cpu
     ? `<kbd>A</kbd><kbd>D</kbd> pilih ${app.locked[0] ? "lawan" : "jagoanmu"} &nbsp;·&nbsp; <kbd>F</kbd> kunci &nbsp;·&nbsp; ` +
       `<kbd>W</kbd><kbd>S</kbd> tingkat CPU: <b>${CPU_NAMES[app.cpuLevel]}</b> &nbsp;·&nbsp; <kbd>Esc</kbd> kembali`
-    : `<b>P1</b> <kbd>A</kbd><kbd>D</kbd> pilih <kbd>F</kbd> kunci &nbsp;·&nbsp; <b>P2</b> <kbd>←</kbd><kbd>→</kbd> pilih <kbd>K</kbd> kunci &nbsp;·&nbsp; <kbd>Esc</kbd> kembali`;
+    : `${pickHelp(0)} &nbsp;·&nbsp; ${pickHelp(1)} &nbsp;·&nbsp; <kbd>Esc</kbd> kembali`;
 }
 
 // Tap atau klik pada elemen ber-data-tap. Nilainya nama tombol keyboard, atau perintah khusus.
@@ -361,6 +484,13 @@ function handleTap(v: string): void {
     state.chars[who] = k;
     sfx.swing();
     renderSelect();
+  } else if (cmd === "ctrl") {
+    const [, who, dir] = v.split(":");
+    app.ctrlRow = Number(who);
+    cycleDevice(Number(who), Number(dir));
+  } else if (cmd === "ctrlrow") {
+    app.ctrlRow = Number(arg);
+    renderControls();
   } else if (cmd === "lock") {
     lockChar(chooser());
   } else if (cmd === "drill") {
@@ -442,6 +572,16 @@ function lockChar(i: 0 | 1): void {
   }
 }
 
+// Aksi satu pemain di layar pilih karakter (dipakai keyboard dan stick).
+function selectAct(player: 0 | 1, act: "left" | "right" | "lock"): void {
+  if (act === "left") moveChar(player, -1);
+  else if (act === "right") moveChar(player, 1);
+  else lockChar(player);
+}
+
+// Stick yang terakhir dipakai menavigasi menu; jadi usulan alat untuk P1.
+let menuPad: number | null = null;
+
 const CONFIRM = new Set(["KeyF", "Enter", "Space"]);
 const UP = new Set(["KeyW", "ArrowUp"]);
 const DOWN = new Set(["KeyS", "ArrowDown"]);
@@ -458,17 +598,31 @@ function menuKey(code: string): void {
       app.humans = app.titleIndex === 1 ? 2 : 1;
       app.training = app.titleIndex === 2;
       sfx.receivePerfect();
-      goSelect();
+      goControls(menuPad);
     }
+    return;
+  }
+
+  if (app.mode === "controls") {
+    if (code === "Escape" || code === "Backspace") return goTitle();
+    if (UP.has(code) || DOWN.has(code)) {
+      app.ctrlRow = (app.ctrlRow + 1) % ctrlRows();
+      sfx.swing();
+      renderControls();
+    } else if (LEFT.has(code)) cycleDevice(app.ctrlRow, -1);
+    else if (RIGHT.has(code)) cycleDevice(app.ctrlRow, 1);
+    // Hanya Enter yang melanjutkan. Tombol aksi (F, K, dan lain-lain) sengaja tidak
+    // dipakai di sini supaya bisa ditekan bebas untuk mengetes lampu.
+    else if (code === "Enter" || code === "NumpadEnter") confirmControls();
     return;
   }
 
   if (app.mode === "select") {
     if (code === "Escape" || code === "Backspace") {
-      // Mundur selangkah: buka kunci terakhir, atau kembali ke judul.
+      // Mundur selangkah: buka kunci terakhir, atau kembali ke pengaturan kontrol.
       if (app.locked[1]) app.locked[1] = false;
       else if (app.locked[0]) app.locked[0] = false;
-      else return goTitle();
+      else return goControls();
       renderSelect();
       return;
     }
@@ -484,12 +638,21 @@ function menuKey(code: string): void {
         renderSelect();
       }
     } else {
-      if (code === "KeyA") moveChar(0, -1);
-      else if (code === "KeyD") moveChar(0, 1);
-      else if (code === "KeyF") lockChar(0);
-      else if (code === "ArrowLeft") moveChar(1, -1);
-      else if (code === "ArrowRight") moveChar(1, 1);
-      else if (code === "KeyK") lockChar(1);
+      // Dua pemain: tiap set tombol keyboard hanya berlaku untuk pemain yang memilihnya.
+      const owner = (set: 0 | 1): 0 | 1 | -1 =>
+        devices[0].kind === "kbd" && devices[0].set === set ? 0 : devices[1].kind === "kbd" && devices[1].set === set ? 1 : -1;
+      const a = owner(0);
+      const b = owner(1);
+      if (a >= 0) {
+        if (code === "KeyA") selectAct(a as 0 | 1, "left");
+        else if (code === "KeyD") selectAct(a as 0 | 1, "right");
+        else if (code === "KeyF") selectAct(a as 0 | 1, "lock");
+      }
+      if (b >= 0) {
+        if (code === "ArrowLeft") selectAct(b as 0 | 1, "left");
+        else if (code === "ArrowRight") selectAct(b as 0 | 1, "right");
+        else if (code === "KeyK") selectAct(b as 0 | 1, "lock");
+      }
     }
     return;
   }
@@ -543,7 +706,9 @@ function menuKey(code: string): void {
   }
 }
 window.addEventListener("keydown", (e) => {
-  if (!e.repeat) menuKey(e.code);
+  if (e.repeat) return;
+  menuPad = null; // menu sedang dijalankan dari keyboard, bukan stick
+  menuKey(e.code);
 });
 
 // ===== Gamepad di menu =====
@@ -553,18 +718,10 @@ window.addEventListener("keydown", (e) => {
 // 9 Options/Start, 12-15 D-pad.
 const padPrev = new Map<number, number>();
 function pollPads(): void {
-  // Pembagian stick diperbarui dulu; layar pilih karakter menampilkan siapa pakai apa.
-  if (updatePadSlots() && app.mode === "select") renderSelect();
+  trackPads();
+  updateControlsLive();
 
-  for (const pad of navigator.getGamepads?.() ?? []) {
-    if (!pad) continue;
-    // Hanya stick yang sudah terdaftar yang didengar. Perangkat kembaran (satu stick
-    // terbaca dua kali) tidak pernah terdaftar, jadi tidak menggandakan tekanan tombol.
-    const slot = pad.index === padSlots[0] ? 0 : pad.index === padSlots[1] ? 1 : -1;
-    if (slot < 0) {
-      padPrev.delete(pad.index);
-      continue;
-    }
+  for (const pad of listPads()) {
     const b = (n: number) => pad.buttons[n]?.pressed === true;
     const ax = pad.axes[0] ?? 0;
     const ay = pad.axes[1] ?? 0;
@@ -580,6 +737,7 @@ function pollPads(): void {
     const hit = now & ~(padPrev.get(pad.index) ?? 0);
     padPrev.set(pad.index, now);
     if (hit === 0) continue;
+    menuPad = pad.index;
 
     const playing = app.mode === "match" && !app.paused && state.phase !== "over";
     if (playing) {
@@ -587,13 +745,35 @@ function pollPads(): void {
       if (hit & 128) menuKey("Escape");
       continue;
     }
-    // Stick kedua punya tombol sendiri hanya di layar pilih karakter mode 2 pemain.
-    const second = slot === 1 && app.mode === "select" && app.humans === 2;
-    if (hit & 1) menuKey(second ? "ArrowUp" : "KeyW");
-    if (hit & 2) menuKey(second ? "ArrowDown" : "KeyS");
-    if (hit & 4) menuKey(second ? "ArrowLeft" : "KeyA");
-    if (hit & 8) menuKey(second ? "ArrowRight" : "KeyD");
-    if (hit & 16) menuKey(second ? "KeyK" : "KeyF");
+
+    // Pilih karakter mode 2 pemain: stick hanya menggerakkan pilihan pemiliknya.
+    if (app.mode === "select" && app.humans === 2) {
+      const owner = devices.findIndex((d) => d.kind === "pad" && d.index === pad.index);
+      if (owner >= 0) {
+        if (hit & 4) selectAct(owner as 0 | 1, "left");
+        if (hit & 8) selectAct(owner as 0 | 1, "right");
+        if (hit & 16) selectAct(owner as 0 | 1, "lock");
+      }
+      if (hit & (32 | 128)) menuKey("Escape");
+      continue;
+    }
+
+    if (app.mode === "controls") {
+      // Di pengaturan: D-pad mengubah pilihan, Options melanjutkan, lingkaran kembali.
+      // Tombol aksi lain dibiarkan untuk mengetes lampu.
+      if (hit & (1 | 2)) menuKey("KeyW");
+      if (hit & 4) menuKey("KeyA");
+      if (hit & 8) menuKey("KeyD");
+      if (hit & 128) menuKey("Enter");
+      else if (hit & 32) menuKey("Escape");
+      continue;
+    }
+
+    if (hit & 1) menuKey("KeyW");
+    if (hit & 2) menuKey("KeyS");
+    if (hit & 4) menuKey("KeyA");
+    if (hit & 8) menuKey("KeyD");
+    if (hit & 16) menuKey("KeyF");
     if (state.phase === "over" && app.mode === "match") {
       if (hit & 64) menuKey("KeyC");
       if (hit & 32) menuKey("KeyM");
@@ -705,7 +885,11 @@ function trainEvent(e: GameEvent): boolean {
       return true;
     }
   } else if (e.type === "miss") {
-    pop(e.kind === "smash" ? "MELESET · KECEPETAN" : "MELESET", 0, "#b9aed6");
+    pop(
+      e.kind === "smash" ? "MELESET · KECEPETAN" : e.kind === "special" ? "JURUS BATAL · METER UTUH" : "MELESET",
+      0,
+      "#b9aed6",
+    );
     trainResult(false);
     return true;
   } else if (e.type === "touch" && e.weak) {
@@ -714,14 +898,22 @@ function trainEvent(e: GameEvent): boolean {
   return false;
 }
 
+// Pukulan terakhir di reli ini, untuk menilai apakah poinnya lahir dari blunder.
+let lastHit: { player: number; weak: boolean } | null = null;
+
 function handleEvent(e: GameEvent): void {
   // Di layar judul dan pilih karakter, simulasi hanya jadi tontonan: tanpa suara dan teks.
   if (app.mode !== "match") return;
+  if (e.type === "touch") lastHit = { player: e.player, weak: e.weak };
+  else if (e.type === "smash" || e.type === "receive" || e.type === "specialHit") {
+    lastHit = { player: e.player, weak: false };
+  }
   if (app.training && trainEvent(e)) return;
   switch (e.type) {
     case "touch":
       if (e.weak) {
         sfx.weak();
+        sillySfx.slide();
         pop("KEWALAHAN!", e.player, "#b9aed6");
         crowdSfx.gasp();
       } else {
@@ -785,23 +977,45 @@ function handleEvent(e: GameEvent): void {
     case "curveDrop":
       sfx.curveDrop();
       break;
-    case "score":
+    case "score": {
+      const loser = 1 - e.winner;
+      // Blunder: yang kebobolan justru pemukul terakhir (bola nyangkut net atau jatuh di
+      // lapangan sendiri), dan itu bukan karena kewalahan menahan bola keras.
+      const blunder = !e.fault && lastHit !== null && lastHit.player === loser && !lastHit.weak;
+      // Bengong: bola jatuh tanpa disentuh siapa pun sejak servis.
+      const idle = !e.fault && lastHit === null;
       if (e.fault) {
         sfx.fault();
+        sillySfx.trombone();
         callout("FAULT!", "#8a7fa8");
+        crowdSfx.gasp();
+      } else if (blunder || idle) {
+        sillySfx.laugh();
+        sillySfx.boing();
+        callout(blunder ? "BLUNDER!" : "BENGONG!", "#ff4f6d");
+        pop("HAHAHA!", e.winner, "#ffd23f");
       } else {
         sfx.score();
         callout(`POIN ${charOf(e.winner).name.toUpperCase()}!`, hex(charOf(e.winner).color));
+        crowdSfx.cheer(1);
       }
-      crowdSfx.cheer(1);
+      lastHit = null;
       renderer.cheer(1.4);
       // Poin penentu pertandingan: tayangan lambat.
       if (gameWinner(state.score[0], state.score[1]) >= 0) slowMo(0.22, 1.1);
+      break;
+    }
+    case "miss":
+      // Ayunan kosong: smash atau jurus yang tidak mengenai apa-apa.
+      if (e.kind === "smash") sillySfx.boing();
+      else if (e.kind === "special") pop("JURUS BATAL", e.player, "#b9aed6");
       break;
     case "over":
       sfx.over();
       crowdSfx.cheer(1.6);
       renderer.cheer(4);
+      // Menang tanpa kebobolan sama sekali: penonton menertawakan yang kalah.
+      if (Math.min(state.score[0], state.score[1]) === 0) window.setTimeout(() => sillySfx.laugh(), 900);
       break;
     case "land":
       break;

@@ -59,7 +59,7 @@ export const CHARS: readonly CharDef[] = [
   {
     name: "Bang Sosis",
     color: 0xff5a3c,
-    moveSpeed: 6.3,
+    moveSpeed: 6.5,
     jumpV: 12.5,
     smashSpeed: 18.2,
     special: "fire",
@@ -68,7 +68,7 @@ export const CHARS: readonly CharDef[] = [
   {
     name: "Mbak Lontong",
     color: 0x2f9e6b,
-    moveSpeed: 7.2,
+    moveSpeed: 7.0,
     jumpV: 13.2,
     smashSpeed: 15.9,
     special: "curve",
@@ -77,7 +77,7 @@ export const CHARS: readonly CharDef[] = [
   {
     name: "Pak Bakso",
     color: 0xc9743a,
-    moveSpeed: 6.0,
+    moveSpeed: 6.3,
     jumpV: 12.3,
     smashSpeed: 19.5,
     special: "fire",
@@ -88,14 +88,14 @@ export const CHARS: readonly CharDef[] = [
     color: 0x4a7de0,
     moveSpeed: 6.6,
     jumpV: 12.8,
-    smashSpeed: 16.5,
+    smashSpeed: 16.2,
     special: "curve",
     specialName: "Tahu Dadakan",
   },
   {
     name: "Kak Pisang",
     color: 0xd9a016,
-    moveSpeed: 7.4,
+    moveSpeed: 7.2,
     jumpV: 12.6,
     smashSpeed: 15.9,
     special: "zigzag",
@@ -145,8 +145,10 @@ const METER_RECEIVE_PERFECT = 22;
 export const METER_MAX = 100;
 export const SPECIAL_COST = 50;
 export const SPECIAL_R = 1.5;
-const SPECIAL_ACTIVE = 16;
+// Jurus yang sudah diaktifkan "siaga" selama ini: begitu bola masuk jangkauan, pasti kena.
+const SPECIAL_ARMED = 90;
 const SPECIAL_RECOVER = 20;
+const SPECIAL_WHIFF_RECOVER = 30; // jeda kalau jurus siaga sampai habis tanpa kena bola
 export const SUPER_FREEZE = 18;
 const FIRE_SPEED = 27;
 const FIRE_FRAMES = 32; // cukup lama supaya masih "api" saat sampai ke lawan
@@ -234,7 +236,7 @@ export type GameEvent =
   // elapsed = jumlah frame antara tombol ditekan dan bola kena; dipakai mode latihan.
   | { type: "receive"; player: number; x: number; y: number; perfect: boolean; elapsed: number }
   | { type: "smash"; player: number; x: number; y: number; perfect: boolean; elapsed: number }
-  | { type: "miss"; player: number; kind: "smash" | "guard" }
+  | { type: "miss"; player: number; kind: "smash" | "guard" | "special" }
   | { type: "bounce" }
   | { type: "jump"; player: number }
   | { type: "dash"; player: number; dir: number }
@@ -368,7 +370,10 @@ function stepPlayer(s: GameState, i: number, rawInput: number): void {
   // Special dan smash: jendela aktif, lalu recovery (tidak bisa menyerang lagi).
   if (p.specialTimer > 0) {
     p.specialTimer--;
-    if (p.specialTimer === 0) p.smashRecover = SPECIAL_RECOVER;
+    if (p.specialTimer === 0) {
+      p.smashRecover = SPECIAL_WHIFF_RECOVER;
+      s.events.push({ type: "miss", player: i, kind: "special" });
+    }
   } else if (p.smashTimer > 0) {
     p.smashTimer--;
     if (p.smashTimer === 0) {
@@ -387,8 +392,8 @@ function stepPlayer(s: GameState, i: number, rawInput: number): void {
     p.guardTimer = GUARD_ACTIVE;
     s.events.push({ type: "guard", player: i });
   } else if (pressed(p, input, Btn.SPECIAL) && p.meter >= SPECIAL_COST) {
-    p.meter -= SPECIAL_COST;
-    p.specialTimer = SPECIAL_ACTIVE;
+    // Meter belum dipotong di sini: baru dipotong kalau jurusnya benar-benar mengenai bola.
+    p.specialTimer = SPECIAL_ARMED;
     s.hitstop = SUPER_FREEZE; // semua membeku sesaat: momen "ulti"
     s.events.push({ type: "special", player: i });
   } else if (pressed(p, input, Btn.SMASH)) {
@@ -507,6 +512,7 @@ function tryHit(s: GameState, i: number, input: number): void {
   if (special) {
     p.specialTimer = 0;
     p.smashRecover = SPECIAL_RECOVER;
+    p.meter = Math.max(0, p.meter - SPECIAL_COST); // jurus jadi: baru sekarang meternya terpakai
     if (c.special === "fire") {
       // Jurus api: bola melesat lurus tanpa gravitasi, dibidik ke lantai lapangan lawan.
       // Tahan maju = jauh, tahan mundur = dekat net, netral = tengah.
@@ -565,6 +571,17 @@ function tryHit(s: GameState, i: number, input: number): void {
         ny = p.grounded ? 0.45 : -0.3;
       } else if (nx !== 0 && ny === 0) {
         ny = p.grounded ? 0.25 : -0.1;
+      }
+      // Kalau bidikannya ke arah net tapi bakal nyangkut, sudutnya dinaikkan sedikit demi
+      // sedikit sampai lolos: jurus yang sudah kena tidak boleh mati di net.
+      if (nx * dir > 0 && b.x * dir < 0) {
+        for (let k = 0; k < 10; k++) {
+          const l = Math.hypot(nx, ny);
+          const t = Math.abs(b.x) / ((Math.abs(nx) / l) * GHOST_SPEED);
+          const yAtNet = b.y + (ny / l) * GHOST_SPEED * t - 0.5 * BALL_GRAVITY * t * t;
+          if (yAtNet > NET_H + NET_R + BALL_R + 0.3) break;
+          ny += 0.15;
+        }
       }
       const len = Math.hypot(nx, ny);
       b.vx = (nx / len) * GHOST_SPEED;
@@ -877,7 +894,9 @@ export function cpuInput(s: GameState, i: number, level = 1): number {
   }
 
   // Salah baca posisi: di sebagian reli CPU berdiri agak meleset dari titik jatuh bola.
-  if ((Math.imul(s.rally * 3 + i * 7 + (s.score[0] + s.score[1]) * 5, 40503) >>> 0) % 100 < L.miss) {
+  // Tidak berlaku untuk bola servis (reli masih 0): melongo melihat bola servis jatuh
+  // bukan kesalahan yang wajar.
+  if (s.rally > 0 && (Math.imul(s.rally * 3 + i * 7 + (s.score[0] + s.score[1]) * 5, 40503) >>> 0) % 100 < L.miss) {
     targetX += 1.3 * side;
   }
   const ox = Math.min(Math.max(targetX * side, PLAYER_MIN_X + 0.2), PLAYER_MAX_X - 0.2);
@@ -937,12 +956,10 @@ export function cpuInput(s: GameState, i: number, level = 1): number {
         if (down) out |= Btn.DOWN;
       }
     }
-    // Special kalau meter cukup: Bola Pelintir dari mana saja, Tendangan Api hanya dekat net.
-    const kind = CHARS[s.chars[i]].special;
-    const fromAnywhere = kind === "curve" || kind === "zigzag" || kind === "meteor";
-    const specialOk = fromAnywhere
-      ? dx < 1.4 && Math.abs(dy) < 1.4 && s.touches >= 1 && s.lastSide === i
-      : nearNet && !p.grounded && dx < 1.5 && Math.abs(dy) < 1.4 && b.y > NET_H + 0.5;
+    // Jurus kalau meter cukup. Karena jurus sekarang siaga sampai bola kena, hampir semua
+    // jenis aman dipakai dari mana saja setelah sentuhan sendiri.
+    const ownBall = dx < 1.4 && Math.abs(dy) < 1.4 && s.touches >= 1 && s.lastSide === i;
+    const specialOk = ownBall;
     if (p.meter >= SPECIAL_COST && specialOk && roll < L.special && p.smashRecover === 0) {
       out &= ~Btn.SMASH;
       if ((p.prev & Btn.SPECIAL) === 0) out |= Btn.SPECIAL;

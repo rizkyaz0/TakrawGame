@@ -388,18 +388,22 @@ export class Animator {
     let jitterX = 0;
     if (charging) {
       const now = performance.now();
-      jitterX = Math.sin(now * 0.09) * 0.025;
-      o.kneeL = -1.0;
-      o.kneeR = -0.95;
-      o.hipL = 0.75;
-      o.hipR = 0.35;
-      o.lean = -0.2;
-      o.shL = 0.5;
-      o.shR = 0.3;
-      o.elL = 2.3;
-      o.elR = 2.3;
-      o.bob = -0.02;
       glow = 0.6 + Math.sin(now * 0.03) * 0.4;
+      // Pose jongkok hanya saat diam di tanah; kalau sedang bergerak atau melompat sambil
+      // menunggu bola, karakter tetap bergerak biasa dan hanya badannya yang menyala.
+      if (p.grounded && speed < 0.8 && !this.anim) {
+        jitterX = Math.sin(now * 0.09) * 0.025;
+        o.kneeL = -1.0;
+        o.kneeR = -0.95;
+        o.hipL = 0.75;
+        o.hipR = 0.35;
+        o.lean = -0.2;
+        o.shL = -0.5;
+        o.shR = -0.3;
+        o.elL = 0.9;
+        o.elR = 0.9;
+        o.bob = -0.02;
+      }
     }
 
     o.kneeL = Math.min(0.15, o.kneeL);

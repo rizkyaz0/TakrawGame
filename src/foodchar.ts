@@ -364,6 +364,23 @@ export class FoodCharacter {
     const a = this.animator.compute(p, frame, ball, charging, def.special);
     const o = a.pose;
 
+    // Terhuyung (kewalahan, kepleset, kena sandal): badan miring ke belakang, tangan dan
+    // kaki menggapai-gapai sampai pulih.
+    if (p.stun > 0) {
+      const t = performance.now() / 1000;
+      const flail = Math.sin(t * 34);
+      o.lean = 0.55 + flail * 0.08;
+      o.shL = 2.4 + flail * 0.6;
+      o.shR = -2.0 - flail * 0.6;
+      o.elL = o.elR = 0.3;
+      o.hipR = 1.0 + flail * 0.3;
+      o.kneeR = -0.7;
+      o.hipL = -0.3;
+      o.kneeL = -0.5;
+      a.look = 0.6;
+      a.squash = -0.08;
+    }
+
     // Selebrasi dan lesu memakai waktu nyata, supaya tetap bergerak saat permainan berhenti.
     if (mood === "win") {
       const t = performance.now() / 1000;

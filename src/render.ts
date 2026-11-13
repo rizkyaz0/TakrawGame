@@ -75,6 +75,11 @@ export class Renderer {
   private ball: THREE.Mesh;
   private ballMat: THREE.MeshToonMaterial;
   private marker: THREE.Mesh;
+  private reticle: THREE.Group; // bidikan penonton, terlihat semua pemain
+  private reticleMat = new THREE.MeshBasicMaterial({ color: 0x7dff6a, transparent: true, opacity: 0.9 });
+  private ray = new THREE.Raycaster();
+  // Benda lemparan penonton: tiap slot punya kulit pisang, sandal, dan tanda peringatan.
+  private hazardViews: Array<{ peel: THREE.Group; sandal: THREE.Group; warn: THREE.Mesh }> = [];
   private camDist = 20;
   private camX = 0;
   private camY = LOOK_Y;
@@ -140,6 +145,58 @@ export class Renderer {
     this.marker.rotation.x = -Math.PI / 2;
     this.marker.position.y = 0.03;
     this.scene.add(this.marker);
+
+    this.reticle = new THREE.Group();
+    const rim = new THREE.Mesh(new THREE.RingGeometry(0.42, 0.56, 24), this.reticleMat);
+    rim.rotation.x = -Math.PI / 2;
+    this.reticle.add(rim);
+    for (const rot of [0, Math.PI / 2]) {
+      const bar = new THREE.Mesh(new THREE.BoxGeometry(1.5, 0.02, 0.07), this.reticleMat);
+      bar.rotation.y = rot;
+      this.reticle.add(bar);
+    }
+    const pole = new THREE.Mesh(new THREE.ConeGeometry(0.16, 0.5, 4), this.reticleMat);
+    pole.rotation.x = Math.PI;
+    pole.position.y = 3.4;
+    this.reticle.add(pole);
+    this.reticle.visible = false;
+    this.scene.add(this.reticle);
+
+    for (let k = 0; k < 4; k++) {
+      const peel = new THREE.Group();
+      const peelMat = toon(0xf6cf2f);
+      for (let n = 0; n < 4; n++) {
+        const flap = addOutline(new THREE.Mesh(new THREE.ConeGeometry(0.11, 0.42, 5), peelMat), 0.02);
+        flap.scale.z = 0.45;
+        flap.rotation.z = Math.PI / 2 - 0.25;
+        flap.position.x = 0.2;
+        const arm = new THREE.Group();
+        arm.rotation.y = (n / 4) * Math.PI * 2;
+        arm.add(flap);
+        peel.add(arm);
+      }
+      peel.add(addOutline(new THREE.Mesh(new THREE.SphereGeometry(0.09, 8, 6), toon(0x6b4a22)), 0.015));
+
+      const sandal = new THREE.Group();
+      const sole = addOutline(new THREE.Mesh(new THREE.SphereGeometry(0.3, 12, 8), toon(0x2fb4d6)), 0.03);
+      sole.scale.set(1.1, 0.2, 0.5);
+      sandal.add(sole);
+      const strap = new THREE.Mesh(new THREE.TorusGeometry(0.12, 0.03, 5, 10, Math.PI), toon(0xfffaf0));
+      strap.position.set(0.1, 0.03, 0);
+      strap.rotation.y = Math.PI / 2;
+      sandal.add(strap);
+
+      const warn = new THREE.Mesh(
+        new THREE.RingGeometry(0.34, 0.5, 20),
+        new THREE.MeshBasicMaterial({ color: 0xff2d2d, transparent: true, opacity: 0.85 }),
+      );
+      warn.rotation.x = -Math.PI / 2;
+      for (const o of [peel, sandal, warn]) {
+        o.visible = false;
+        this.scene.add(o);
+      }
+      this.hazardViews.push({ peel, sandal, warn });
+    }
 
     window.addEventListener("resize", () => this.resize());
     this.resize();
@@ -219,6 +276,18 @@ export class Renderer {
       case "bounce":
         this.fx.burst(f, s.ball.x, s.ball.y, 0xffffff, 0.35);
         break;
+      case "heckle":
+        this.scenery.cheer(0.5);
+        break;
+      case "slip":
+        this.fx.dust(f, feet(e.player).x, 0, 7);
+        this.fx.burst(f, feet(e.player).x, 0.4, 0xffd23f, 0.9);
+        this.shake = Math.max(this.shake, 0.2);
+        break;
+      case "bonk":
+        this.fx.burst(f, e.x, e.y, 0x2fb4d6, 0.8);
+        this.shake = Math.max(this.shake, 0.15);
+        break;
       case "jump":
         this.fx.dust(f, feet(e.player).x, feet(e.player).y, 3);
         break;
@@ -236,6 +305,16 @@ export class Renderer {
         this.shake = Math.max(this.shake, 0.15);
         break;
     }
+  }
+
+  // Posisi x di lapangan untuk satu titik di layar (bidikan mouse penonton).
+  worldX(clientX: number, clientY: number): number {
+    const ndc = new THREE.Vector2((clientX / window.innerWidth) * 2 - 1, -(clientY / window.innerHeight) * 2 + 1);
+    this.ray.setFromCamera(ndc, this.camera);
+    const o = this.ray.ray.origin;
+    const d = this.ray.ray.direction;
+    if (Math.abs(d.z) < 1e-6) return 0;
+    return o.x + d.x * (-o.z / d.z); // titik potong dengan bidang z = 0
   }
 
   // Penonton melonjak (poin, smash sempurna, ulti).
@@ -320,6 +399,42 @@ export class Renderer {
     this.marker.visible = !ghost;
     this.marker.position.x = b.x;
     this.marker.scale.setScalar(THREE.MathUtils.clamp(1 - b.y / 12, 0.35, 1) * 1.4);
+
+    // Bidikan penonton: hijau kalau boleh melempar di situ, merah kalau belum.
+    const sp = s.spec;
+    this.reticle.visible = sp.active && s.phase !== "over";
+    if (this.reticle.visible) {
+      const side = sp.x < 0 ? 0 : 1;
+      const ok = sp.ammo >= 1 && side !== sp.lastSide && Math.abs(sp.x) >= 0.9;
+      this.reticle.position.set(sp.x, 0.05, 0);
+      this.reticle.children[3].position.y = 3.4 + Math.sin(now * 6) * 0.15;
+      this.reticleMat.color.setHex(ok ? 0x7dff6a : 0xff4f6d);
+    }
+
+    // Benda lemparan: melayang dari tribun selama peringatan, lalu jatuh atau tergeletak.
+    for (let k = 0; k < this.hazardViews.length; k++) {
+      const v = this.hazardViews[k];
+      const h = s.hazards[k];
+      v.peel.visible = v.sandal.visible = v.warn.visible = false;
+      if (!h) continue;
+      const item = h.kind === "peel" ? v.peel : v.sandal;
+      item.visible = true;
+      const restY = h.kind === "peel" ? 0.07 : h.y;
+      if (h.warn > 0) {
+        const u = 1 - h.warn / 48; // 0 = baru dilempar, 1 = sampai
+        const arc = Math.sin(u * Math.PI) * 2.6;
+        item.position.set(h.x, THREE.MathUtils.lerp(1.2, restY, u) + arc, THREE.MathUtils.lerp(-4.7, 0.25, u));
+        item.rotation.set(u * 9, u * 5, u * 7);
+      } else {
+        item.position.set(h.x, restY, 0.25);
+        if (h.kind === "peel") item.rotation.set(0, 0.6, 0);
+        else item.rotation.set(0, 0, now * 14);
+      }
+      // Tanda merah di lantai: berkedip selama peringatan dan selama sandal masih di udara.
+      const danger = h.warn > 0 || h.kind === "sandal";
+      v.warn.visible = danger && Math.floor(now * 10) % 2 === 0;
+      v.warn.position.set(h.x, 0.04, 0);
+    }
 
     this.fx.update(s);
     this.scenery.update(now, excite);

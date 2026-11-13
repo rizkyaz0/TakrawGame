@@ -14,7 +14,7 @@ window.addEventListener("blur", () => keys.clear());
 
 type KeyMap = Array<[string, number]>;
 
-const KEYMAPS: [KeyMap, KeyMap] = [
+const KEYMAPS: [KeyMap, KeyMap, KeyMap] = [
   [
     ["KeyA", Btn.LEFT],
     ["KeyD", Btn.RIGHT],
@@ -35,12 +35,47 @@ const KEYMAPS: [KeyMap, KeyMap] = [
     ["Semicolon", Btn.SPECIAL],
     ["KeyO", Btn.GUARD],
   ],
+  // Set ketiga, khusus penonton: geser bidikan dan dua jenis lemparan.
+  [
+    ["KeyC", Btn.LEFT],
+    ["KeyB", Btn.RIGHT],
+    ["KeyV", Btn.SMASH],
+    ["Space", Btn.JUMP],
+  ],
 ];
 
 // ===== Alat kontrol per pemain =====
 // Tiap pemain memakai satu alat yang dipilih di layar pengaturan: salah satu dari dua
 // set tombol keyboard, atau salah satu stick yang terhubung.
-export type Device = { kind: "kbd"; set: 0 | 1 } | { kind: "pad"; index: number };
+// "net" = kursi diisi tamu online; id-nya nomor tamu dari host.
+export type Device = { kind: "kbd"; set: 0 | 1 | 2 } | { kind: "pad"; index: number } | { kind: "net"; id: number };
+
+// Penonton: tidak ada, otomatis (dijalankan game), mouse, keyboard set ketiga, atau stick.
+export type SpecDevice = Device | { kind: "none" } | { kind: "auto" } | { kind: "mouse" };
+export const spectator: { device: SpecDevice } = { device: { kind: "none" } };
+
+// Posisi dan tombol mouse, untuk penonton yang membidik dengan mouse.
+// capture: tamu online yang jadi penonton juga membidik dengan mouse.
+export const mouse = { x: 0, y: 0, bits: 0, moved: 0, capture: false };
+window.addEventListener("mousemove", (e) => {
+  mouse.moved++;
+  mouse.x = e.clientX;
+  mouse.y = e.clientY;
+});
+window.addEventListener("mousedown", (e) => {
+  mouse.x = e.clientX;
+  mouse.y = e.clientY;
+  if (e.button === 0) mouse.bits |= Btn.SMASH;
+  else if (e.button === 2) mouse.bits |= Btn.JUMP;
+});
+window.addEventListener("mouseup", (e) => {
+  if (e.button === 0) mouse.bits &= ~Btn.SMASH;
+  else if (e.button === 2) mouse.bits &= ~Btn.JUMP;
+});
+// Klik kanan dipakai untuk melempar sandal, jadi menu konteksnya dimatikan.
+window.addEventListener("contextmenu", (e) => {
+  if (spectator.device.kind === "mouse" || mouse.capture) e.preventDefault();
+});
 
 export const devices: [Device, Device] = [
   { kind: "kbd", set: 0 },
@@ -52,6 +87,7 @@ const STORE_KEY = "takraw.devices";
 export function saveDevices(): void {
   try {
     localStorage.setItem(STORE_KEY, JSON.stringify(devices));
+    localStorage.setItem(`${STORE_KEY}.spec`, JSON.stringify(spectator.device));
   } catch {
     // penyimpanan diblokir: pilihan hanya berlaku untuk sesi ini
   }
@@ -67,15 +103,22 @@ export function loadDevices(): boolean {
       else if (d.kind === "pad" && typeof d.index === "number") devices[i] = { kind: "pad", index: d.index };
       else return false;
     }
+    try {
+      const sp = JSON.parse(localStorage.getItem(`${STORE_KEY}.spec`) ?? "null") as SpecDevice | null;
+      if (sp && ["none", "auto", "mouse", "kbd", "pad"].includes(sp.kind)) spectator.device = sp;
+    } catch {
+      // abaikan: penonton kembali ke "tidak ada"
+    }
     return true;
   } catch {
     return false;
   }
 }
 
-export function sameDevice(a: Device, b: Device): boolean {
+export function sameDevice(a: SpecDevice, b: SpecDevice): boolean {
   if (a.kind === "kbd" && b.kind === "kbd") return a.set === b.set;
   if (a.kind === "pad" && b.kind === "pad") return a.index === b.index;
+  if (a.kind === "net" && b.kind === "net") return a.id === b.id;
   return false;
 }
 
@@ -130,8 +173,12 @@ function padByIndex(index: number): Gamepad | null {
   return standardPads().find((g) => g.index === index) ?? null;
 }
 
-export function deviceLabel(d: Device): string {
-  if (d.kind === "kbd") return d.set === 0 ? "KEYBOARD · WASD" : "KEYBOARD · PANAH";
+export function deviceLabel(d: SpecDevice): string {
+  if (d.kind === "none") return "TIDAK ADA";
+  if (d.kind === "auto") return "OTOMATIS";
+  if (d.kind === "mouse") return "MOUSE";
+  if (d.kind === "net") return `ONLINE · TAMU ${d.id}`;
+  if (d.kind === "kbd") return d.set === 0 ? "KEYBOARD · WASD" : d.set === 1 ? "KEYBOARD · PANAH" : "KEYBOARD · C V B";
   const n = listPads().findIndex((g) => g.index === d.index);
   return n >= 0 ? `STICK ${n + 1}` : "STICK (TIDAK TERHUBUNG)";
 }
@@ -142,6 +189,17 @@ export function deviceOptions(): Device[] {
     { kind: "kbd", set: 0 },
     { kind: "kbd", set: 1 },
     ...listPads().map((g): Device => ({ kind: "pad", index: g.index })),
+  ];
+}
+
+// Pilihan untuk penonton: tidak ada, otomatis, mouse, keyboard set ketiga, atau stick.
+export function spectatorOptions(): SpecDevice[] {
+  return [
+    { kind: "none" },
+    { kind: "auto" },
+    { kind: "mouse" },
+    { kind: "kbd", set: 2 },
+    ...listPads().map((g): SpecDevice => ({ kind: "pad", index: g.index })),
   ];
 }
 
@@ -168,13 +226,35 @@ function deviceBits(d: Device): number {
     for (const [code, bits] of KEYMAPS[d.set]) if (keys.has(code)) out |= bits;
     return out;
   }
+  if (d.kind === "net") return 0; // tombol tamu datang lewat jaringan, dibaca main.ts
   const pad = padByIndex(d.index);
   return pad ? padBits(pad) : 0;
 }
 
+// Tamu online: semua alat di perangkatnya berlaku untuk dirinya sendiri.
+export function readAll(asSpectator: boolean): number {
+  let out = touchState.bits;
+  for (const [code, bits] of KEYMAPS[0]) if (keys.has(code)) out |= bits;
+  for (const [code, bits] of KEYMAPS[asSpectator ? 2 : 1]) if (keys.has(code)) out |= bits;
+  for (const pad of standardPads()) out |= padBits(pad);
+  if (asSpectator && !touchState.enabled) out |= mouse.bits;
+  return out;
+}
+
 // Apakah alat ini sedang ditekan; dipakai untuk lampu tes di layar pengaturan.
-export function deviceActive(d: Device): boolean {
+export function deviceActive(d: SpecDevice): boolean {
+  if (d.kind === "mouse") return mouse.bits !== 0;
+  if (d.kind === "none" || d.kind === "auto") return false;
   return deviceBits(d) !== 0;
+}
+
+// Input penonton: geser bidikan (kiri/kanan), kulit pisang (smash), sandal (lompat).
+// Untuk mouse, posisi bidikan diisi langsung dari posisi kursor oleh main.ts.
+export function readSpectator(): number {
+  const d = spectator.device;
+  if (d.kind === "mouse") return mouse.bits;
+  if (d.kind === "none" || d.kind === "auto") return 0;
+  return deviceBits(d);
 }
 
 export function readInput(i: 0 | 1): number {

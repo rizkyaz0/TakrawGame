@@ -246,7 +246,46 @@ export type GameEvent =
   | { type: "specialHit"; player: number; kind: SpecialKind; x: number; y: number }
   | { type: "curveDrop" }
   | { type: "score"; winner: number; fault: boolean }
-  | { type: "over"; winner: number };
+  | { type: "over"; winner: number }
+  // Penonton usil.
+  | { type: "heckle"; kind: HazardKind; x: number; side: number }
+  // Lemparan penonton ditolak: amunisi habis, sisi yang sama dua kali, atau terlalu dekat net.
+  | { type: "heckleDenied"; reason: "ammo" | "side" | "net" }
+  | { type: "slip"; player: number }
+  | { type: "bonk"; target: "player" | "ball"; player: number; x: number; y: number };
+
+// Benda yang dilempar penonton ke lapangan.
+export type HazardKind = "peel" | "sandal";
+export interface Hazard {
+  kind: HazardKind;
+  x: number;
+  y: number;
+  warn: number; // sisa frame peringatan sebelum bendanya benar-benar ada
+  life: number; // sisa frame kulit pisang tergeletak di lantai
+}
+
+// Penonton yang dimainkan orang ketiga. Supaya adil: amunisi terbatas dan terisi pelan,
+// dan dua lemparan berturut-turut tidak boleh ke sisi yang sama.
+export interface Spectator {
+  active: boolean;
+  x: number; // posisi bidikan di lapangan
+  ammo: number; // 0 sampai SPEC_MAX_AMMO, bisa pecahan saat sedang terisi
+  lastSide: number; // sisi lemparan terakhir, -1 = belum pernah
+  prev: number;
+}
+export const SPEC_MAX_AMMO = 2;
+const SPEC_RECHARGE = 420; // frame untuk mengisi satu lemparan (7 detik)
+const SPEC_SPEED = 10;
+const SPEC_NET_GAP = 0.9;
+
+const HECKLE_WARN = 48; // tanda peringatan muncul 0,8 detik sebelum benda sampai
+const PEEL_LIFE = 420;
+const PEEL_R = 0.5;
+const SLIP_STUN = 30;
+const SANDAL_FALL = 13;
+const SANDAL_R = 0.55;
+const SANDAL_STUN = 14;
+const hz = (n: number) => Math.imul(n, 2654435761) >>> 0;
 
 export interface GameState {
   frame: number;
@@ -263,6 +302,10 @@ export interface GameState {
   lastSide: number; // sisi yang terakhir menyentuh bola, -1 = belum ada
   touches: number;
   events: GameEvent[];
+  rowdy: boolean; // penonton usil otomatis
+  spec: Spectator; // penonton yang dimainkan orang
+  heckleTimer: number; // frame sampai lemparan berikutnya
+  hazards: Hazard[];
 }
 
 function makePlayer(side: number): Player {
@@ -304,6 +347,10 @@ export function createState(chars: [number, number] = [0, 1]): GameState {
     lastSide: -1,
     touches: 0,
     events: [],
+    rowdy: false,
+    spec: { active: false, x: -3, ammo: 1, lastSide: -1, prev: 0 },
+    heckleTimer: 300,
+    hazards: [],
   };
   startServe(s);
   return s;
@@ -325,6 +372,8 @@ function startServe(s: GameState): void {
   s.touches = 0;
   s.rally = 0;
   s.heat = 0;
+  s.hazards.length = 0;
+  s.heckleTimer = 240 + (hz(s.score[0] * 7 + s.score[1] * 13 + 5) % 240);
   s.phase = "serve";
   s.timer = 45;
 }
@@ -795,7 +844,98 @@ function stepBall(s: GameState, inputs: readonly [number, number]): void {
   }
 }
 
-export function step(s: GameState, inputs: readonly [number, number]): void {
+// Penonton usil: sesekali melempar sesuatu ke pemain yang sedang unggul. Semuanya
+// ditentukan dari state (tanpa acak sungguhan), jadi tetap bisa diulang persis.
+// Penonton manusia: menggeser bidikan, mengisi amunisi, dan melempar.
+function stepSpectator(s: GameState, input: number): void {
+  const sp = s.spec;
+  if (!sp.active) return;
+  const lim = COURT_HALF - 0.7;
+  const ax = (input & Btn.RIGHT ? 1 : 0) - (input & Btn.LEFT ? 1 : 0);
+  sp.x = Math.min(lim, Math.max(-lim, sp.x + ax * SPEC_SPEED * DT));
+  sp.ammo = Math.min(SPEC_MAX_AMMO, sp.ammo + 1 / SPEC_RECHARGE);
+
+  // Tombol smash = kulit pisang, tombol lompat = sandal.
+  const kind: HazardKind | null =
+    input & Btn.SMASH && !(sp.prev & Btn.SMASH) ? "peel" : input & Btn.JUMP && !(sp.prev & Btn.JUMP) ? "sandal" : null;
+  sp.prev = input;
+  if (!kind || s.phase !== "play") return;
+
+  const side = sp.x < 0 ? 0 : 1;
+  if (Math.abs(sp.x) < SPEC_NET_GAP) s.events.push({ type: "heckleDenied", reason: "net" });
+  else if (sp.ammo < 1 || s.hazards.length >= 4) s.events.push({ type: "heckleDenied", reason: "ammo" });
+  else if (side === sp.lastSide) s.events.push({ type: "heckleDenied", reason: "side" });
+  else {
+    sp.ammo -= 1;
+    sp.lastSide = side;
+    s.hazards.push({ kind, x: sp.x, y: kind === "peel" ? 0 : 9.5, warn: HECKLE_WARN, life: PEEL_LIFE });
+    s.events.push({ type: "heckle", kind, x: sp.x, side });
+  }
+}
+
+function stepHazards(s: GameState): void {
+  // Lemparan otomatis hanya kalau tidak ada penonton manusia.
+  if (!s.spec.active && s.rowdy && --s.heckleTimer <= 0) {
+    const h = hz(s.frame * 31 + s.rally * 7 + s.score[0] * 3 + s.score[1]);
+    // Yang diusili pemain yang unggul; kalau seri, bergantian.
+    const target = s.score[0] > s.score[1] ? 0 : s.score[1] > s.score[0] ? 1 : (h >>> 3) & 1;
+    const p = s.players[target];
+    const side = target === 0 ? -1 : 1;
+    const kind: HazardKind = h % 100 < 55 ? "peel" : "sandal";
+    const jitter = (((h >>> 8) % 5) - 2) * 0.2;
+    // Kulit pisang jatuh di depan arah lari; sandal mengincar posisi pemain sebentar lagi.
+    let x = kind === "peel" ? p.x + (Math.sign(p.vx) || -side) * 1.5 + jitter : p.x + p.vx * 0.6 + jitter;
+    x = Math.min(Math.max(x * side, 0.9), COURT_HALF - 0.7) * side;
+    s.hazards.push({ kind, x, y: kind === "peel" ? 0 : 9.5, warn: HECKLE_WARN, life: PEEL_LIFE });
+    s.heckleTimer = 420 + ((h >>> 12) % 360); // 7 sampai 13 detik
+    s.events.push({ type: "heckle", kind, x, side: target });
+  }
+
+  for (let k = s.hazards.length - 1; k >= 0; k--) {
+    const hzd = s.hazards[k];
+    if (hzd.warn > 0) {
+      hzd.warn--;
+      continue;
+    }
+    if (hzd.kind === "peel") {
+      // Kepleset: pemain yang berlari di tanah melewati kulit pisang. Melompatinya aman.
+      let gone = --hzd.life <= 0;
+      for (let i = 0; i < 2 && !gone; i++) {
+        const p = s.players[i];
+        if (p.grounded && p.stun === 0 && Math.abs(p.vx) > 0.8 && Math.abs(p.x - hzd.x) < PEEL_R) {
+          p.stun = SLIP_STUN;
+          p.vx = Math.sign(p.vx) * 10;
+          p.dashTimer = 0;
+          s.events.push({ type: "slip", player: i });
+          gone = true;
+        }
+      }
+      if (gone) s.hazards.splice(k, 1);
+    } else {
+      // Sandal jatuh dari atas: menyenggol bola, atau membuat pemain terhuyung.
+      hzd.y -= SANDAL_FALL * DT;
+      const b = s.ball;
+      let gone = hzd.y <= 0;
+      if (!gone && Math.hypot(b.x - hzd.x, b.y - hzd.y) < SANDAL_R + BALL_R) {
+        b.vx += (b.x >= hzd.x ? 1 : -1) * 3.5;
+        b.vy = Math.abs(b.vy) * 0.5 + 4;
+        s.events.push({ type: "bonk", target: "ball", player: -1, x: hzd.x, y: hzd.y });
+        gone = true;
+      }
+      for (let i = 0; i < 2 && !gone; i++) {
+        const p = s.players[i];
+        if (Math.abs(p.x - hzd.x) < SANDAL_R && hzd.y > p.y && hzd.y < p.y + 1.8) {
+          p.stun = Math.max(p.stun, SANDAL_STUN);
+          s.events.push({ type: "bonk", target: "player", player: i, x: hzd.x, y: hzd.y });
+          gone = true;
+        }
+      }
+      if (gone) s.hazards.splice(k, 1);
+    }
+  }
+}
+
+export function step(s: GameState, inputs: readonly [number, number], specInput = 0): void {
   s.events.length = 0;
 
   // Hitstop: semua membeku beberapa frame setelah smash kena.
@@ -824,11 +964,13 @@ export function step(s: GameState, inputs: readonly [number, number]): void {
 
   stepPlayer(s, 0, inputs[0]);
   stepPlayer(s, 1, inputs[1]);
+  stepSpectator(s, specInput);
 
   if (s.phase === "serve") {
     if (--s.timer <= 0) s.phase = "play";
   } else if (s.phase === "play") {
     stepBall(s, inputs);
+    if (s.phase === "play" && s.hitstop === 0) stepHazards(s);
   } else if (s.phase === "point") {
     if (--s.timer <= 0) {
       const winner = gameWinner(s.score[0], s.score[1]);
@@ -905,6 +1047,16 @@ export function cpuInput(s: GameState, i: number, level = 1): number {
   const moving = L.lazy === 0 || s.frame % L.lazy !== 0;
   if (moving && dxT > 0.25) out |= away;
   else if (moving && dxT < -0.25) out |= toward;
+
+  // Kulit pisang di jalur lari: CPU melompatinya. Mudah tidak pernah, Normal kadang, Sulit selalu.
+  const hop = level >= 2 ? 100 : level === 1 ? 55 : 0;
+  for (const hzd of s.hazards) {
+    if (hzd.kind !== "peel" || hzd.warn > 0 || !p.grounded) continue;
+    const ahead = (hzd.x - p.x) * Math.sign(p.vx || 1);
+    if (Math.abs(p.vx) > 1 && ahead > 0 && ahead < 1.0 && hz((s.frame >>> 4) + i * 17) % 100 < hop) {
+      if ((p.prev & Btn.JUMP) === 0) out |= Btn.JUMP;
+    }
+  }
 
   const dx = Math.abs(b.x - p.x);
   const dy = b.y - (p.y + BODY_Y);

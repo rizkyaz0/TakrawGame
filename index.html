@@ -74,7 +74,7 @@
 
       /* ===== Layar menu ===== */
       .screen { position: absolute; inset: 0; display: none; }
-      #hud[data-mode="title"] #title, #hud[data-mode="controls"] #controls, #hud[data-mode="select"] #select, #hud[data-paused="1"] #pause { display: block; }
+      #hud[data-mode="title"] #title, #hud[data-mode="join"] #join, #hud[data-mode="controls"] #controls, #hud[data-mode="select"] #select, #hud[data-paused="1"] #pause { display: block; }
       /* Elemen pertandingan disembunyikan di luar pertandingan. */
       #hud:not([data-mode="match"]) > :is(#top, #c1, #c2, #help, #banner, #callout, #pop, #cutin, #dim, #lines, #flash, #tension) { display: none !important; }
       #title, #pause, #controls { background: radial-gradient(ellipse at 50% 40%, rgba(23, 19, 28, 0.25), rgba(23, 19, 28, 0.78)); }
@@ -109,9 +109,44 @@
       }
       #pause .heading { top: 20%; font-size: 64px; }
 
+      /* Panel penonton (pemain ke-3) di bawah papan skor. */
+      #spec {
+        position: absolute; bottom: 62px; left: 50%; transform: translateX(-50%); display: none; white-space: nowrap;
+        padding: 2px 14px; font-size: 15px; background: var(--ink); color: var(--paper); border: 3px solid var(--sun);
+      }
+      #hud[data-mode="match"] #spec.on { display: block; }
+      /* Mabar online */
+      .menu .mrow { display: flex; gap: 12px; }
+      .menu .mrow .item { font-size: 17px; }
+      #title .menu { top: 65%; gap: 8px; }
+      #netNote {
+        position: absolute; top: 96px; left: 50%; transform: translateX(-50%); display: none; white-space: nowrap; z-index: 5;
+        padding: 3px 16px; font-size: 16px; background: #ff4f6d; color: var(--paper); border: 3px solid var(--ink);
+      }
+      #netNote.on { display: block; }
+      .room { padding: 6px 16px 8px; background: var(--paper); color: var(--ink); border: 4px solid var(--ink); display: flex; flex-wrap: wrap; align-items: center; gap: 4px 14px; }
+      .room .rlabel { font-size: 14px; }
+      .room .rcode { font-size: 34px; letter-spacing: 0.18em; line-height: 1; }
+      .room .tapbtn { font-size: 14px; padding: 4px 12px; margin-left: auto; box-shadow: 3px 3px 0 var(--ink); cursor: pointer; }
+      .room .rsub { flex-basis: 100%; font-size: 12px; font-weight: 700; }
+      #joinBox {
+        position: absolute; top: 34%; left: 50%; transform: translateX(-50%); width: min(560px, 92%); text-align: center;
+        padding: 16px 18px 20px; background: var(--ink); color: var(--paper); border: 4px solid var(--sun); box-shadow: 8px 8px 0 rgba(23, 19, 28, 0.6);
+        font-size: 15px; font-weight: 700; line-height: 1.5;
+      }
+      #joinBox .jbig { font-size: 28px; color: var(--sun); }
+      #joinBox .bad { display: inline-block; margin-top: 8px; padding: 2px 12px; background: #ff4f6d; border: 3px solid var(--paper); }
+      #roomInput {
+        display: block; margin: 10px auto 14px; width: 220px; padding: 4px 0 6px 0.3em; text-align: center; text-transform: uppercase;
+        font-family: "Bungee", sans-serif; font-size: 44px; letter-spacing: 0.3em; background: var(--paper); color: var(--ink);
+        border: 4px solid var(--sun); outline: none; pointer-events: auto; user-select: text; -webkit-user-select: text;
+      }
+      #spec b { color: var(--sun); letter-spacing: 0.15em; margin: 0 6px; }
+      #spec span { color: var(--sun); }
+
       /* Layar pengaturan kontrol: satu baris per pemain. */
-      #ctrlRows { position: absolute; top: 108px; left: 50%; transform: translateX(-50%); display: grid; gap: 16px; width: min(640px, 92%); }
-      .crow { padding: 10px 16px 12px; background: var(--ink); border: 4px solid rgba(255, 246, 224, 0.35); opacity: 0.85; }
+      #ctrlRows { position: absolute; top: 92px; left: 50%; transform: translateX(-50%); display: grid; gap: 10px; width: min(640px, 92%); }
+      .crow { padding: 7px 16px 9px; background: var(--ink); border: 4px solid rgba(255, 246, 224, 0.35); opacity: 0.85; }
       .crow.on { border-color: var(--pc); box-shadow: 8px 8px 0 rgba(23, 19, 28, 0.6); opacity: 1; }
       .crow .cwho { font-size: 16px; color: var(--pc); }
       .crow .cpick { display: flex; align-items: center; gap: 12px; margin: 4px 0 6px; }
@@ -396,6 +431,8 @@
     <div id="hud">
       <div id="grain"></div>
       <div id="tension"></div>
+      <div id="spec" class="display"></div>
+      <div id="netNote" class="display"></div>
       <div id="top">
         <div class="scorebox display"><span id="s1">0</span><i>:</i><span id="s2">0</span></div>
         <br />
@@ -442,6 +479,13 @@
         <div class="tagline">jajanan kampung adu sepak di lapangan 17-an</div>
         <div class="menu" id="titleMenu"></div>
         <div class="hint"><kbd>W</kbd><kbd>S</kbd> pilih &nbsp;·&nbsp; <kbd>F</kbd> atau <kbd>Enter</kbd> lanjut &nbsp;·&nbsp; gamepad: D-pad dan <kbd>✕</kbd></div>
+      </div>
+
+      <!-- Mabar online: masukkan kode room, lalu menunggu host -->
+      <div id="join" class="screen">
+        <div class="heading display">MABAR ONLINE</div>
+        <div id="joinBox"></div>
+        <div class="hint" id="joinHint"></div>
       </div>
 
       <!-- Layar pengaturan kontrol -->

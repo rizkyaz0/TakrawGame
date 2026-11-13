@@ -9,6 +9,14 @@ let ctx: AudioContext | null = null;
 type BusName = "sfx" | "voice" | "music";
 const BUS_GAIN: Record<BusName, number> = { sfx: 1, voice: 1, music: 0.32 };
 const buses: Partial<Record<BusName, GainNode>> = {};
+const busLevel: Record<BusName, number> = { sfx: 1, voice: 1, music: 1 };
+
+// Volume per jenis suara, dari layar pengaturan (0..1).
+export function setBusLevel(name: BusName, v: number): void {
+  busLevel[name] = v;
+  const node = buses[name];
+  if (node && ctx) node.gain.setTargetAtTime(BUS_GAIN[name] * v, ctx.currentTime, 0.03);
+}
 let master: GainNode | null = null;
 
 const VOLUME_KEY = "takraw.volume";
@@ -43,7 +51,7 @@ function bus(name: BusName): GainNode {
   let node = buses[name];
   if (!node) {
     node = c.createGain();
-    node.gain.value = BUS_GAIN[name];
+    node.gain.value = BUS_GAIN[name] * busLevel[name];
     node.connect(master);
     buses[name] = node;
   }

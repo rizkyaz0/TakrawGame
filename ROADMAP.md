@@ -9,7 +9,7 @@ sebuah tahap dianggap beres.
 
 ## Tahap 0 — Tutup yang menggantung
 
-- [ ] Push perbaikan tombol HP, pilihan alat "HP · Tombol Layar", dan tombol menu baru
+- [x] Push perbaikan tombol HP, pilihan alat "HP · Tombol Layar", dan tombol menu baru
 - [ ] Uji di HP sungguhan: tombol layar, main lagi, layar penuh
 - [ ] Uji mabar online di dua jaringan berbeda (WiFi dan data seluler), catat delay
 - [ ] Uji stick PS/Xbox sungguhan di komputer dan di HP
@@ -22,27 +22,27 @@ Selesai kalau: semua poin di atas dicoba orang sungguhan dan temuannya tercatat.
 Kunci ElevenLabs tidak boleh ikut ke browser, jadi suara dibuat sekali lewat skrip di
 komputer pengembang, disimpan sebagai file di `public/audio/`, lalu dimuat game.
 
-- [ ] Skrip `scripts/make-audio` yang membuat file suara dari daftar di satu berkas
-- [ ] Efek suara: smash, terima, jurus per jenis, kepleset, sandal, peluit, sorakan
+- [x] Skrip `scripts/make-audio` yang membuat file suara dari daftar di satu berkas
+- [x] Efek suara dasar (16 file). Belum: jurus per jenis; `touch`, `receive`, `bonk` perlu dibuat ulang
 - [ ] Suara karakter: seruan pendek tiap jajanan (smash, jurus, menang, kalah)
-- [ ] Komentator: "Match point!", "Deuce!", "Sempurna!", nama jurus
-- [ ] Musik: menu, pertandingan, dan versi tegang untuk match point
-- [ ] Pemutar suara baru yang memuat file, dengan cadangan ke suara sintetis lama
-- [ ] Pengatur volume terpisah (musik, efek, suara) dan tombol bisu
+- [x] Komentator dasar (6 kalimat). Belum: "Sempurna!" dan nama jurus
+- [x] Musik: menu, pertandingan, match point (sintetis; file ElevenLabs butuh akun berbayar)
+- [x] Pemutar suara baru yang memuat file, dengan cadangan ke suara sintetis lama
+- [x] Pengatur volume terpisah (musik, efek, suara) dan tombol bisu
 
 Selesai kalau: game bersuara penuh di HP dan komputer, ukuran unduhan suara di bawah
 3 MB, dan game tetap jalan kalau file suara gagal dimuat.
 
 ## Tahap 2 — Pemain baru dan kenyamanan
 
-- [ ] Tutorial 5 langkah yang bisa dilewati: gerak, smash, smash sempurna, terima, jurus
+- [x] Tutorial 6 langkah yang bisa dilewati: gerak, lompat, smash, smash sempurna, terima, jurus
 - [ ] Layar "Cara main" dan daftar gerakan per karakter
-- [ ] Menu utama dikelompokkan: Main, Online, Latihan, Pengaturan
-- [ ] Layar Pengaturan: volume, kualitas grafis, ukuran dan posisi tombol layar, getaran
+- [x] Menu utama dikelompokkan: Main, Online, Latihan, Pengaturan
+- [x] Layar Pengaturan: volume, kualitas grafis, ukuran tombol layar, getaran. Belum: posisi tombol
 - [ ] Ubah tombol keyboard dan stick
-- [ ] Pilihan kenyamanan: kurangi kilatan dan guncangan, teks lebih besar, mode buta warna
-- [ ] Bisa dipasang ke layar utama HP dan dimainkan tanpa internet (PWA)
-- [ ] Ikon aplikasi, gambar pratinjau link, judul tab tanpa "prototipe"
+- [x] Kurangi kilatan dan guncangan. Belum: teks lebih besar, mode buta warna
+- [x] Bisa dipasang ke layar utama HP dan dimainkan tanpa internet (PWA)
+- [x] Ikon aplikasi, gambar pratinjau link, judul tab tanpa "prototipe"
 - [ ] Layar pemuatan dan transisi antar layar
 - [ ] Bahasa Inggris sebagai pilihan kedua
 

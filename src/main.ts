@@ -1,4 +1,5 @@
-import { crowdSfx, getVolume, music, setVolume, sfx, sillySfx, voice, VOLUME_STEPS } from "./audio";
+import { crowdSfx, getVolume, music, setBusLevel, setVolume, sfx, sillySfx, voice, VOLUME_STEPS } from "./audio";
+import { loadSettings, saveSettings, settings } from "./settings";
 import {
   deviceActive,
   deviceLabel,
@@ -94,7 +95,7 @@ const cards =[1, 2].map((n) => ({
 const shown = { score: [-1, -1], char: [-1, -1], rally: -1, heat: -1, over: false, mp: -1, phase: "" };
 
 // ===== Alur aplikasi: judul -> pilih karakter -> pertandingan =====
-type Mode = "title" | "join" | "controls" | "select" | "match";
+type Mode = "title" | "settings" | "join" | "controls" | "select" | "match";
 const app = {
   mode: "title" as Mode,
   paused: false,
@@ -106,6 +107,8 @@ const app = {
   pauseIndex: 0,
   ctrlRow: 0, // baris yang disorot di layar pengaturan kontrol
   training: false,
+  tutorial: false, // latihan terpandu langkah demi langkah
+  setRow: 0, // baris yang disorot di layar pengaturan
   online: "off" as "off" | "host" | "client",
   seat: -1, // tamu online: 0/1 pemain, 2 penonton, -1 hanya menonton
 };
@@ -231,6 +234,8 @@ function updateCue(): void {
   else if (!fast && toSmash >= PERFECT_FROM && toSmash <= PERFECT_TO) renderer.cues[0] = "smash";
 }
 const CPU_NAMES = ["Mudah", "Normal", "Sulit"];
+// Urutan menu utama saat dinavigasi, mengikuti letaknya di layar.
+const TITLE_ORDER = [0, 1, 3, 4, 5, 2, 6];
 const ROLES = ["Power", "Lincah", "Tank", "Teknis", "Pelari", "Pelompat", "Seimbang"];
 const SPECIAL_DESC: Record<string, string> = {
   fire: "Bola melesat lurus tanpa gravitasi.",
@@ -260,6 +265,7 @@ function setMode(mode: Mode): void {
   if (mode !== "match") elHud.dataset.over = "0";
   music(mode === "match" ? "music_match" : "music_menu");
   elHud.dataset.training = app.training && mode === "match" ? "1" : "0";
+  elHud.dataset.tutorial = app.tutorial && mode === "match" ? "1" : "0";
   renderer.cues[0] = null;
 }
 
@@ -294,6 +300,7 @@ function setNetNote(text: string, seconds = 0): void {
 
 function goTitle(): void {
   endOnline();
+  app.tutorial = false;
   setMode("title");
   startDemo();
   renderMenus();
@@ -519,6 +526,7 @@ function startMatch(): void {
     Object.assign(train, { smash: 0, smashPerfect: 0, recv: 0, recvPerfect: 0, streak: 0, best: 0 });
     trainRestart();
     renderTrain();
+    if (app.tutorial) tutBegin(0);
   }
   // Petunjuk tombol mengikuti alat yang dipilih tiap pemain.
   const helpFor = (i: number) => {
@@ -535,12 +543,15 @@ function renderMenus(): void {
   const item = (label: string, on: boolean, tap: string) =>
     `<div class="item${on ? " on" : ""}" data-tap="${tap}">${label}</div>`;
   $("titleMenu").innerHTML =
-    item("1 PEMAIN · LAWAN CPU", app.titleIndex === 0, "title:0") +
-    item("2 PEMAIN · MABAR", app.titleIndex === 1, "title:1") +
-    item("LATIHAN", app.titleIndex === 2, "title:2") +
+    item("MAIN · LAWAN CPU", app.titleIndex === 0, "title:0") +
+    item("MABAR · 2 PEMAIN", app.titleIndex === 1, "title:1") +
     `<div class="mrow">` +
     item("ONLINE · BUAT ROOM", app.titleIndex === 3, "title:3") +
     item("ONLINE · GABUNG ROOM", app.titleIndex === 4, "title:4") +
+    `</div><div class="mrow">` +
+    item("TUTORIAL", app.titleIndex === 5, "title:5").replace('class="item', settings.tutorialDone ? 'class="item' : 'class="item new') +
+    item("LATIHAN", app.titleIndex === 2, "title:2") +
+    item("PENGATURAN", app.titleIndex === 6, "title:6") +
     `</div>`;
   if (app.online === "client") {
     $("pauseMenu").innerHTML =
@@ -651,6 +662,19 @@ function handleTap(v: string): void {
   } else if (cmd === "pause") {
     app.pauseIndex = Number(arg);
     menuKey("Enter");
+  } else if (cmd === "set") {
+    const [, row, dir] = v.split(":");
+    app.setRow = Number(row);
+    stepSetting(Number(row), Number(dir));
+  } else if (cmd === "setrow") {
+    app.setRow = Number(arg);
+    renderSettings();
+  } else if (cmd === "tutskip") {
+    tutNext();
+  } else if (cmd === "tutmenu") {
+    goTitle();
+  } else if (cmd === "tutplay") {
+    tutPlay();
   } else if (cmd === "copylink") {
     const done = () => {
       linkCopied = true;
@@ -703,6 +727,261 @@ document.addEventListener("click", (e) => {
   const el = (e.target as HTMLElement | null)?.closest<HTMLElement>("[data-tap]");
   if (el?.dataset.tap) handleTap(el.dataset.tap);
 });
+
+// ===== Pengaturan =====
+loadSettings();
+// Pemain baru: sorotan menu mulai di Tutorial.
+if (!settings.tutorialDone) app.titleIndex = 5;
+function applySettings(): void {
+  setBusLevel("music", settings.music);
+  setBusLevel("sfx", settings.sfx);
+  setBusLevel("voice", settings.voice);
+  renderer.shakeScale = settings.calm ? 0.25 : 1;
+  renderer.setLowGfx(settings.lowGfx);
+  document.body.classList.toggle("calm", settings.calm);
+  document.documentElement.style.setProperty("--ts", String([0.85, 1, 1.2][settings.touchSize]));
+}
+applySettings();
+
+// Getaran: HP lewat navigator.vibrate, stick lewat motor getarnya.
+function buzz(player: number, ms: number): void {
+  if (!settings.vibrate) return;
+  if (app.online === "client") {
+    if (app.seat === player) navigator.vibrate?.(ms);
+    return;
+  }
+  if (app.mode !== "match" || (player === 1 && app.humans === 1)) return;
+  const d = devices[player];
+  if (d.kind === "touch") navigator.vibrate?.(ms);
+  else if (d.kind === "pad") {
+    type Rumble = { playEffect?: (kind: string, opts: Record<string, number>) => Promise<unknown> };
+    const pad = navigator.getGamepads?.()[d.index] as (Gamepad & { vibrationActuator?: Rumble }) | null | undefined;
+    void pad?.vibrationActuator
+      ?.playEffect?.("dual-rumble", { duration: ms * 3, strongMagnitude: 0.6, weakMagnitude: 0.4 })
+      ?.catch(() => undefined);
+  }
+}
+
+interface SettingRow {
+  label: string;
+  note?: string;
+  value(): string;
+  step(dir: number): void;
+}
+const pct = (v: number) => (v === 0 ? "MATI" : `${Math.round(v * 100)}%`);
+const stepLevel = (v: number, dir: number) => Math.min(1, Math.max(0, Math.round((v + dir * 0.25) * 4) / 4));
+function settingRows(): SettingRow[] {
+  const rows: SettingRow[] = [
+    { label: "Musik", value: () => pct(settings.music), step: (d) => (settings.music = stepLevel(settings.music, d)) },
+    { label: "Efek suara", value: () => pct(settings.sfx), step: (d) => (settings.sfx = stepLevel(settings.sfx, d)) },
+    { label: "Komentator", value: () => pct(settings.voice), step: (d) => (settings.voice = stepLevel(settings.voice, d)) },
+    {
+      label: "Getaran",
+      note: "HP dan stick yang mendukung",
+      value: () => (settings.vibrate ? "NYALA" : "MATI"),
+      step: () => (settings.vibrate = !settings.vibrate),
+    },
+  ];
+  if (touchCapable()) {
+    rows.push({
+      label: "Ukuran tombol layar",
+      value: () => ["KECIL", "SEDANG", "BESAR"][settings.touchSize],
+      step: (d) => (settings.touchSize = (settings.touchSize + d + 3) % 3),
+    });
+  }
+  rows.push(
+    {
+      label: "Efek layar",
+      note: "Guncangan dan kilatan",
+      value: () => (settings.calm ? "DIKURANGI" : "PENUH"),
+      step: () => (settings.calm = !settings.calm),
+    },
+    {
+      label: "Grafis",
+      note: "Hemat: lebih lancar di HP yang berat",
+      value: () => (settings.lowGfx ? "HEMAT" : "TINGGI"),
+      step: () => (settings.lowGfx = !settings.lowGfx),
+    },
+  );
+  return rows;
+}
+
+function stepSetting(row: number, dir: number): void {
+  const r = settingRows()[row];
+  if (!r) return;
+  r.step(dir);
+  applySettings();
+  saveSettings();
+  if (r.label === "Komentator") voice("vo_mulai");
+  else if (r.label === "Getaran" && settings.vibrate) navigator.vibrate?.(40);
+  else sfx.smash(0);
+  renderSettings();
+}
+
+function renderSettings(): void {
+  $("setRows").innerHTML = settingRows()
+    .map(
+      (r, i) =>
+        `<div class="srow${app.setRow === i ? " on" : ""}" data-tap="setrow:${i}">` +
+        `<div class="slabel display">${r.label}${r.note ? `<small>${r.note}</small>` : ""}</div>` +
+        `<span class="carr" data-tap="set:${i}:-1">◂</span><span class="sval display">${r.value()}</span>` +
+        `<span class="carr" data-tap="set:${i}:1">▸</span></div>`,
+    )
+    .join("");
+  $("setHint").innerHTML = backBtn();
+}
+
+function goSettings(): void {
+  setMode("settings");
+  app.setRow = 0;
+  renderSettings();
+}
+
+// ===== Tutorial =====
+// Latihan terpandu: tiap langkah mengajarkan satu hal, lanjut sendiri begitu berhasil.
+type TutAction = "move" | "jump" | "smash" | "guard" | "special";
+function keyName(a: TutAction): string {
+  const d = devices[0];
+  if (d.kind === "touch") return { move: "stik di kiri layar", jump: "LOMPAT", smash: "SMASH", guard: "TERIMA", special: "JURUS" }[a];
+  if (d.kind === "pad") return { move: "D-pad atau stik", jump: "✕", smash: "□", guard: "L1", special: "△" }[a];
+  if (d.kind === "kbd" && d.set === 1) return { move: "← dan →", jump: "↑", smash: "K", guard: "O", special: ";" }[a];
+  return { move: "A dan D", jump: "W", smash: "F", guard: "E", special: "H" }[a];
+}
+
+const TUT_STEPS: Array<{ title: string; need: number; drill: number; text: () => string }> = [
+  { title: "GERAK", need: 2, drill: -1, text: () => `Geser ke kiri dan ke kanan pakai <b>${keyName("move")}</b>.` },
+  { title: "LOMPAT", need: 2, drill: -1, text: () => `Lompat dua kali pakai <b>${keyName("jump")}</b>.` },
+  {
+    title: "SMASH",
+    need: 3,
+    drill: 0,
+    text: () => `Dekati bola, lalu tekan <b>${keyName("smash")}</b> saat bola sudah dekat badan. Lompat dulu supaya lebih tajam.`,
+  },
+  {
+    title: "SMASH SEMPURNA",
+    need: 1,
+    drill: 0,
+    text: () =>
+      `Tekan <b>${keyName("smash")}</b> tepat saat <b>cincin emas</b> muncul di badanmu: sesaat sebelum bola sampai. Smash sempurna jauh lebih kencang.`,
+  },
+  {
+    title: "TERIMA",
+    need: 2,
+    drill: 1,
+    text: () =>
+      `Bola kencang tidak bisa di-smash. Tekan <b>${keyName("guard")}</b> saat <b>cincin biru</b> muncul untuk menahannya. Tangan tidak dipakai: ini takraw.`,
+  },
+  {
+    title: "JURUS",
+    need: 1,
+    drill: 0,
+    text: () => `Meter di bawah namamu penuh? Tekan <b>${keyName("special")}</b> saat bola di dekatmu untuk jurus andalan.`,
+  },
+];
+const tut = { step: 0, count: 0, wait: 0, startX: 0, left: false, right: false };
+
+function tutBegin(step: number): void {
+  tut.step = step;
+  tut.count = 0;
+  tut.wait = 0;
+  tut.left = false;
+  tut.right = false;
+  const def = TUT_STEPS[step];
+  if (def) {
+    train.drill = Math.max(0, def.drill);
+    train.cue = true;
+    train.infiniteMeter = step === 5;
+    trainRestart();
+    if (def.drill < 0) train.launchPending = false;
+    if (step !== 5) state.players[0].meter = 0;
+    tut.startX = state.players[0].x;
+  } else {
+    settings.tutorialDone = true;
+    saveSettings();
+    train.launchPending = false;
+  }
+  renderTut();
+}
+
+function tutNext(): void {
+  if (tut.step < TUT_STEPS.length) tutBegin(tut.step + 1);
+}
+
+function tutProgress(n: number): void {
+  const def = TUT_STEPS[tut.step];
+  if (!def || tut.wait > 0) return;
+  tut.count = Math.min(def.need, n);
+  if (tut.count >= def.need) {
+    tut.wait = 75;
+    sfx.receivePerfect();
+    callout("MANTAP!", "#ffd23f", true);
+  }
+  renderTut();
+}
+
+// Tiap frame simulasi: tahan bola di langkah tanpa bola, pantau gerak, dan pindah langkah.
+function tutTick(): void {
+  const def = TUT_STEPS[tut.step];
+  if (!def || def.drill < 0) {
+    if (state.phase === "serve") state.timer = 14;
+  }
+  if (tut.wait > 0 && --tut.wait === 0) return tutNext();
+  if (tut.step === 0 && tut.wait === 0) {
+    const x = state.players[0].x;
+    if (x < tut.startX - 0.6) tut.left = true;
+    if (x > tut.startX + 0.6) tut.right = true;
+    const n = (tut.left ? 1 : 0) + (tut.right ? 1 : 0);
+    if (n !== tut.count) tutProgress(n);
+  }
+}
+
+function tutEvent(e: GameEvent): void {
+  if (!("player" in e) || e.player !== 0) return;
+  const s = tut.step;
+  if (
+    (s === 1 && e.type === "jump") ||
+    (s === 2 && e.type === "smash") ||
+    (s === 3 && e.type === "smash" && e.perfect) ||
+    (s === 4 && e.type === "receive") ||
+    (s === 5 && e.type === "specialHit")
+  ) {
+    tutProgress(tut.count + 1);
+  }
+}
+
+function renderTut(): void {
+  const def = TUT_STEPS[tut.step];
+  if (!def) {
+    $("tut").innerHTML =
+      `<div class="tt display">TUTORIAL SELESAI!</div>` +
+      `Kamu sudah tahu dasarnya. Sisanya dipelajari sambil main.<br />` +
+      tapBtn("go", "tutplay", "MAIN LAWAN CPU ▸", "Enter") +
+      tapBtn("back", "tutmenu", "MENU");
+    return;
+  }
+  $("tut").innerHTML =
+    `<div class="tt display">TUTORIAL ${tut.step + 1}/${TUT_STEPS.length} · ${def.title}</div>` +
+    `<div>${def.text()}</div>` +
+    `<div class="tp">${"●".repeat(tut.count)}${"○".repeat(def.need - tut.count)}</div>` +
+    tapBtn("back", "tutskip", "LEWATI ▸", "Enter");
+}
+
+function startTutorial(): void {
+  app.humans = 1;
+  app.training = true;
+  app.tutorial = true;
+  app.cpuLevel = 0;
+  defaultDevices(menuPad);
+  startMatch();
+}
+
+function tutPlay(): void {
+  app.tutorial = false;
+  app.training = false;
+  app.humans = 1;
+  app.cpuLevel = 0;
+  startMatch();
+}
 
 // ===== Volume =====
 // Satu tombol: penuh, setengah, bisu. Pengaturan lebih rinci menyusul di layar pengaturan.
@@ -807,14 +1086,18 @@ const RIGHT = new Set(["KeyD", "ArrowRight"]);
 
 function menuKey(code: string): void {
   if (app.mode === "title") {
-    if (UP.has(code) || DOWN.has(code)) {
-      app.titleIndex = (app.titleIndex + (DOWN.has(code) ? 1 : 4)) % 5;
+    if (UP.has(code) || DOWN.has(code) || LEFT.has(code) || RIGHT.has(code)) {
+      const at = TITLE_ORDER.indexOf(app.titleIndex);
+      const n = TITLE_ORDER.length;
+      app.titleIndex = TITLE_ORDER[(at + (DOWN.has(code) || RIGHT.has(code) ? 1 : n - 1)) % n];
       sfx.swing();
       renderMenus();
-    } else if ((LEFT.has(code) || RIGHT.has(code)) && app.titleIndex >= 3) {
-      app.titleIndex = app.titleIndex === 3 ? 4 : 3;
-      sfx.swing();
-      renderMenus();
+    } else if (CONFIRM.has(code) && app.titleIndex === 5) {
+      sfx.receivePerfect();
+      startTutorial();
+    } else if (CONFIRM.has(code) && app.titleIndex === 6) {
+      sfx.receivePerfect();
+      goSettings();
     } else if (CONFIRM.has(code) && app.titleIndex === 3) {
       // Buat room: host mengatur kursi di layar pengaturan kontrol.
       app.humans = 2;
@@ -833,6 +1116,18 @@ function menuKey(code: string): void {
       sfx.receivePerfect();
       goControls(menuPad);
     }
+    return;
+  }
+
+  if (app.mode === "settings") {
+    const rows = settingRows();
+    if (code === "Escape" || code === "Backspace" || code === "Enter") return goTitle();
+    if (UP.has(code) || DOWN.has(code)) {
+      app.setRow = (app.setRow + (DOWN.has(code) ? 1 : rows.length - 1)) % rows.length;
+      sfx.swing();
+      renderSettings();
+    } else if (LEFT.has(code)) stepSetting(app.setRow, -1);
+    else if (RIGHT.has(code) || code === "KeyF" || code === "Space") stepSetting(app.setRow, 1);
     return;
   }
 
@@ -938,7 +1233,12 @@ function menuKey(code: string): void {
     else if (code === "KeyM" || code === "Escape") goTitle();
     return;
   }
-  if (!app.paused && app.training) {
+  if (!app.paused && app.tutorial) {
+    if (code === "Enter" || code === "NumpadEnter") {
+      if (tut.step >= TUT_STEPS.length) tutPlay();
+      else tutNext();
+    }
+  } else if (!app.paused && app.training) {
     // Tombol khusus latihan.
     const digit = ["Digit1", "Digit2", "Digit3", "Digit4"].indexOf(code);
     if (digit >= 0) {
@@ -1128,6 +1428,7 @@ function superCutin(player: number): void {
 }
 
 function flash(color: string): void {
+  if (settings.calm) return;
   elFlash.style.setProperty("--pc", color);
   replay(elFlash, "show");
 }
@@ -1193,6 +1494,13 @@ function handleEvent(e: GameEvent): void {
   else if (e.type === "smash" || e.type === "receive" || e.type === "specialHit") {
     lastHit = { player: e.player, weak: false };
   }
+  // Getaran untuk pemain yang bersangkutan.
+  if (e.type === "smash") buzz(e.player, e.perfect ? 45 : 20);
+  else if (e.type === "receive") buzz(e.player, e.perfect ? 35 : 15);
+  else if (e.type === "specialHit") buzz(e.player, 80);
+  else if (e.type === "slip") buzz(e.player, 90);
+  else if (e.type === "bonk" && e.target === "player") buzz(e.player, 70);
+  if (app.tutorial) tutEvent(e);
   if (app.training && trainEvent(e)) return;
   switch (e.type) {
     case "touch":
@@ -1756,6 +2064,7 @@ function update(now: number): void {
       state.ball.x = 0;
       state.ball.y = 3.3;
     } else if (app.training) {
+      if (app.tutorial) tutTick();
       // Latihan: bola dilepas begitu hitung mundur servis habis; lawan diam kecuali di "Bebas".
       if (state.phase === "serve" && state.timer > 14) state.timer = 14;
       if (state.phase === "serve" && state.timer <= 1 && train.launchPending) {
@@ -1818,6 +2127,10 @@ function frame(now: number): void {
   requestAnimationFrame(frame);
 }
 goTitle();
+// Simpan game di perangkat (bisa dipasang ke layar utama dan dibuka tanpa internet).
+if (import.meta.env.PROD && "serviceWorker" in navigator) {
+  window.addEventListener("load", () => void navigator.serviceWorker.register("/sw.js").catch(() => undefined));
+}
 // Link undangan (?room=ABCD) langsung menyambung ke room.
 const invited = cleanCode(new URLSearchParams(location.search).get("room") ?? "");
 if (invited.length === 4) goJoin(invited);

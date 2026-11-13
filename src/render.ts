@@ -88,12 +88,23 @@ export class Renderer {
   private focus = -1; // pemain yang sedang disorot saat layar membeku sebelum ulti
   // Petunjuk timing per pemain: "smash" (emas), "guard" (biru), atau null.
   cues: Array<"smash" | "guard" | null> = [null, null];
+  shakeScale = 1; // dikecilkan lewat pengaturan "efek layar dikurangi"
+  private sun!: THREE.DirectionalLight;
+  private fullRatio = 1;
+
+  // Grafis hemat: resolusi 1x dan tanpa bayangan, untuk HP yang berat.
+  setLowGfx(low: boolean): void {
+    this.renderer.setPixelRatio(low ? 1 : this.fullRatio);
+    this.sun.castShadow = !low;
+    styleUniforms.uPx.value = this.renderer.getPixelRatio();
+  }
 
   constructor() {
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
     // HP: resolusi dan bayangan diturunkan supaya tetap lancar.
     const mobile = window.matchMedia("(pointer: coarse)").matches;
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, mobile ? 1.5 : 2));
+    this.fullRatio = Math.min(window.devicePixelRatio, mobile ? 1.5 : 2);
+    this.renderer.setPixelRatio(this.fullRatio);
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     document.body.prepend(this.renderer.domElement);
@@ -103,6 +114,7 @@ export class Renderer {
     const sun = new THREE.DirectionalLight(0xfff1d6, 2.6);
     sun.position.set(-7, 15, 9);
     sun.castShadow = true;
+    this.sun = sun;
     sun.shadow.mapSize.set(mobile ? 1024 : 2048, mobile ? 1024 : 2048);
     sun.shadow.camera.left = -13;
     sun.shadow.camera.right = 13;
@@ -467,8 +479,8 @@ export class Renderer {
     this.camZoom += (tz - this.camZoom) * follow;
     this.shake *= 0.86;
     // Getaran pakai waktu nyata supaya tetap terasa saat hitstop.
-    const sx = Math.sin(now * 97) * this.shake;
-    const sy = Math.cos(now * 113) * this.shake;
+    const sx = Math.sin(now * 97) * this.shake * this.shakeScale;
+    const sy = Math.cos(now * 113) * this.shake * this.shakeScale;
     this.camera.position.set(this.camX + sx, this.camY + 1.1 * this.camZoom + sy, this.camDist * this.camZoom);
     this.camera.lookAt(this.camX + sx, this.camY + sy, 0);
 

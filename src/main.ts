@@ -433,6 +433,58 @@ window.addEventListener("keydown", (e) => {
   if (!e.repeat) menuKey(e.code);
 });
 
+// ===== Gamepad di menu =====
+// Di pertandingan, gamepad dibaca langsung oleh input.ts. Di sini tombolnya diterjemahkan
+// ke tombol keyboard yang sudah dipahami menu, hanya saat baru ditekan.
+// Indeks tombol mengikuti pemetaan standar: 0 silang/A, 1 lingkaran/B, 3 segitiga/Y,
+// 9 Options/Start, 12-15 D-pad.
+const padPrev: number[] = [0, 0];
+function pollPads(): void {
+  const pads = navigator.getGamepads?.() ?? [];
+  for (let i = 0; i < 2; i++) {
+    const pad = pads[i];
+    if (!pad) {
+      padPrev[i] = 0;
+      continue;
+    }
+    const b = (n: number) => pad.buttons[n]?.pressed === true;
+    const ax = pad.axes[0] ?? 0;
+    const ay = pad.axes[1] ?? 0;
+    const now =
+      (b(12) || ay < -0.6 ? 1 : 0) |
+      (b(13) || ay > 0.6 ? 2 : 0) |
+      (b(14) || ax < -0.6 ? 4 : 0) |
+      (b(15) || ax > 0.6 ? 8 : 0) |
+      (b(0) ? 16 : 0) |
+      (b(1) ? 32 : 0) |
+      (b(3) ? 64 : 0) |
+      (b(9) ? 128 : 0);
+    const hit = now & ~padPrev[i];
+    padPrev[i] = now;
+    if (hit === 0) continue;
+
+    const playing = app.mode === "match" && !app.paused && state.phase !== "over";
+    if (playing) {
+      // Saat bermain hanya Options/Start yang berarti menu: jeda.
+      if (hit & 128) menuKey("Escape");
+      continue;
+    }
+    // Pemain kedua punya tombol sendiri hanya di layar pilih karakter mode 2 pemain.
+    const second = i === 1 && app.mode === "select" && app.humans === 2;
+    if (hit & 1) menuKey(second ? "ArrowUp" : "KeyW");
+    if (hit & 2) menuKey(second ? "ArrowDown" : "KeyS");
+    if (hit & 4) menuKey(second ? "ArrowLeft" : "KeyA");
+    if (hit & 8) menuKey(second ? "ArrowRight" : "KeyD");
+    if (hit & 16) menuKey(second ? "KeyK" : "KeyF");
+    if (state.phase === "over" && app.mode === "match") {
+      if (hit & 64) menuKey("KeyC");
+      if (hit & 32) menuKey("KeyM");
+    } else if (hit & (32 | 128)) {
+      menuKey("Escape");
+    }
+  }
+}
+
 // Memutar ulang animasi CSS: lepas kelas, paksa reflow, pasang lagi.
 function replay(el: HTMLElement, cls: string): void {
   el.classList.remove(cls);
@@ -806,6 +858,7 @@ function update(now: number): void {
 }
 
 function frame(now: number): void {
+  pollPads();
   if (!debug.manual) update(now);
   requestAnimationFrame(frame);
 }
@@ -825,6 +878,7 @@ requestAnimationFrame(frame);
   app,
   train,
   update, // untuk menjalankan loop secara manual saat pengujian
+  pollPads,
   menuKey,
   CHARS,
 };

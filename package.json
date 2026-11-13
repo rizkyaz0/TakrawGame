@@ -7,9 +7,11 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
-    "dev:lan": "vite --host"
+    "dev:lan": "vite --host",
+    "audio": "node --env-file=.env.local scripts/make-audio.mjs"
   },
   "dependencies": {
+    "@elevenlabs/elevenlabs-js": "^2.78.0",
     "peerjs": "^1.5.5",
     "three": "^0.187.0"
   },

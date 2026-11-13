@@ -1,0 +1,37 @@
+{
+  "voice": {
+    "voiceId": "JBFqnCBsd6RMkjVDRZzb",
+    "modelId": "eleven_v4",
+    "languageCode": "id"
+  },
+  "items": [
+    { "id": "touch", "type": "sfx", "seconds": 1, "text": "Loud clear hollow knock of a woven rattan ball being kicked, single percussive hit at the very start, dry, close microphone" },
+    { "id": "smash", "type": "sfx", "seconds": 0.7, "text": "Hard punchy kick on a woven rattan ball, sharp crack with a short whoosh, cartoon impact, dry" },
+    { "id": "perfect", "type": "sfx", "seconds": 1.0, "text": "Explosive cartoon power kick impact with a bright sparkling chime tail, arcade perfect-hit sound" },
+    { "id": "receive", "type": "sfx", "seconds": 1, "text": "Loud clear padded thump of a ball hitting a chest, single percussive hit at the very start, dry, close microphone" },
+    { "id": "receive_perfect", "type": "sfx", "seconds": 0.8, "text": "Firm block thump followed by a short rising arcade success blip, crisp" },
+    { "id": "weak", "type": "sfx", "seconds": 0.6, "text": "Clumsy fumbled ball hit, dull flat slap with a comedic deflating wobble" },
+    { "id": "special", "type": "sfx", "seconds": 1.0, "text": "Rising energy charge-up whoosh for a cartoon special move, bright and punchy" },
+    { "id": "fire", "type": "sfx", "seconds": 1.2, "text": "Fireball ignition whoosh, roaring flame burst flying past, cartoon style" },
+    { "id": "score", "type": "sfx", "seconds": 1.0, "text": "Short happy arcade point-scored jingle, three bright rising notes, gamelan-like metallic bells" },
+    { "id": "fault", "type": "sfx", "seconds": 0.9, "text": "Referee whistle, one short sharp blast, outdoor village sports court" },
+    { "id": "over", "type": "sfx", "seconds": 2.5, "text": "Triumphant short victory fanfare with kendang drums and bright bells, festive Indonesian village celebration" },
+    { "id": "slip", "type": "sfx", "seconds": 1.0, "text": "Cartoon banana peel slip, descending slide whistle then a soft thud" },
+    { "id": "bonk", "type": "sfx", "seconds": 1, "text": "Loud cartoon bonk on the head with a springy boing, single comedic hit at the very start, close microphone" },
+    { "id": "laugh", "type": "sfx", "seconds": 2.0, "text": "Small outdoor crowd of villagers bursting into warm laughter, kids and adults" },
+    { "id": "trombone", "type": "sfx", "seconds": 1.8, "text": "Sad trombone fail sound, four descending wah notes, comedic" },
+    { "id": "cheer", "type": "sfx", "seconds": 2.5, "text": "Small outdoor village crowd cheering and clapping excitedly, kids shouting, festive" },
+    { "id": "gasp", "type": "sfx", "seconds": 1.2, "text": "Small outdoor crowd gasping in surprise, collective ooh" },
+
+    { "id": "vo_mulai", "type": "voice", "text": "[excited] Mulai!" },
+    { "id": "vo_matchpoint", "type": "voice", "text": "[shouting, excited] Match point!" },
+    { "id": "vo_deuce", "type": "voice", "text": "[tense] Deuce!" },
+    { "id": "vo_penentuan", "type": "voice", "text": "[shouting, dramatic] Poin penentuan!" },
+    { "id": "vo_fault", "type": "voice", "text": "[disappointed] Fault!" },
+    { "id": "vo_menang", "type": "voice", "text": "[shouting, joyful] Pertandingan selesai!" },
+
+    { "id": "music_menu", "type": "music", "seconds": 30, "text": "Cheerful playful instrumental loop for a cartoon sports game menu, Indonesian village festival mood, bamboo angklung, kendang hand drums, ukulele, light and bouncy, 110 bpm, seamless loop, no vocals" },
+    { "id": "music_match", "type": "music", "seconds": 45, "text": "Energetic upbeat instrumental loop for a fast cartoon ball game match, dangdut koplo inspired kendang groove, suling flute melody, driving bass, fun and competitive, 140 bpm, seamless loop, no vocals" },
+    { "id": "music_tense", "type": "music", "seconds": 30, "text": "Tense suspenseful instrumental loop for match point in a cartoon sports game, fast kendang rolls, pulsing bass, rising gamelan stabs, urgent, 150 bpm, seamless loop, no vocals" }
+  ]
+}

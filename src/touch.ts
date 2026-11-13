@@ -5,6 +5,31 @@ import { Btn } from "./sim";
 
 export const touchState = { bits: 0, enabled: false };
 
+// Peran tombol layar di pertandingan: pemain (semua tombol), penonton usil (stik bidik
+// dan dua lemparan), atau mati (tidak ada kursi lokal yang memakai tombol layar).
+export type TouchRole = "off" | "player" | "spec";
+let role: TouchRole = "player";
+
+function applyRole(): void {
+  document.body.dataset.trole = role;
+  const label = (id: string, text: string) => {
+    const el = document.querySelector<HTMLElement>(`[data-b="${id}"]`);
+    if (el) el.textContent = text;
+  };
+  label("smash", role === "spec" ? "PISANG" : "SMASH");
+  label("jump", role === "spec" ? "SANDAL" : "LOMPAT");
+}
+
+export function setTouchRole(r: TouchRole): void {
+  role = r;
+  applyRole();
+}
+
+// Layar ini bisa disentuh (HP, tablet, laptop layar sentuh).
+export function touchCapable(): boolean {
+  return touchState.enabled || (navigator.maxTouchPoints ?? 0) > 0;
+}
+
 interface TouchOptions {
   onPause(): void;
 }
@@ -122,6 +147,7 @@ function build(opts: TouchOptions): void {
 
   // Cegah menu konteks dan zoom ketuk-dua-kali saat bermain.
   root.addEventListener("contextmenu", (e) => e.preventDefault());
+  applyRole();
 }
 
 export function initTouch(opts: TouchOptions): void {

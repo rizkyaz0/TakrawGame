@@ -1,5 +1,5 @@
 import { Btn } from "./sim";
-import { touchState } from "./touch";
+import { touchCapable, touchState } from "./touch";
 
 const keys = new Set<string>();
 
@@ -48,7 +48,12 @@ const KEYMAPS: [KeyMap, KeyMap, KeyMap] = [
 // Tiap pemain memakai satu alat yang dipilih di layar pengaturan: salah satu dari dua
 // set tombol keyboard, atau salah satu stick yang terhubung.
 // "net" = kursi diisi tamu online; id-nya nomor tamu dari host.
-export type Device = { kind: "kbd"; set: 0 | 1 | 2 } | { kind: "pad"; index: number } | { kind: "net"; id: number };
+// "touch" = tombol di layar HP/tablet.
+export type Device =
+  | { kind: "kbd"; set: 0 | 1 | 2 }
+  | { kind: "pad"; index: number }
+  | { kind: "net"; id: number }
+  | { kind: "touch" };
 
 // Penonton: tidak ada, otomatis (dijalankan game), mouse, keyboard set ketiga, atau stick.
 export type SpecDevice = Device | { kind: "none" } | { kind: "auto" } | { kind: "mouse" };
@@ -88,6 +93,7 @@ export function saveDevices(): void {
   try {
     localStorage.setItem(STORE_KEY, JSON.stringify(devices));
     localStorage.setItem(`${STORE_KEY}.spec`, JSON.stringify(spectator.device));
+    localStorage.setItem(`${STORE_KEY}.v`, "2");
   } catch {
     // penyimpanan diblokir: pilihan hanya berlaku untuk sesi ini
   }
@@ -101,11 +107,20 @@ export function loadDevices(): boolean {
       const d = raw[i] as Partial<Device> & { set?: number; index?: number };
       if (d.kind === "kbd" && (d.set === 0 || d.set === 1)) devices[i] = { kind: "kbd", set: d.set };
       else if (d.kind === "pad" && typeof d.index === "number") devices[i] = { kind: "pad", index: d.index };
+      else if (d.kind === "touch") devices[i] = { kind: "touch" };
       else return false;
+    }
+    // Pilihan dari versi sebelum ada "tombol layar": di HP, P1 dipindah ke tombol layar.
+    if (
+      localStorage.getItem(`${STORE_KEY}.v`) !== "2" &&
+      window.matchMedia("(pointer: coarse)").matches &&
+      devices[1].kind !== "touch"
+    ) {
+      devices[0] = { kind: "touch" };
     }
     try {
       const sp = JSON.parse(localStorage.getItem(`${STORE_KEY}.spec`) ?? "null") as SpecDevice | null;
-      if (sp && ["none", "auto", "mouse", "kbd", "pad"].includes(sp.kind)) spectator.device = sp;
+      if (sp && ["none", "auto", "mouse", "kbd", "pad", "touch"].includes(sp.kind)) spectator.device = sp;
     } catch {
       // abaikan: penonton kembali ke "tidak ada"
     }
@@ -119,6 +134,7 @@ export function sameDevice(a: SpecDevice, b: SpecDevice): boolean {
   if (a.kind === "kbd" && b.kind === "kbd") return a.set === b.set;
   if (a.kind === "pad" && b.kind === "pad") return a.index === b.index;
   if (a.kind === "net" && b.kind === "net") return a.id === b.id;
+  if (a.kind === "touch" && b.kind === "touch") return true;
   return false;
 }
 
@@ -178,6 +194,7 @@ export function deviceLabel(d: SpecDevice): string {
   if (d.kind === "auto") return "OTOMATIS";
   if (d.kind === "mouse") return "MOUSE";
   if (d.kind === "net") return `ONLINE · TAMU ${d.id}`;
+  if (d.kind === "touch") return "HP · TOMBOL LAYAR";
   if (d.kind === "kbd") return d.set === 0 ? "KEYBOARD · WASD" : d.set === 1 ? "KEYBOARD · PANAH" : "KEYBOARD · C V B";
   const n = listPads().findIndex((g) => g.index === d.index);
   return n >= 0 ? `STICK ${n + 1}` : "STICK (TIDAK TERHUBUNG)";
@@ -186,6 +203,7 @@ export function deviceLabel(d: SpecDevice): string {
 // Semua pilihan alat yang tersedia saat ini.
 export function deviceOptions(): Device[] {
   return [
+    ...(touchCapable() ? [{ kind: "touch" } as Device] : []),
     { kind: "kbd", set: 0 },
     { kind: "kbd", set: 1 },
     ...listPads().map((g): Device => ({ kind: "pad", index: g.index })),
@@ -198,6 +216,7 @@ export function spectatorOptions(): SpecDevice[] {
     { kind: "none" },
     { kind: "auto" },
     { kind: "mouse" },
+    ...(touchCapable() ? [{ kind: "touch" } as SpecDevice] : []),
     { kind: "kbd", set: 2 },
     ...listPads().map((g): SpecDevice => ({ kind: "pad", index: g.index })),
   ];
@@ -227,6 +246,7 @@ function deviceBits(d: Device): number {
     return out;
   }
   if (d.kind === "net") return 0; // tombol tamu datang lewat jaringan, dibaca main.ts
+  if (d.kind === "touch") return touchState.bits;
   const pad = padByIndex(d.index);
   return pad ? padBits(pad) : 0;
 }
@@ -258,7 +278,5 @@ export function readSpectator(): number {
 }
 
 export function readInput(i: 0 | 1): number {
-  let out = deviceBits(devices[i]);
-  if (i === 0) out |= touchState.bits; // tombol sentuh selalu milik pemain 1
-  return out;
+  return deviceBits(devices[i]);
 }

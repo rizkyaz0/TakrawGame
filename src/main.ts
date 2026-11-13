@@ -1,4 +1,4 @@
-import { crowdSfx, sfx, sillySfx } from "./audio";
+import { crowdSfx, getVolume, music, setVolume, sfx, sillySfx, voice, VOLUME_STEPS } from "./audio";
 import {
   deviceActive,
   deviceLabel,
@@ -33,7 +33,7 @@ import {
   type GuestCommand,
 } from "./net";
 import { Renderer } from "./render";
-import { initTouch, setSpecialReady, touchState } from "./touch";
+import { initTouch, setSpecialReady, setTouchRole, touchCapable, touchState } from "./touch";
 import {
   BALL_R,
   BODY_Y,
@@ -249,6 +249,7 @@ function resetShown(): void {
   shown.mp = -1;
   shown.phase = "";
   elBanner.classList.remove("on");
+  elHud.dataset.over = "0"; // kalau tertinggal "1", tombol layar HP tetap tersembunyi
 }
 
 function setMode(mode: Mode): void {
@@ -256,6 +257,8 @@ function setMode(mode: Mode): void {
   app.paused = false;
   elHud.dataset.mode = mode;
   elHud.dataset.paused = "0";
+  if (mode !== "match") elHud.dataset.over = "0";
+  music(mode === "match" ? "music_match" : "music_menu");
   elHud.dataset.training = app.training && mode === "match" ? "1" : "0";
   renderer.cues[0] = null;
 }
@@ -310,7 +313,8 @@ let hadSavedDevices = loadDevices();
 function defaultDevices(fromPad: number | null): void {
   const pads = listPads();
   const valid = (d: Device) =>
-    d.kind === "kbd" || (d.kind === "net" ? app.online === "host" : pads.some((g) => g.index === d.index));
+    d.kind === "kbd" ||
+    (d.kind === "net" ? app.online === "host" : d.kind === "touch" ? touchCapable() : pads.some((g) => g.index === d.index));
   if (hadSavedDevices && valid(devices[0]) && valid(devices[1]) && !sameDevice(devices[0], devices[1])) {
     // Pilihan tersimpan masih berlaku. Tapi kalau menu dibuka pakai stick yang belum
     // dipakai siapa pun, stick itu diusulkan untuk P1: itu alat yang sedang dipegang.
@@ -321,13 +325,26 @@ function defaultDevices(fromPad: number | null): void {
   }
   hadSavedDevices = false;
   const first = fromPad !== null && pads.some((g) => g.index === fromPad) ? fromPad : null;
-  devices[0] = first !== null ? { kind: "pad", index: first } : { kind: "kbd", set: 0 };
+  // Di HP dan tablet, alat bawaan P1 adalah tombol di layar.
+  const phone = window.matchMedia("(pointer: coarse)").matches;
+  devices[0] = first !== null ? { kind: "pad", index: first } : phone ? { kind: "touch" } : { kind: "kbd", set: 0 };
   const other = pads.find((g) => g.index !== first);
   devices[1] = other ? { kind: "pad", index: other.index } : first !== null ? { kind: "kbd", set: 0 } : { kind: "kbd", set: 1 };
 }
 
 const devHelp = (d: Device) =>
-  d.kind === "kbd" ? KEY_HELP[d.set] : d.kind === "net" ? "Main dari perangkatnya sendiri, lewat internet." : PAD_HELP;
+  d.kind === "kbd"
+    ? KEY_HELP[d.set]
+    : d.kind === "net"
+      ? "Main dari perangkatnya sendiri, lewat internet."
+      : d.kind === "touch"
+        ? "Stik di kiri layar untuk gerak, tombol aksi di kanan layar."
+        : PAD_HELP;
+
+// Tombol yang selalu terlihat dan bisa diklik atau di-tap; pintasan keyboard-nya ditulis di dalamnya.
+const tapBtn = (cls: string, tap: string, label: string, key = "") =>
+  `<span class="tapbtn ${cls}" data-tap="${tap}">${label}${key ? ` <kbd>${key}</kbd>` : ""}</span>`;
+const backBtn = () => tapBtn("back", "Escape", "◂ KEMBALI", "Esc");
 
 // Tamu online yang kursinya masih tercatat tapi orangnya sudah putus.
 const guestGone = (d: SpecDevice) => d.kind === "net" && !net.guests.has(d.id);
@@ -343,7 +360,7 @@ function ctrlTotal(): number {
   return ctrlRows() + (app.training ? 0 : 1);
 }
 
-const specHuman = (d: SpecDevice) => d.kind === "mouse" || d.kind === "kbd" || d.kind === "pad" || d.kind === "net";
+const specHuman = (d: SpecDevice) => d.kind !== "none" && d.kind !== "auto";
 
 function ctrlConflict(): boolean {
   if (guestGone(devices[0]) || (app.humans === 2 && guestGone(devices[1])) || guestGone(spectator.device)) return true;
@@ -361,6 +378,7 @@ const SPEC_HELP: Record<SpecDevice["kind"], string> = {
   kbd: "C B geser bidikan · V kulit pisang · Spasi sandal",
   pad: "D-pad/stick geser bidikan · □ kulit pisang · ✕ sandal",
   net: "Mengusili dari perangkatnya sendiri, lewat internet.",
+  touch: "Stik di kiri layar geser bidikan · tombol PISANG dan SANDAL di kanan",
 };
 
 function goControls(fromPad: number | null = null): void {
@@ -447,12 +465,12 @@ function renderControls(): void {
     ? `<b class="bad">Tiap orang harus memakai alat yang berbeda.</b>`
     : app.online === "host"
     ? `Kursi tamu bisa ditukar dengan ◂ ▸. Tamu tanpa kursi tetap bisa menonton.`
+    : touchState.enabled
+    ? `Ganti alat dengan ◂ ▸. Pakai stick? Tekan salah satu tombolnya sekali supaya terbaca.`
     : `${pads} stick terhubung. Tes alatmu dengan tombol smash atau lompat: lampunya menyala kalau benar.` +
-      (pads === 0 ? "<br />Stick belum terbaca? Tekan salah satu tombolnya sekali." : "");
-  $("ctrlHint").innerHTML = touchState.enabled
-    ? `<span class="tapbtn back" data-tap="Escape">◂ KEMBALI</span><span class="tapbtn go" data-tap="Enter">LANJUT ▸</span>`
-    : `<kbd>W</kbd><kbd>S</kbd> pilih baris &nbsp;·&nbsp; <kbd>A</kbd><kbd>D</kbd> ganti alat &nbsp;·&nbsp; ` +
-      `<kbd>Enter</kbd> atau <kbd>Options</kbd> lanjut &nbsp;·&nbsp; <kbd>Esc</kbd> kembali`;
+      (pads === 0 ? "<br />Stick belum terbaca? Tekan salah satu tombolnya sekali." : "") +
+      `<br /><kbd>W</kbd><kbd>S</kbd> pilih baris &nbsp;·&nbsp; <kbd>A</kbd><kbd>D</kbd> ganti alat`;
+  $("ctrlHint").innerHTML = backBtn() + tapBtn("go", "Enter", "LANJUT · PILIH JAGOAN ▸", "Enter");
 }
 
 // Lampu tes diperbarui tiap frame; daftar stick digambar ulang kalau jumlahnya berubah.
@@ -487,6 +505,14 @@ function startMatch(): void {
   setMode("match");
   // Penonton: manusia (pemain ke-3), otomatis, atau tidak ada. Di latihan selalu tidak ada.
   const sd = app.training ? ({ kind: "none" } as SpecDevice) : spectator.device;
+  // Tombol layar hanya tampil kalau ada kursi di perangkat ini yang memakainya.
+  setTouchRole(
+    devices[0].kind === "touch" || (app.humans === 2 && devices[1].kind === "touch")
+      ? "player"
+      : sd.kind === "touch"
+        ? "spec"
+        : "off",
+  );
   state.spec.active = specHuman(sd);
   state.rowdy = sd.kind === "auto";
   if (app.training) {
@@ -536,20 +562,6 @@ function statBar(key: "moveSpeed" | "jumpV" | "smashSpeed", value: number): numb
   return 0.25 + 0.75 * ((value - lo) / (hi - lo));
 }
 
-// Tombol memilih karakter untuk satu pemain, sesuai alat yang dipakainya.
-function pickHelp(i: number): string {
-  const d = devices[i];
-  const keysHelp =
-    d.kind === "net"
-      ? "memilih dari perangkatnya"
-      : d.kind === "pad"
-      ? "D-pad pilih <kbd>✕</kbd> kunci"
-      : d.set === 0
-        ? "<kbd>A</kbd><kbd>D</kbd> pilih <kbd>F</kbd> kunci"
-        : "<kbd>←</kbd><kbd>→</kbd> pilih <kbd>K</kbd> kunci";
-  return `<b>P${i + 1}</b> ${keysHelp}`;
-}
-
 function renderSelect(): void {
   const cpu = app.humans === 1;
   $("roster").innerHTML = CHARS.map((c, k) => {
@@ -597,24 +609,34 @@ function renderSelect(): void {
   if (app.online === "client") {
     const mine = app.seat === 0 || app.seat === 1;
     $("selectHint").innerHTML = !mine
-      ? `Kamu ${app.seat === 2 ? "penonton usil" : "menonton"}. Menunggu pemain memilih jagoan…`
+      ? `<span class="waitnote">Kamu ${app.seat === 2 ? "penonton usil" : "menonton"}. Menunggu pemain memilih jagoan…</span>`
       : touchState.enabled
-        ? `<span class="tapbtn go" data-tap="lock">KUNCI JAGOANMU ✓</span>`
-        : `<b>Kamu P${app.seat + 1}</b> <kbd>A</kbd><kbd>D</kbd> pilih &nbsp;·&nbsp; <kbd>F</kbd> kunci &nbsp;·&nbsp; <kbd>Esc</kbd> keluar room`;
+        ? tapBtn("go", "lock", "KUNCI JAGOANMU ✓")
+        : `<span class="waitnote"><b>Kamu P${app.seat + 1}</b> · <kbd>A</kbd><kbd>D</kbd> pilih</span>` +
+          tapBtn("go", "lock", "KUNCI JAGOANMU ✓", "F");
     return;
   }
-  if (touchState.enabled) {
-    // Layar sentuh: tap kartu untuk memilih, lalu tombol besar untuk mengunci.
-    const whoNow = app.locked[0] ? (cpu ? "LAWAN" : "P2") : cpu ? "JAGOANMU" : "P1";
+  // Tombol besar yang selalu ada: kunci pilihan, dan MULAI begitu tinggal satu langkah.
+  const lockKey = (i: number) => {
+    const d = devices[i];
+    return d.kind === "kbd" ? (d.set === 1 ? "K" : "F") : d.kind === "pad" ? "✕" : "";
+  };
+  if (cpu) {
     $("selectHint").innerHTML =
-      `<span class="tapbtn back" data-tap="Escape">◂ KEMBALI</span>` +
-      `<span class="tapbtn go" data-tap="lock">KUNCI ${whoNow} ✓</span>`;
+      backBtn() +
+      (app.locked[0]
+        ? tapBtn("go", "lockp:1", "MULAI ▸", lockKey(0))
+        : tapBtn("go", "lockp:0", "KUNCI JAGOANMU ✓", lockKey(0)));
     return;
   }
-  $("selectHint").innerHTML = cpu
-    ? `<kbd>A</kbd><kbd>D</kbd> pilih ${app.locked[0] ? "lawan" : "jagoanmu"} &nbsp;·&nbsp; <kbd>F</kbd> kunci &nbsp;·&nbsp; ` +
-      `<kbd>W</kbd><kbd>S</kbd> tingkat CPU: <b>${CPU_NAMES[app.cpuLevel]}</b> &nbsp;·&nbsp; <kbd>Esc</kbd> kembali`
-    : `${pickHelp(0)} &nbsp;·&nbsp; ${pickHelp(1)} &nbsp;·&nbsp; <kbd>Esc</kbd> kembali`;
+  const open = [0, 1].filter((i) => !app.locked[i]);
+  const mineOpen = open.filter((i) => devices[i].kind !== "net");
+  $("selectHint").innerHTML =
+    backBtn() +
+    mineOpen
+      .map((i) => tapBtn("go", `lockp:${i}`, open.length === 1 ? `P${i + 1} SIAP · MULAI ▸` : `P${i + 1} SIAP ✓`, lockKey(i)))
+      .join("") +
+    (open.length > 0 && mineOpen.length === 0 ? `<span class="waitnote">Menunggu tamu memilih jagoan…</span>` : "");
 }
 
 // Tap atau klik pada elemen ber-data-tap. Nilainya nama tombol keyboard, atau perintah khusus.
@@ -666,6 +688,9 @@ function handleTap(v: string): void {
   } else if (cmd === "ctrlrow") {
     app.ctrlRow = Number(arg);
     renderControls();
+  } else if (cmd === "lockp") {
+    const who = Number(arg) === 1 ? 1 : 0;
+    if (app.humans === 1 || devices[who].kind !== "net") lockChar(who);
   } else if (cmd === "lock") {
     if (devices[chooser()].kind !== "net") lockChar(chooser());
   } else if (cmd === "drill") {
@@ -678,6 +703,23 @@ document.addEventListener("click", (e) => {
   const el = (e.target as HTMLElement | null)?.closest<HTMLElement>("[data-tap]");
   if (el?.dataset.tap) handleTap(el.dataset.tap);
 });
+
+// ===== Volume =====
+// Satu tombol: penuh, setengah, bisu. Pengaturan lebih rinci menyusul di layar pengaturan.
+const elVol = $("vol");
+function showVolume(): void {
+  const v = getVolume();
+  elVol.dataset.v = v === 0 ? "0" : v < 1 ? "1" : "2";
+  elVol.title = v === 0 ? "Suara: mati" : v < 1 ? "Suara: setengah" : "Suara: penuh";
+}
+elVol.addEventListener("click", () => {
+  const at = VOLUME_STEPS.indexOf(getVolume());
+  setVolume(VOLUME_STEPS[(at + 1) % VOLUME_STEPS.length]);
+  showVolume();
+  sfx.swing();
+  elVol.blur();
+});
+showVolume();
 
 // ===== Layar penuh =====
 // Safari lama memakai nama berawalan webkit; iPhone tidak mendukungnya sama sekali,
@@ -1022,7 +1064,18 @@ function replay(el: HTMLElement, cls: string): void {
   el.classList.add(cls);
 }
 
+// Pengumuman yang punya suara komentator.
+const CALLOUT_VOICE: Record<string, string> = {
+  "MULAI!": "vo_mulai",
+  "MATCH POINT!": "vo_matchpoint",
+  "DEUCE!": "vo_deuce",
+  "POIN PENENTUAN!": "vo_penentuan",
+  "FAULT!": "vo_fault",
+};
+
 function callout(text: string, color: string, mini = false): void {
+  const vo = CALLOUT_VOICE[text];
+  if (vo) voice(vo);
   elCallout.textContent = text;
   elCallout.style.setProperty("--cc", color);
   elCallout.classList.toggle("mini", mini);
@@ -1263,6 +1316,7 @@ function handleEvent(e: GameEvent): void {
       break;
     case "over":
       sfx.over();
+      window.setTimeout(() => voice("vo_menang"), 700);
       crowdSfx.cheer(1.6);
       renderer.cheer(4);
       // Menang tanpa kebobolan sama sekali: penonton menertawakan yang kalah.
@@ -1323,7 +1377,8 @@ function updateHud(): void {
     }
 
     const meter = state.players[i].meter;
-    if (i === (app.online === "client" && app.seat === 1 ? 1 : 0)) setSpecialReady(meter >= SPECIAL_COST);
+    const touchSeat = app.online === "client" ? app.seat : devices[1].kind === "touch" && app.humans === 2 ? 1 : 0;
+    if (i === touchSeat) setSpecialReady(meter >= SPECIAL_COST);
     card.fill.style.width = `${(meter / METER_MAX) * 100}%`;
     card.meter.classList.toggle("ready", meter >= SPECIAL_COST);
 
@@ -1354,6 +1409,7 @@ function updateHud(): void {
     shown.mp = mask;
     elMp.classList.toggle("on", mask !== 0);
     elTension.classList.toggle("on", mask !== 0);
+    if (app.mode === "match") music(mask !== 0 ? "music_tense" : "music_match");
     if (mask === 3) {
       elMp.textContent = "POIN PENENTUAN";
       elMp.style.setProperty("--pc", "#ffd23f");
@@ -1384,10 +1440,13 @@ function updateHud(): void {
       elBanner.style.setProperty("--cc", hex(charOf(w).color));
       elBanner.innerHTML =
         `<div class="big display">${charOf(w).name.toUpperCase()} MENANG!</div>` +
+        `<div class="bscore display">${state.score[0]} – ${state.score[1]}</div>` +
         (app.online === "client"
-          ? `<small>Menunggu host… &nbsp;·&nbsp; <span data-tap="KeyM"><kbd>M</kbd> keluar room</span></small>`
-          : "") +
-        `<small${app.online === "client" ? ' style="display:none"' : ""}><span data-tap="KeyF"><kbd>F</kbd> main lagi</span> &nbsp;·&nbsp; ` +
+          ? `<small>Menunggu host memilih: main lagi atau ganti jagoan…</small>` +
+            `<div class="bbtns">${tapBtn("back", "KeyM", "KELUAR ROOM", "M")}</div>`
+          : `<div class="bbtns">${tapBtn("go", "KeyF", "MAIN LAGI ▸", "F")}` +
+            `${tapBtn("back", "KeyC", "GANTI JAGOAN", "C")}${tapBtn("back", "KeyM", "MENU UTAMA", "M")}</div>`) +
+        `<small style="display:none"><span data-tap="KeyF"><kbd>F</kbd> main lagi</span> &nbsp;·&nbsp; ` +
         `<span data-tap="KeyC"><kbd>C</kbd> pilih karakter</span> &nbsp;·&nbsp; ` +
         `<span data-tap="KeyM"><kbd>M</kbd> menu utama</span></small>`;
     }
@@ -1500,16 +1559,14 @@ function goJoin(code: string): void {
 
 const SEAT_NAMES = ["PEMAIN 1", "PEMAIN 2", "PENONTON USIL"];
 function renderJoin(): void {
-  const back = touchState.enabled
-    ? `<span class="tapbtn back" data-tap="Escape">◂ KEMBALI</span>`
-    : `<kbd>Esc</kbd> kembali`;
+  const back = backBtn();
   if (join.status === "input" || join.status === "error") {
     $("joinBox").innerHTML =
       `Ketik kode room dari host` +
       `<input id="roomInput" maxlength="4" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="ABCD" />` +
       `<span class="tapbtn go" data-tap="join">GABUNG ▸</span>` +
       (join.status === "error" ? `<br /><span class="bad">${join.text}</span>` : "");
-    $("joinHint").innerHTML = touchState.enabled ? back : `<kbd>Enter</kbd> gabung &nbsp;·&nbsp; ${back}`;
+    $("joinHint").innerHTML = back;
     if (!touchState.enabled) (document.getElementById("roomInput") as HTMLInputElement | null)?.focus();
     return;
   }
@@ -1538,6 +1595,7 @@ interface FrameMsg {
 }
 
 function clientHelp(): void {
+  setTouchRole(app.seat === 2 ? "spec" : app.seat >= 0 ? "player" : "off");
   const text =
     app.seat === 2
       ? touchState.enabled

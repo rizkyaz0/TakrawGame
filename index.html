@@ -156,9 +156,18 @@
       .crow .chelp { font-size: 12px; font-weight: 700; opacity: 0.85; }
       .lamp { width: 20px; height: 20px; border-radius: 50%; border: 3px solid var(--paper); background: #3a3644; flex: none; }
       .lamp.on { background: #7dff6a; box-shadow: 0 0 0 4px rgba(125, 255, 106, 0.35); }
-      #ctrlNote { position: absolute; left: 50%; bottom: 62px; transform: translateX(-50%); width: min(640px, 92%); text-align: center; font-size: 13px; font-weight: 700; line-height: 1.5; text-shadow: 0 2px 0 var(--ink); }
+      #ctrlNote { position: absolute; left: 50%; bottom: 76px; transform: translateX(-50%); width: min(640px, 92%); text-align: center; font-size: 13px; font-weight: 700; line-height: 1.5; text-shadow: 0 2px 0 var(--ink); }
       #ctrlNote .bad { display: inline-block; padding: 2px 12px; background: #ff4f6d; color: var(--paper); border: 3px solid var(--ink); }
-      body.touch #ctrlHint { background: none; border: none; bottom: 18px; }
+      #ctrlHint, #selectHint, #joinHint { background: none; border: none; bottom: 18px; }
+      .tapbtn kbd { font-size: 11px; vertical-align: middle; margin-left: 4px; }
+      body.touch .tapbtn kbd { display: none; }
+      .waitnote { display: inline-block; padding: 6px 14px; background: rgba(23, 19, 28, 0.85); border: 2px solid var(--ink); vertical-align: middle; }
+      body[data-trole="off"] #touch :is(.tb, #tzone) { display: none; }
+      body[data-trole="spec"] #touch .tb:is([data-b="guard"], [data-b="dash"], [data-b="special"]) { display: none; }
+      #banner .bscore { margin-top: 30px; font-size: 40px; color: var(--paper); -webkit-text-stroke: 7px var(--ink); paint-order: stroke fill; }
+      #banner .bbtns { margin-top: 14px; }
+      #banner .bbtns .tapbtn { font-size: 18px; padding: 7px 16px; }
+      #banner .bbtns .tapbtn.go { font-size: 24px; padding: 9px 24px; }
 
       /* Deretan kartu karakter. */
       .roster { position: absolute; top: 92px; left: 50%; transform: translateX(-50%); display: flex; gap: 10px; }
@@ -234,7 +243,6 @@
       }
       .tapbtn.go { background: var(--sun); color: var(--ink); }
       .tapbtn.back { background: var(--paper); color: var(--ink); }
-      body.touch #selectHint { background: none; border: none; bottom: 18px; }
 
       /* ===== Layar sentuh ===== */
       #touch { position: fixed; inset: 0; pointer-events: none; display: none; touch-action: none; }
@@ -289,6 +297,21 @@
       #fs .close, #fs.on .open { display: none; }
       #fs.on .close { display: inline; }
       body.touch #fs { top: calc(8px + env(safe-area-inset-top)); right: auto; left: 50%; margin-left: -138px; }
+      /* Di menu, tombolnya minggir ke pojok supaya tidak menutupi judul layar. */
+      body.touch #hud:not([data-mode="match"]) ~ #fs { left: auto; margin-left: 0; right: calc(10px + env(safe-area-inset-right)); }
+
+      /* Tombol volume: di sebelah tombol layar penuh. */
+      #vol {
+        position: fixed; z-index: 40; top: calc(10px + env(safe-area-inset-top)); right: calc(60px + env(safe-area-inset-right));
+        width: 42px; height: 42px; padding: 0; display: flex; align-items: center; justify-content: center; cursor: pointer;
+        border: 3px solid var(--paper); background: rgba(23, 19, 28, 0.8); color: var(--paper); touch-action: manipulation;
+      }
+      #vol:hover { background: var(--sun); color: var(--ink); border-color: var(--ink); }
+      #vol svg { fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: square; stroke-linejoin: miter; }
+      #vol .x, #vol[data-v="0"] .w1, #vol[data-v="0"] .w2, #vol[data-v="1"] .w2 { display: none; }
+      #vol[data-v="0"] .x { display: inline; }
+      body.touch #vol { top: calc(8px + env(safe-area-inset-top)); right: auto; left: 50%; margin-left: -188px; }
+      body.touch #hud:not([data-mode="match"]) ~ #vol { left: auto; margin-left: 0; right: calc(60px + env(safe-area-inset-right)); }
 
       /* HP dalam posisi tegak: minta diputar. */
       #rotate {
@@ -517,6 +540,14 @@
       <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
         <path class="open" d="M3 9V3h6M15 3h6v6M21 15v6h-6M9 21H3v-6" />
         <path class="close" d="M9 3v6H3M21 9h-6V3M15 21v-6h6M3 15h6v6" />
+      </svg>
+    </button>
+    <button id="vol" type="button" aria-label="Volume" title="Suara">
+      <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+        <path d="M4 9v6h4l5 4V5L8 9H4z" />
+        <path class="w1" d="M16 9.5a3.5 3.5 0 0 1 0 5" />
+        <path class="w2" d="M18.5 7a7 7 0 0 1 0 10" />
+        <path class="x" d="M16 9l5 6M21 9l-5 6" />
       </svg>
     </button>
     <div id="rotate">Putar HP ke posisi mendatar<br />untuk bermain ↻</div>

@@ -89,7 +89,7 @@ Angka awal (setel lewat liga): batas mengapung 24 frame (0,4 detik), minimal 4 f
 
 ## Tahap B — Alur menu dan room offline
 
-> **Status (14 Nov 2026): B1 selesai, B2 belum.** B1 = menu judul bertahap (MAIN → cara main → 1v1/2v2/3v3, RANKED "segera", KEMBALI di tiap tingkat; `titleItems`, `menuNav` di `src/main.ts`). B2 = layar Room dengan model kursi `Seat` dan pemecahan `main.ts`: belum dikerjakan. Dari menu utama ke pertandingan 1v1 masih 6 klik (target B2: 4).
+> **Status (14 Nov 2026): B1 dan Room offline selesai; model kursi `Seat` penuh dan pemecahan `main.ts` belum.** B1 = menu bertahap (`titleItems`, `menuNav`). Room = layar `#room` untuk 1v1/2v2/3v3 lawan komputer dan mabar offline (`goRoom`, `renderRoom`, `roomKey` di `src/main.ts`): kartu tiap kursi dengan ganti jagoan, alat, JADI PEMAIN/JADI BOT, lalu arena, waktu, poin, tingkat bot, penonton, MULAI. Dari menu utama ke 1v1 sekarang 4 klik. Batas: baru dua kursi bisa diisi orang (P1 dan satu lagi, lawan atau teman); Arcade, Latihan, dan host online masih memakai layar Kontrol + Pilih Jagoan lama. Belum diuji dengan stick dan di HP.
 
 ### Alur
 

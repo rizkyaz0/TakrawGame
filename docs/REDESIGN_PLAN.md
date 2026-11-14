@@ -271,6 +271,8 @@ Selesai kalau: fps di HP tidak turun lebih dari 10% dibanding penonton lama.
 
 ## Tahap E — Jurus baru dan skin
 
+> **Status (14 Nov 2026): E1 (jurus) selesai, E2 (skin) belum.** Jenis baru: `freeze` (Mas Tahu, "Tahu Beku"), `heavy` (Pak Bakso, "Bom Bakso"), `bounce` (Om Sate, "Sate Mental"); logika di `tryHit`/`stepBall` (`src/sim.ts`), 4 tes baru. Liga 20 pertandingan setelah disetel (`charge` Tahu 0,5, Bakso 2,6): Normal selisih 18,9 poin, kehabisan waktu 1; Sulit selisih 23,4, kehabisan waktu 17 (sebelumnya 20,2 dan 15). Pak Bakso masih lemah di Normal (39,5%). Jenis `split`, `boomerang`, `spin`, `rain` tidak dikerjakan.
+
 ### Jurus
 
 Sekarang ada 5 jenis (`fire`, `curve`, `zigzag`, `meteor`, `ghost`) untuk 12 karakter. Lima

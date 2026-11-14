@@ -245,3 +245,94 @@ test("CPU yang menahan smash tetap menyelesaikan pertandingan dengan determinist
   b.events = [];
   assert.deepEqual(a, b);
 });
+
+// ---- Jurus baru: Bola Beku, Bola Batu, Bola Mantul ----
+
+// Pemain 0 (karakter id) melepas jurusnya ke bola yang tepat di jangkauannya.
+function fireSpecial(charId) {
+  const s = createState([charId, 1]);
+  s.phase = "play";
+  const p = s.players[0];
+  p.x = -2;
+  p.y = 2.5;
+  p.grounded = false;
+  p.meter = 100;
+  let hit = false;
+  for (let f = 0; f < 200 && !hit; f++) {
+    if (!(p.specialTimer > 0 && f > 0)) {
+      s.ball.x = p.x + 0.6;
+      s.ball.y = p.y + 0.9;
+      s.ball.vx = 0;
+      s.ball.vy = 0;
+    }
+    step(s, [f === 0 ? Btn.SPECIAL : 0, 0]);
+    s.players[0].y = 2.5; // tetap di udara
+    s.players[0].vy = 0;
+    hit = s.events.some((e) => e.type === "specialHit");
+  }
+  assert.ok(hit, "jurus kena bola");
+  while (s.hitstop > 0) step(s, [0, 0]); // habiskan pembekuan layar sesudah kena
+  return s;
+}
+
+test("jurus baru: tiap karakter punya jenis yang valid", () => {
+  const kinds = new Set(CHARS.map((c) => c.special));
+  for (const k of ["fire", "curve", "zigzag", "meteor", "ghost", "freeze", "heavy", "bounce"]) {
+    assert.ok(kinds.has(k), `ada karakter dengan jurus ${k}`);
+  }
+});
+
+test("Bola Beku: berhenti di udara di atas lapangan lawan, lalu jatuh lurus", () => {
+  const s = fireSpecial(CHARS.findIndex((c) => c.special === "freeze"));
+  assert.equal(s.ball.freeze, 1);
+  let held = 0;
+  let maxHeld = 0;
+  for (let f = 0; f < 240 && s.phase === "play"; f++) {
+    step(s, [0, 0]);
+    if (s.ball.hold > 0) {
+      held++;
+      maxHeld = Math.max(maxHeld, held);
+      assert.equal(s.ball.vx, 0);
+      assert.equal(s.ball.vy, 0);
+      assert.ok(s.ball.x > 3 && s.ball.y > 2.5, "menggantung di atas sisi lawan");
+    } else if (held > 0) break;
+  }
+  assert.ok(maxHeld >= 15, `bola menggantung (${maxHeld} frame)`);
+  step(s, [0, 0]);
+  assert.ok(s.ball.vy < -5, "lalu jatuh");
+});
+
+test("Bola Batu: tidak bisa di-smash balik, pemain yang mencoba kewalahan", () => {
+  const s = fireSpecial(CHARS.findIndex((c) => c.special === "heavy"));
+  assert.equal(s.ball.heavy, 1);
+  // Lawan melompat dan men-smash bola berat di jangkauannya.
+  const q = s.players[1];
+  q.x = 3;
+  q.y = 2.5;
+  q.grounded = false;
+  s.ball.x = q.x - 0.6;
+  s.ball.y = q.y + 0.9;
+  s.ball.vx = 0;
+  s.ball.vy = 0;
+  step(s, [0, Btn.SMASH]);
+  assert.ok(!s.events.some((e) => e.type === "smash"), "tidak ada smash balik");
+  assert.ok(q.stun > 0, "pemain kewalahan");
+});
+
+test("Bola Mantul: pantulan pertama di lantai lawan tidak dihitung poin", () => {
+  const s = fireSpecial(CHARS.findIndex((c) => c.special === "bounce"));
+  assert.equal(s.ball.skip, 1);
+  s.players[1].x = 7.6; // lawan menjauh supaya tidak menyentuh bola
+  let bounced = false;
+  for (let f = 0; f < 300 && s.phase === "play"; f++) {
+    const before = s.ball.skip;
+    step(s, [0, 0]);
+    if (before === 1 && s.ball.skip === 0) {
+      bounced = true;
+      assert.deepEqual(s.score, [0, 0], "belum ada poin");
+      assert.ok(s.ball.vy > 5, "bola melambung");
+    }
+  }
+  assert.ok(bounced, "memantul sekali");
+  assert.deepEqual(s.score, [1, 0], "poin untuk penyerang setelah pantulan kedua");
+});

@@ -533,6 +533,10 @@ export class Renderer {
       case "curveDrop":
         this.fx.burst(f, s.ball.x, s.ball.y, 0x4dffd2, 0.9);
         break;
+      case "freezeHold":
+        this.fx.burst(f, e.x, e.y, 0x8fe6ff, 1.3);
+        this.shake = Math.max(this.shake, 0.2);
+        break;
       case "bounce":
         this.fx.burst(f, s.ball.x, s.ball.y, 0xffffff, 0.35);
         break;
@@ -662,7 +666,7 @@ export class Renderer {
     // Bola melar searah lajunya kalau sedang kencang.
     const stretch = 1 + Math.min(0.45, Math.max(0, speed - 10) * 0.03);
     if (speed > 10) this.ball.rotation.z = Math.atan2(b.vy, b.vx);
-    const big = b.power > 0 || b.rise > 0 ? 1.3 : b.curveSide >= 0 || b.wave > 0 ? 1.12 : 1;
+    const big = b.heavy > 0 ? 1.6 : b.power > 0 || b.rise > 0 ? 1.3 : b.curveSide >= 0 || b.wave > 0 || b.freeze > 0 ? 1.12 : 1;
     this.ball.scale.set(stretch * big, big / Math.sqrt(stretch), big / Math.sqrt(stretch));
     if (b.rise > 0) {
       this.ballMat.emissive.setHex(0x7ed23a);
@@ -676,6 +680,13 @@ export class Renderer {
     } else if (b.wave > 0) {
       this.ballMat.emissive.setHex(0x9a66e0);
       this.ballMat.emissiveIntensity = 1.3;
+    } else if (b.hold > 0 || b.freeze > 0) {
+      // Bola Beku: biru es, berdenyut saat berhenti di udara.
+      this.ballMat.emissive.setHex(0x8fe6ff);
+      this.ballMat.emissiveIntensity = 1.2 + (b.hold > 0 ? Math.sin(performance.now() * 0.03) * 0.4 : 0);
+    } else if (b.heavy > 0) {
+      this.ballMat.emissive.setHex(0x3b2a4a);
+      this.ballMat.emissiveIntensity = 1.4;
     } else {
       // Makin panas relinya, makin membara bolanya.
       this.ballMat.emissive.setHex(0xff5a00);

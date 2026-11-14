@@ -254,6 +254,9 @@ const SPECIAL_DESC: Record<string, string> = {
   zigzag: "Bola melaju sambil naik-turun.",
   ghost: "Bola nyaris tak terlihat untuk sesaat.",
   meteor: "Bola naik tinggi lalu jatuh lurus. Tahan maju/mundur untuk mengatur jaraknya.",
+  freeze: "Bola berhenti di udara di atas lawan sebentar, lalu jatuh lurus.",
+  heavy: "Bola batu yang lambat dan berat. Tidak bisa di-smash balik, hanya diterima.",
+  bounce: "Bola melesat, memantul sekali di lantai lawan tanpa dihitung poin, lalu melambung.",
 };
 
 function resetShown(): void {
@@ -2203,7 +2206,8 @@ function handleEvent(e: GameEvent): void {
       superCutin(e.player);
       break;
     case "specialHit":
-      if (e.kind === "fire" || e.kind === "meteor") sfx.fire();
+      if (e.kind === "fire" || e.kind === "meteor" || e.kind === "bounce") sfx.fire();
+      else if (e.kind === "heavy") sfx.smash(1);
       else sfx.curve();
       flash(e.kind === "fire" || e.kind === "meteor" ? "#fff1c4" : "#e6f4ff");
       crowdSfx.cheer(0.7);
@@ -2211,6 +2215,9 @@ function handleEvent(e: GameEvent): void {
       break;
     case "curveDrop":
       sfx.curveDrop();
+      break;
+    case "freezeHold":
+      sfx.receive();
       break;
     case "score": {
       const loser = 1 - e.winner;

@@ -244,8 +244,6 @@ function updateCue(): void {
   else if (!fast && toSmash >= PERFECT_FROM && toSmash <= PERFECT_TO) renderer.cues[0] = "smash";
 }
 const CPU_NAMES = ["Mudah", "Normal", "Sulit"];
-// Urutan menu utama saat dinavigasi, mengikuti letaknya di layar.
-const TITLE_ORDER = [0, 1, 7, 8, 9, 3, 4, 5, 2, 10, 6];
 const ROLES = ["Power", "Lincah", "Tank", "Teknis", "Pelari", "Pelompat", "Seimbang"];
 const SPECIAL_DESC: Record<string, string> = {
   fire: "Bola melesat lurus tanpa gravitasi.",
@@ -353,8 +351,19 @@ function setNetNote(text: string, seconds = 0): void {
   netNoteUntil = seconds > 0 ? performance.now() + seconds * 1000 : 0;
 }
 
+// Kembali ke menu judul di tingkat yang sama seperti saat layar ini dibuka (mis. daftar 1v1/2v2/3v3).
+function backToMenu(): void {
+  endOnline();
+  app.tutorial = false;
+  app.arcade.on = false;
+  setMode("title");
+  startDemo();
+  renderMenus();
+}
+
 function goTitle(): void {
   endOnline();
+  titleReset();
   app.tutorial = false;
   app.arcade.on = false;
   setMode("title");
@@ -666,27 +675,167 @@ function recordMatch(winnerSide: number): void {
   saveProgress();
 }
 
+// ===== Menu judul bertahap =====
+// MAIN membuka pilihan cara main, lalu pilihan 1v1 / 2v2 / 3v3, lalu layar kontrol. Tiap tingkat
+// punya KEMBALI yang terlihat; Esc dan tombol lingkaran stick melakukan hal yang sama.
+type MenuId = "root" | "play" | "versus" | "online";
+interface TitleItem {
+  label: string;
+  row: number;
+  big?: boolean;
+  flag?: "new" | "soon";
+  run: () => void;
+}
+const menuNav = { id: "root" as MenuId, kind: "cpu" as "cpu" | "local", stack: [] as Array<{ id: MenuId; index: number }> };
+const TITLE_HEADINGS: Record<MenuId, string> = {
+  root: "",
+  play: "MAIN · PILIH CARA MAIN",
+  versus: "PILIH MODE",
+  online: "MABAR ONLINE",
+};
+
+function titleOpen(id: MenuId): void {
+  menuNav.stack.push({ id: menuNav.id, index: app.titleIndex });
+  menuNav.id = id;
+  app.titleIndex = 0;
+  sfx.swing();
+  renderMenus();
+}
+function titleBack(): void {
+  const prev = menuNav.stack.pop();
+  if (!prev) return;
+  menuNav.id = prev.id;
+  app.titleIndex = prev.index;
+  setNetNote("");
+  sfx.swing();
+  renderMenus();
+}
+function titleReset(): void {
+  menuNav.id = "root";
+  menuNav.stack.length = 0;
+  app.titleIndex = settings.tutorialDone ? 0 : 3; // pemain baru: sorotan mulai di Tutorial
+}
+
+function startVersus(kind: "cpu" | "local", teamSize: 1 | 2 | 3): void {
+  app.humans = kind === "local" ? 2 : 1;
+  app.mate = false;
+  app.training = false;
+  app.teamSize = teamSize;
+  app.arcade.on = false;
+  app.arcade.stage = 0;
+  sfx.receivePerfect();
+  goControls(menuPad);
+}
+
+function titleItems(): TitleItem[] {
+  const back: TitleItem = { label: "◂ KEMBALI", row: 9, run: titleBack };
+  if (menuNav.id === "play") {
+    return [
+      { label: "LAWAN KOMPUTER", row: 0, big: true, run: () => ((menuNav.kind = "cpu"), titleOpen("versus")) },
+      { label: "MABAR OFFLINE", row: 1, big: true, run: () => ((menuNav.kind = "local"), titleOpen("versus")) },
+      { label: "MABAR ONLINE", row: 2, big: true, run: () => titleOpen("online") },
+      back,
+    ];
+  }
+  if (menuNav.id === "versus") {
+    return [
+      { label: "1 LAWAN 1", row: 0, big: true, run: () => startVersus(menuNav.kind, 1) },
+      { label: "2 LAWAN 2", row: 1, big: true, run: () => startVersus(menuNav.kind, 2) },
+      { label: "3 LAWAN 3", row: 2, big: true, run: () => startVersus(menuNav.kind, 3) },
+      back,
+    ];
+  }
+  if (menuNav.id === "online") {
+    return [
+      {
+        label: "BUAT ROOM",
+        row: 0,
+        big: true,
+        run: () => {
+          // Host mengatur kursi di layar kontrol. Online baru 1 lawan 1 (tim online menyusul).
+          app.teamSize = 1;
+          app.mate = false;
+          app.humans = 2;
+          app.training = false;
+          app.arcade.on = false;
+          app.online = "host";
+          roomError = "";
+          sfx.receivePerfect();
+          void hostRoom(hostHandlers);
+          goControls(menuPad);
+        },
+      },
+      { label: "MASUKKAN KODE", row: 1, big: true, run: () => (sfx.receivePerfect(), goJoin("")) },
+      back,
+    ];
+  }
+  return [
+    { label: "MAIN", row: 0, big: true, run: () => titleOpen("play") },
+    {
+      label: "RANKED",
+      row: 0,
+      big: true,
+      flag: "soon",
+      run: () => {
+        sfx.fault();
+        setNetNote("RANKED SEGERA HADIR · BUTUH AKUN", 3);
+      },
+    },
+    {
+      label: "ARCADE",
+      row: 1,
+      run: () => {
+        app.humans = 1;
+        app.mate = false;
+        app.training = false;
+        app.teamSize = 1;
+        app.arcade.on = true;
+        app.arcade.stage = 0;
+        sfx.receivePerfect();
+        goControls(menuPad);
+      },
+    },
+    {
+      label: "TUTORIAL",
+      row: 1,
+      flag: settings.tutorialDone ? undefined : "new",
+      run: () => (sfx.receivePerfect(), startTutorial()),
+    },
+    {
+      label: "LATIHAN",
+      row: 1,
+      run: () => {
+        app.humans = 1;
+        app.mate = false;
+        app.training = true;
+        app.teamSize = 1;
+        app.arcade.on = false;
+        sfx.receivePerfect();
+        goControls(menuPad);
+      },
+    },
+    { label: "PROFIL", row: 2, run: () => (sfx.receivePerfect(), goProfile()) },
+    { label: "PENGATURAN", row: 2, run: () => (sfx.receivePerfect(), goSettings()) },
+  ];
+}
+
 function renderMenus(): void {
   // data-tap membuat tiap pilihan bisa diklik atau di-tap.
   const item = (label: string, on: boolean, tap: string) =>
     `<div class="item${on ? " on" : ""}" data-tap="${tap}">${label}</div>`;
+  // Menu judul bertahap: tiap item punya baris; baris "big" tampil lebih besar.
+  const items = titleItems();
+  const rows: string[] = [];
+  items.forEach((it, i) => {
+    const cls = `item${i === app.titleIndex ? " on" : ""}${it.flag === "new" ? " new" : ""}${it.flag === "soon" ? " soon" : ""}`;
+    const html = `<div class="${cls}" data-tap="title:${i}">${it.label}</div>`;
+    const r = it.row;
+    rows[r] = (rows[r] ?? `<div class="mrow${it.big ? " big" : ""}">`) + html;
+  });
+  const heading = TITLE_HEADINGS[menuNav.id];
   $("titleMenu").innerHTML =
-    `<div class="mrow big">` +
-    item("MAIN · LAWAN CPU", app.titleIndex === 0, "title:0") +
-    item("MABAR · 2 PEMAIN", app.titleIndex === 1, "title:1") +
-    `</div><div class="mrow">` +
-    item("TIM · 2 LAWAN 2", app.titleIndex === 7, "title:7") +
-    item("TIM · 3 LAWAN 3", app.titleIndex === 8, "title:8") +
-    item("ARCADE", app.titleIndex === 9, "title:9") +
-    `</div><div class="mrow">` +
-    item("ONLINE · BUAT ROOM", app.titleIndex === 3, "title:3") +
-    item("ONLINE · GABUNG ROOM", app.titleIndex === 4, "title:4") +
-    `</div><div class="mrow">` +
-    item("TUTORIAL", app.titleIndex === 5, "title:5").replace('class="item', settings.tutorialDone ? 'class="item' : 'class="item new') +
-    item("LATIHAN", app.titleIndex === 2, "title:2") +
-    item("PROFIL", app.titleIndex === 10, "title:10") +
-    item("PENGATURAN", app.titleIndex === 6, "title:6") +
-    `</div>`;
+    (heading ? `<div class="mtitle display">${heading}</div>` : "") +
+    rows.filter(Boolean).map((r) => r + "</div>").join("");
   if (app.online === "client") {
     $("pauseMenu").innerHTML =
       item("LANJUT", app.pauseIndex === 0, "pause:0") + item("KELUAR ROOM", app.pauseIndex === 1, "pause:1");
@@ -890,7 +1039,7 @@ document.addEventListener("click", (e) => {
 loadSettings();
 loadProgress();
 // Pemain baru: sorotan menu mulai di Tutorial.
-if (!settings.tutorialDone) app.titleIndex = 5;
+titleReset();
 function applySettings(): void {
   setBusLevel("music", settings.music);
   setBusLevel("sfx", settings.sfx);
@@ -1295,44 +1444,16 @@ const RIGHT = new Set(["KeyD", "ArrowRight"]);
 
 function menuKey(code: string): void {
   if (app.mode === "title") {
-    if (UP.has(code) || DOWN.has(code) || LEFT.has(code) || RIGHT.has(code)) {
-      const at = TITLE_ORDER.indexOf(app.titleIndex);
-      const n = TITLE_ORDER.length;
-      app.titleIndex = TITLE_ORDER[(at + (DOWN.has(code) || RIGHT.has(code) ? 1 : n - 1)) % n];
+    const items = titleItems();
+    if (code === "Escape" || code === "Backspace") {
+      if (menuNav.stack.length) titleBack();
+    } else if (UP.has(code) || DOWN.has(code) || LEFT.has(code) || RIGHT.has(code)) {
+      const n = items.length;
+      app.titleIndex = (app.titleIndex + (DOWN.has(code) || RIGHT.has(code) ? 1 : n - 1)) % n;
       sfx.swing();
       renderMenus();
-    } else if (CONFIRM.has(code) && app.titleIndex === 5) {
-      sfx.receivePerfect();
-      startTutorial();
-    } else if (CONFIRM.has(code) && app.titleIndex === 6) {
-      sfx.receivePerfect();
-      goSettings();
-    } else if (CONFIRM.has(code) && app.titleIndex === 10) {
-      sfx.receivePerfect();
-      goProfile();
-    } else if (CONFIRM.has(code) && app.titleIndex === 3) {
-      // Buat room: host mengatur kursi di layar pengaturan kontrol.
-      app.teamSize = 1;
-      app.mate = false;
-      app.humans = 2;
-      app.training = false;
-      app.online = "host";
-      roomError = "";
-      sfx.receivePerfect();
-      void hostRoom(hostHandlers);
-      goControls(menuPad);
-    } else if (CONFIRM.has(code) && app.titleIndex === 4) {
-      sfx.receivePerfect();
-      goJoin("");
     } else if (CONFIRM.has(code)) {
-      app.humans = app.titleIndex === 1 ? 2 : 1;
-      app.training = app.titleIndex === 2;
-      app.teamSize = app.titleIndex === 7 ? 2 : app.titleIndex === 8 ? 3 : 1;
-      app.mate = false;
-      app.arcade.on = app.titleIndex === 9;
-      app.arcade.stage = 0;
-      sfx.receivePerfect();
-      goControls(menuPad);
+      items[Math.min(app.titleIndex, items.length - 1)].run();
     }
     return;
   }
@@ -1354,7 +1475,7 @@ function menuKey(code: string): void {
   }
 
   if (app.mode === "join") {
-    if (code === "Escape") return goTitle();
+    if (code === "Escape") return backToMenu();
     if ((code === "Enter" || code === "NumpadEnter") && (join.status === "input" || join.status === "error")) {
       const el = document.getElementById("roomInput") as HTMLInputElement | null;
       const typed = cleanCode(el?.value ?? "");
@@ -1395,7 +1516,7 @@ function menuKey(code: string): void {
   }
 
   if (app.mode === "controls") {
-    if (code === "Escape" || code === "Backspace") return goTitle();
+    if (code === "Escape" || code === "Backspace") return backToMenu();
     if (UP.has(code) || DOWN.has(code)) {
       app.ctrlRow = (app.ctrlRow + (DOWN.has(code) ? 1 : ctrlTotal() - 1)) % ctrlTotal();
       sfx.swing();

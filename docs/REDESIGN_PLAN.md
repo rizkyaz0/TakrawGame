@@ -89,6 +89,8 @@ Angka awal (setel lewat liga): batas mengapung 24 frame (0,4 detik), minimal 4 f
 
 ## Tahap B — Alur menu dan room offline
 
+> **Status (14 Nov 2026): B1 selesai, B2 belum.** B1 = menu judul bertahap (MAIN → cara main → 1v1/2v2/3v3, RANKED "segera", KEMBALI di tiap tingkat; `titleItems`, `menuNav` di `src/main.ts`). B2 = layar Room dengan model kursi `Seat` dan pemecahan `main.ts`: belum dikerjakan. Dari menu utama ke pertandingan 1v1 masih 6 klik (target B2: 4).
+
 ### Alur
 
 ```

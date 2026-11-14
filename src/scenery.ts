@@ -235,6 +235,8 @@ export class Scenery {
   private waves: THREE.Mesh[] = [];
   private blinkers: Array<{ m: THREE.MeshBasicMaterial; on: number; off: number; phase: number }> = [];
   private cheerUntil = 0;
+  private buildId = 0; // naik tiap arena dibangun ulang; muatan model yang terlambat diabaikan
+  private target: THREE.Object3D = this.root; // tempat add() menaruh benda
 
   constructor(
     private scene: THREE.Scene,
@@ -249,7 +251,10 @@ export class Scenery {
   set(arena: ArenaId, time: TimeId): void {
     this.arena = arena;
     this.time = time;
+    this.buildId++;
+    this.target = this.root;
     this.root.traverse((o) => {
+      if (o.userData.shared) return; // model yang dipakai bersama tetap disimpan
       if (o instanceof THREE.Mesh || o instanceof THREE.Line || o instanceof THREE.Points) {
         o.geometry.dispose();
         const mats = Array.isArray(o.material) ? o.material : [o.material];
@@ -288,7 +293,7 @@ export class Scenery {
 
   private add<T extends THREE.Object3D>(o: T, x = 0, y = 0, z = 0): T {
     o.position.set(x, y, z);
-    this.root.add(o);
+    this.target.add(o);
     return o;
   }
 
@@ -566,6 +571,12 @@ export class Scenery {
     }
     // Pulau di kejauhan.
     this.hills(look, [[-34, -62, 16, 0x4f9a62], [26, -66, 22, 0x4a905c], [58, -60, 12, 0x5aa66a]]);
+    // Properti pantai buatan kode di bawah ini adalah cadangan: begitu model 3D-nya selesai
+    // dimuat, kelompok ini diganti. Kalau gagal dimuat, cadangan inilah yang tetap tampil.
+    const fallback = new THREE.Group();
+    this.root.add(fallback);
+    this.target = fallback;
+    void this.loadPantai(fallback, this.buildId);
     // Perahu jukung bercadik yang terombang-ambing.
     for (const [x, z, sail] of [[-17, -24, 0xfffaf0], [14, -30, 0xff5a3c]] as const) {
       const boat = new THREE.Group();
@@ -625,8 +636,71 @@ export class Scenery {
       castle.add(c);
     }
     this.add(castle, -11.3, -0.3, 2.6);
+    this.target = this.root;
     const beachBall = addOutline(new THREE.Mesh(new THREE.SphereGeometry(0.45, 14, 10), toon(0xff5a3c)), 0.04);
     this.add(beachBall, 11.4, 0.15, 2.9);
+  }
+
+  // Properti pantai dari model 3D (3DGarden). Daftar: [model, x, z, skala, putaran, mengapung].
+  private async loadPantai(fallback: THREE.Group, id: number): Promise<void> {
+    const G = -0.3;
+    const list: Array<[string, number, number, number, number, boolean?]> = [
+      ["palm-tree-09", -19.5, -9.6, 2.1, 0.4],
+      ["palm-tree-05", -11.2, -8.2, 1.9, 2.1],
+      ["palm-tree-13", 7.4, -8.2, 1.9, 4.0],
+      ["palm-tree-05", 13.2, -8.8, 1.7, 5.2],
+      ["palm-tree-09", 20.5, -10.2, 2.2, 1.3],
+      ["palm-tree-13", -24, -13, 2.0, 0.9],
+      ["cabin-02", -14.5, -12.5, 1.5, 0.35],
+      ["cabin-03", 17.5, -12.8, 1.5, -0.35],
+      ["shop-02", 1.8, -12.6, 1.7, 0],
+      ["life-guard-chair-01", -6.2, -13.6, 1.6, 0.2],
+      ["beach-umbrella-01", -8.6, -9.3, 1.6, 0],
+      ["beach-umbrella-02-2", -2.9, -10.2, 1.6, 1],
+      ["beach-umbrella-03", 4.6, -9.5, 1.6, 2],
+      ["beach-umbrella-01", 10.2, -10.4, 1.6, 3],
+      ["beach-chair-01", -7.5, -9.0, 1.5, 0.3],
+      ["beach-chair-05", -2.0, -9.6, 1.5, -0.2],
+      ["beach-chair-01", 5.6, -9.0, 1.5, -0.4],
+      ["beach-chair-05", 11.2, -9.9, 1.5, 0.2],
+      ["surfboard-05", -17.6, -8.6, 1.5, 0.3],
+      ["surfboard-02", 15.4, -8.4, 1.5, -0.2],
+      ["picnic-table-01", 7.6, -12.8, 1.4, 0.4],
+      ["dock-02", -1.5, -19.5, 1.7, Math.PI / 2],
+      ["buoy-pack-01", 8.5, -19.5, 1.6, 0.5, true],
+      ["rowboat", 3.4, -21.5, 1.8, 0.7, true],
+      ["sailboat", -17, -25, 2.6, 0.5, true],
+      ["raft", -8.5, -28, 1.9, 1.1, true],
+      ["boat-02", 14.5, -31, 2.4, -0.6, true],
+    ];
+    try {
+      const { getModel, stand } = await import("./models");
+      const group = new THREE.Group();
+      const floats: THREE.Object3D[] = [];
+      await Promise.all(
+        list.map(async ([slug, x, z, scale, rot, floating]) => {
+          const m = await getModel(slug);
+          stand(m, x, floating ? -0.42 : G, z, scale, rot);
+          group.add(m);
+          if (floating) floats.push(m);
+        }),
+      );
+      if (id !== this.buildId) return; // arena sudah diganti selagi memuat
+      this.root.remove(fallback);
+      fallback.traverse((o) => {
+        if (o instanceof THREE.Mesh) {
+          o.geometry.dispose();
+          if (o.name !== "outline") (o.material as THREE.Material).dispose();
+        }
+      });
+      this.bobbers = this.bobbers.filter((b) => b.o.parent !== fallback);
+      this.root.add(group);
+      for (const m of floats) {
+        this.bobbers.push({ o: m, baseY: m.position.y, amp: 0.12, speed: 1.2, phase: m.position.x });
+      }
+    } catch {
+      // gagal dimuat (misalnya tanpa internet di kunjungan pertama): cadangan tetap tampil
+    }
   }
 
   private buildPasarMalam(look: Look): void {

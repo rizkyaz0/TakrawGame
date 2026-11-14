@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { Animator, clamp, lerp, type AnimKind } from "./animator";
 import { CHARS, type Player } from "./sim";
 import { addOutline, toon } from "./style";
+import { aiBodyIfReady, loadAiBody, type AiBody } from "./aibody";
 
 // Karakter maskot jajanan: badan besar berbentuk makanan dengan wajah langsung di
 // badannya, plus tangan dan kaki "karet" yang tipis dan bisa melar jauh.
@@ -108,6 +109,10 @@ export class FoodCharacter {
   private wobble: THREE.Object3D[] = []; // hiasan di kepala yang ikut bergoyang
   private wobbleAngle = 0;
   private wobbleVel = 0;
+  private footL: THREE.Group | null = null; // tulang telapak kaki (hanya untuk badan model AI)
+  private footR: THREE.Group | null = null;
+  private aiSkin: THREE.MeshToonMaterial | null = null;
+  private disposed = false;
   // Kaki karet boleh melar jauh, jadi jangkauannya lebih besar dari karakter biasa.
   private animator = new Animator(HIP_Y * MODEL_SCALE, LEG_LEN, 3.2);
 
@@ -258,6 +263,70 @@ export class FoodCharacter {
 
     if (v2) this.buildBackpack(spec, v2.pack, part);
     this.model.scale.setScalar(MODEL_SCALE);
+
+    // Karakter yang punya model AI: dipasang begitu modelnya siap, kode di atas jadi cadangan.
+    const ready = aiBodyIfReady(charId);
+    if (ready) this.applyAi(ready);
+    else
+      void loadAiBody(charId).then((b) => {
+        if (b && !this.disposed) this.applyAi(b);
+      });
+  }
+
+  // Ganti badan buatan kode dengan model AI yang dikuliti ke sendi-sendi yang sama.
+  private applyAi(ai: AiBody): void {
+    if (this.aiSkin) return;
+    this.root.traverse((o) => {
+      if (o instanceof THREE.Mesh) o.visible = false;
+    });
+    const J = ai.joints;
+    this.legL.position.set(0, J.hipY, -J.hipZ);
+    this.legR.position.set(0, J.hipY, J.hipZ);
+    this.kneeL.position.set(0, -J.kneeDy, 0);
+    this.kneeR.position.set(0, -J.kneeDy, 0);
+    this.footL = new THREE.Group();
+    this.footR = new THREE.Group();
+    this.footL.position.y = -J.footDy;
+    this.footR.position.y = -J.footDy;
+    this.kneeL.add(this.footL);
+    this.kneeR.add(this.footR);
+    this.armL.position.set(0, J.shoulderY, -J.shoulderZ);
+    this.armR.position.set(0, J.shoulderY, J.shoulderZ);
+    this.elbowL.position.set(0, J.elbowDy, -J.elbowDz);
+    this.elbowR.position.set(0, J.elbowDy, J.elbowDz);
+
+    const bones = [
+      this.spine,
+      this.legL,
+      this.kneeL,
+      this.footL,
+      this.legR,
+      this.kneeR,
+      this.footR,
+      this.armL,
+      this.elbowL,
+      this.armR,
+      this.elbowR,
+    ];
+    // Rangka dipasang dalam pose diam, apa pun pose saat ini.
+    const saved = bones.map((b) => [b.rotation.clone(), b.scale.clone()] as const);
+    for (const b of bones) {
+      b.rotation.set(0, 0, 0);
+      b.scale.set(1, 1, 1);
+    }
+    const mat = toon(0xffffff, { map: ai.map });
+    this.aiSkin = mat;
+    const mesh = new THREE.SkinnedMesh(ai.geometry, mat);
+    mesh.castShadow = true;
+    mesh.frustumCulled = false;
+    this.body.add(mesh);
+    this.root.updateMatrixWorld(true);
+    mesh.bind(new THREE.Skeleton(bones as unknown as THREE.Bone[]));
+    addOutline(mesh, 0.014);
+    bones.forEach((b, i) => {
+      b.rotation.copy(saved[i][0]);
+      b.scale.copy(saved[i][1]);
+    });
   }
 
   // Sarung tangan putih besar: manset, telapak, tiga jari, dan jempol.
@@ -784,7 +853,9 @@ export class FoodCharacter {
   }
 
   dispose(): void {
+    this.disposed = true;
     this.root.traverse((o) => {
+      if (o instanceof THREE.SkinnedMesh && o.name !== "outline") o.skeleton.dispose();
       if (o instanceof THREE.Mesh) {
         o.geometry.dispose();
         if (o.name !== "outline") (o.material as THREE.Material).dispose();
@@ -913,6 +984,8 @@ export class FoodCharacter {
     this.kneeL.rotation.z = o.kneeL;
     this.kneeR.rotation.z = o.kneeR;
     this.legR.scale.y = a.legStretch;
+    // Sepatu tidak ikut melar (hanya betisnya).
+    if (this.footR) this.footR.scale.y = 1 / Math.max(0.2, a.legStretch);
     this.armL.rotation.z = o.shL;
     this.armR.rotation.z = o.shR;
     this.elbowL.rotation.z = o.elL;
@@ -920,6 +993,10 @@ export class FoodCharacter {
 
     this.skin.emissive.setHex(def.color);
     this.skin.emissiveIntensity = a.glow * 0.55;
+    if (this.aiSkin) {
+      this.aiSkin.emissive.setHex(def.color);
+      this.aiSkin.emissiveIntensity = a.glow * 0.55;
+    }
     if (this.limbSkin) {
       this.limbSkin.emissive.setHex(def.color);
       this.limbSkin.emissiveIntensity = a.glow * 0.55;

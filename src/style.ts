@@ -93,7 +93,17 @@ function outlineMaterial(thickness: number, color: number): THREE.MeshBasicMater
 // Garis tepi dengan teknik "inverted hull": salinan mesh yang digembungkan,
 // hanya sisi belakangnya yang digambar.
 export function addOutline<T extends THREE.Mesh>(mesh: T, thickness = 0.022, color = INK): T {
-  const hull = new THREE.Mesh(mesh.geometry, outlineMaterial(thickness, color));
+  const mat = outlineMaterial(thickness, color);
+  let hull: THREE.Mesh;
+  if (mesh instanceof THREE.SkinnedMesh) {
+    // Mesh berangka: garis tepinya ikut dikuliti dengan rangka yang sama.
+    const sk = new THREE.SkinnedMesh(mesh.geometry, mat);
+    sk.bind(mesh.skeleton, mesh.bindMatrix);
+    sk.frustumCulled = false;
+    hull = sk;
+  } else {
+    hull = new THREE.Mesh(mesh.geometry, mat);
+  }
   hull.name = "outline";
   mesh.add(hull);
   return mesh;

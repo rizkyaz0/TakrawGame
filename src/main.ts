@@ -1,3 +1,4 @@
+import { loadAiBody } from "./aibody";
 import { crowdSfx, getVolume, music, setBusLevel, setVolume, sfx, sillySfx, voice, VOLUME_STEPS } from "./audio";
 import { loadSettings, saveSettings, settings } from "./settings";
 import { ACHIEVEMENTS, checkAchievements, isUnlocked, loadProgress, progress, saveProgress, unlockWins } from "./progress";
@@ -708,6 +709,14 @@ function statBar(key: "moveSpeed" | "jumpV" | "smashSpeed", value: number): numb
 
 // Potret tiap karakter, digambar sekali dari model 3D-nya.
 const portraits: string[] = CHARS.map((_, k) => renderer.portrait(k));
+// Karakter yang punya model AI: potretnya digambar ulang begitu modelnya selesai dimuat.
+CHARS.forEach((_, k) => {
+  void loadAiBody(k).then((b) => {
+    if (!b) return;
+    portraits[k] = renderer.portrait(k);
+    renderSelect();
+  });
+});
 
 function renderSelect(): void {
   const cpu = app.humans === 1;

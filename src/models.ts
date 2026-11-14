@@ -7,7 +7,7 @@ import { addOutline, toon } from "./style";
 // dengan gaya gambar tangan game, bahan aslinya diganti bahan kartun kita (dengan tekstur
 // yang sama) dan diberi garis tepi tinta.
 
-const loader = new GLTFLoader().setDRACOLoader(new DRACOLoader().setDecoderPath(`${import.meta.env.BASE_URL}draco/`));
+export const loader = new GLTFLoader().setDRACOLoader(new DRACOLoader().setDecoderPath(`${import.meta.env.BASE_URL}draco/`));
 const cache = new Map<string, Promise<THREE.Group>>();
 const mats = new Map<string, THREE.Material>();
 

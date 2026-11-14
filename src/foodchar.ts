@@ -314,7 +314,7 @@ export class FoodCharacter {
       b.rotation.set(0, 0, 0);
       b.scale.set(1, 1, 1);
     }
-    const mat = toon(0xffffff, { map: ai.map });
+    const mat = toon(0xffffff, { map: ai.map, side: THREE.DoubleSide });
     this.aiSkin = mat;
     const mesh = new THREE.SkinnedMesh(ai.geometry, mat);
     mesh.castShadow = true;
@@ -322,7 +322,7 @@ export class FoodCharacter {
     this.body.add(mesh);
     this.root.updateMatrixWorld(true);
     mesh.bind(new THREE.Skeleton(bones as unknown as THREE.Bone[]));
-    addOutline(mesh, 0.014);
+    addOutline(mesh, 0.01);
     bones.forEach((b, i) => {
       b.rotation.copy(saved[i][0]);
       b.scale.copy(saved[i][1]);

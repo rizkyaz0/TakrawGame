@@ -37,20 +37,33 @@ export interface AiBody {
   };
 }
 
-const SLUGS: Record<number, string> = { 0: "bang-sosis" };
+// Tiap model punya ukuran sendiri. Semua titik di bawah dalam satuan model ASLI (tinggi ±1,1),
+// kecuali dikatakan lain. Sendi-sendi lain (lutut, pergelangan) sama untuk semua.
+interface Rig {
+  slug: string;
+  z0: number; // tengah badan pada sumbu depan-belakang
+  stubHi: number; // tinggi tempat badan mulai (ujung atas tonjolan kaki asli)
+  shoulder: { x: number; y: number };
+  hand: { x: number; y: number };
+  armX: [number, number]; // titik di dalam badan (|x| kecil) tidak ikut lengan
+  hipY?: number; // tinggi pinggul setelah betis dipanjangkan (bawaan HIP_Y)
+  legFade: [number, number]; // pengaruh kaki memudar di rentang ini, diukur dari pinggul
+}
 
-// Skala model ke satuan game, dan titik-titik sendi pada model (satuan model, tinggi 1,08).
+const RIGS: Record<number, Rig> = {
+  0: { slug: "bang-sosis", z0: 0.01, stubHi: 0.21, shoulder: { x: 0.15, y: 0.62 }, hand: { x: 0.4, y: 0.24 }, armX: [0.12, 0.16], legFade: [-0.01, 0.09] },
+  4: { slug: "kak-pisang", z0: -0.01, stubHi: 0.25, shoulder: { x: 0.17, y: 0.62 }, hand: { x: 0.41, y: 0.3 }, armX: [0.12, 0.16], legFade: [-0.01, 0.07] },
+  5: { slug: "dek-lilin", z0: 0, stubHi: 0.19, shoulder: { x: 0.19, y: 0.56 }, hand: { x: 0.39, y: 0.22 }, armX: [0.15, 0.19], legFade: [-0.06, 0] },
+  6: { slug: "bung-jagung", z0: -0.01, stubHi: 0.18, hipY: 0.24, shoulder: { x: 0.19, y: 0.6 }, hand: { x: 0.37, y: 0.29 }, armX: [0.15, 0.19], legFade: [-0.06, 0] },
+};
+
+// Skala model ke satuan game, dan titik-titik sendi yang sama untuk semua model.
 const K = 1.6;
 const GROUND = -0.085; // dasar sepatu, sama dengan sepatu buatan kode
-const Z0 = 0.01; // tengah badan pada sumbu depan-belakang
 const STUB_LO = 0.12; // pergelangan: dari sini ke atas betis dipanjangkan
-const STUB_HI = 0.21;
-const STUB_ADD = 0.1;
-const HIP_Y = 0.31; // setelah betis dipanjangkan
-const KNEE_Y = 0.215;
+const HIP_Y = 0.31; // tinggi pinggul setelah betis dipanjangkan
 const ANKLE_Y = 0.12;
-const SHOULDER = { x: 0.15, y: 0.72 };
-const HAND = { x: 0.4, y: 0.34 };
+const LEG_X = 0.065; // jarak tengah kaki dari sumbu
 const SPINE_PIVOT = 0.42; // sama dengan HIP_Y di foodchar.ts
 
 const ss = (a: number, b: number, x: number): number => {
@@ -59,13 +72,19 @@ const ss = (a: number, b: number, x: number): number => {
 };
 
 // Kaki asli model cuma tonjolan pendek di atas sepatu: panjangkan supaya bisa menekuk.
-function remapY(y: number): number {
+function remapY(y: number, stubHi: number, hip: number): number {
+  const add = hip - stubHi;
   if (y <= STUB_LO) return y;
-  if (y >= STUB_HI) return y + STUB_ADD;
-  return STUB_LO + (y - STUB_LO) * (1 + STUB_ADD / (STUB_HI - STUB_LO));
+  if (y >= stubHi) return y + add;
+  return STUB_LO + (y - STUB_LO) * (1 + add / (stubHi - STUB_LO));
 }
 
-function build(scene: THREE.Object3D): AiBody | null {
+function build(scene: THREE.Object3D, rig: Rig): AiBody | null {
+  const hip = rig.hipY ?? HIP_Y;
+  const knee = (hip + ANKLE_Y) / 2;
+  const add = hip - rig.stubHi;
+  const SHOULDER = { x: rig.shoulder.x, y: rig.shoulder.y + add };
+  const HAND = { x: rig.hand.x, y: rig.hand.y + add };
   let mesh: THREE.Mesh | null = null;
   scene.traverse((o) => {
     if (!mesh && o instanceof THREE.Mesh) mesh = o;
@@ -93,16 +112,16 @@ function build(scene: THREE.Object3D): AiBody | null {
     nv.fromBufferAttribute(nor, i).applyMatrix3(nm).normalize();
     const x = v.x;
     const ax = Math.abs(x);
-    const z = v.z - Z0;
-    const y = remapY(v.y);
+    const z = v.z - rig.z0;
+    const y = remapY(v.y, rig.stubHi, hip);
     const left = x > 0; // sisi kiri game ada di z negatif = x model positif
 
     // Tangan: jarak ke garis bahu-ujung tangan.
     const t = Math.min(1, Math.max(0, ((ax - SHOULDER.x) * dx + (y - SHOULDER.y) * dy) / len2));
     const dist = Math.hypot(ax - (SHOULDER.x + dx * t), y - (SHOULDER.y + dy * t), z * 0.5);
-    const mArm = (1 - ss(0.08, 0.12, dist)) * ss(0.12, 0.16, ax) * (y < 0.9 ? 1 : 0);
+    const mArm = (1 - ss(0.08, 0.12, dist)) * ss(rig.armX[0], rig.armX[1], ax) * (y < SHOULDER.y + 0.2 ? 1 : 0);
     // Kaki: bagian bawah, dekat sumbu, dan bukan tangan.
-    const mLeg = (1 - ss(0.3, 0.4, y)) * (1 - ss(0.17, 0.21, ax)) * (1 - mArm);
+    const mLeg = (1 - ss(hip + rig.legFade[0], hip + rig.legFade[1], y)) * (1 - ss(0.17, 0.21, ax)) * (1 - ss(0.09, 0.13, Math.abs(ax - LEG_X))) * (1 - mArm) * (y <= 0.14 ? 1 : 1 - ss(0.1, 0.14, Math.abs(z)));
 
     w.fill(0);
     const armTorso = 1 - ss(0, 0.2, t);
@@ -112,14 +131,14 @@ function build(scene: THREE.Object3D): AiBody | null {
     w[left ? BONE.elbowL : BONE.elbowR] = armShare * el;
     const sideL = ss(-0.03, 0.03, x);
     const foot = 1 - ss(ANKLE_Y, ANKLE_Y + 0.04, y);
-    const hip = ss(KNEE_Y - 0.045, KNEE_Y + 0.045, y);
-    const kneeW = (1 - foot) * (1 - hip);
+    const hipW = ss(knee - 0.045, knee + 0.045, y);
+    const kneeW = (1 - foot) * (1 - hipW);
     w[BONE.footL] += mLeg * sideL * foot;
     w[BONE.kneeL] += mLeg * sideL * kneeW;
-    w[BONE.legL] += mLeg * sideL * (1 - foot) * hip;
+    w[BONE.legL] += mLeg * sideL * (1 - foot) * hipW;
     w[BONE.footR] += mLeg * (1 - sideL) * foot;
     w[BONE.kneeR] += mLeg * (1 - sideL) * kneeW;
-    w[BONE.legR] += mLeg * (1 - sideL) * (1 - foot) * hip;
+    w[BONE.legR] += mLeg * (1 - sideL) * (1 - foot) * hipW;
     let used = 0;
     for (let b = 1; b < BONES; b++) used += w[b];
     w[BONE.spine] = Math.max(0, 1 - used);
@@ -154,7 +173,7 @@ function build(scene: THREE.Object3D): AiBody | null {
   g.setIndex(src.geometry.index);
   g.computeBoundingSphere();
 
-  const hipY = HIP_Y * K + GROUND;
+  const hipY = hip * K + GROUND;
   const shY = SHOULDER.y * K + GROUND;
   const elMidX = (SHOULDER.x + HAND.x) / 2;
   const elMidY = (SHOULDER.y + HAND.y) / 2;
@@ -164,9 +183,9 @@ function build(scene: THREE.Object3D): AiBody | null {
     map: (mat as THREE.MeshStandardMaterial).map ?? null,
     joints: {
       hipY,
-      hipZ: 0.065 * K,
-      kneeDy: (HIP_Y - KNEE_Y) * K,
-      footDy: (KNEE_Y - ANKLE_Y) * K,
+      hipZ: LEG_X * K,
+      kneeDy: (hip - knee) * K,
+      footDy: (knee - ANKLE_Y) * K,
       shoulderY: shY - SPINE_PIVOT,
       shoulderZ: SHOULDER.x * K,
       elbowDy: (elMidY - SHOULDER.y) * K,
@@ -184,14 +203,14 @@ export function aiBodyIfReady(charId: number): AiBody | undefined {
 
 // Memuat dan mengolah badan sekali; null kalau karakter ini tidak punya model AI atau gagal dimuat.
 export function loadAiBody(charId: number): Promise<AiBody | null> {
-  const slug = SLUGS[charId];
-  if (!slug) return Promise.resolve(null);
+  const rig = RIGS[charId];
+  if (!rig) return Promise.resolve(null);
   let p = pending.get(charId);
   if (!p) {
     p = loader
-      .loadAsync(`${import.meta.env.BASE_URL}models/chars/${slug}.glb`)
+      .loadAsync(`${import.meta.env.BASE_URL}models/chars/${rig.slug}.glb`)
       .then((gltf) => {
-        const body = build(gltf.scene);
+        const body = build(gltf.scene, rig);
         if (body) ready.set(charId, body);
         return body;
       })

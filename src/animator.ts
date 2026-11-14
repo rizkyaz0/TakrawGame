@@ -203,6 +203,22 @@ export class Animator {
       t.shR -= b * 0.1;
     }
 
+    // Membidik smash: kaki penyabet ditarik ke belakang (ancang-ancang), badan melayang diam.
+    // Dilepas dari ancang-ancang ini, jadi ayunannya menyambung mulus dengan animasi smash.
+    if (p.aimTimer > 0) {
+      this.anim = null;
+      t.hipR = -0.9;
+      t.kneeR = -1.7;
+      t.hipL = 0.25;
+      t.kneeL = -0.5;
+      t.shL = 1.2;
+      t.shR = -1.0;
+      t.elL = t.elR = 0.4;
+      t.lean = 0.14;
+      t.twist = 0;
+      t.bob = 0;
+    }
+
     // Melar/gepeng: gepeng saat mendarat, melar saat lepas landas dan melaju vertikal.
     let squashKick = 0;
     if (p.grounded && !this.wasGrounded) squashKick = -0.16;
@@ -382,6 +398,12 @@ export class Animator {
           glow = w;
         }
       }
+    }
+
+    if (p.aimTimer > 0) {
+      lift = 0.1 + Math.sin(frame * 0.4) * 0.02;
+      face = 1;
+      glow = 0.45 + Math.sin(frame * 0.6) * 0.2;
     }
 
     // Mengumpulkan tenaga saat layar membeku sebelum ulti: jongkok, tangan mengepal, bergetar.

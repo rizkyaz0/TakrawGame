@@ -250,6 +250,10 @@ const DASH_COOLDOWN = 30;
 const SMASH_ACTIVE = 10;
 const SMASH_RECOVER = 14;
 const HIT_COOLDOWN = 12;
+// Smash tahan-bidik: begitu smash kena dan tombolnya masih ditahan, karakter dan bola mengapung
+// sebentar sementara pemain memilih arah. Dilepas saat tombol dilepas (paling cepat AIM_MIN) atau otomatis.
+export const AIM_MAX = 24;
+export const AIM_MIN = 4;
 const PLAYER_MIN_X = 0.5;
 const PLAYER_MAX_X = COURT_HALF - 0.4;
 
@@ -266,6 +270,11 @@ export interface Player {
   airDashUsed: boolean;
   smashTimer: number;
   smashRecover: number;
+  aimTimer: number; // sisa frame mengapung membidik smash (0 = tidak membidik)
+  aimPerfect: boolean; // hasil timing saat smash kena
+  aimElapsed: number; // frame sejak tombol smash ditekan sampai kena
+  aimX: number; // arah bidik yang sedang ditahan, -1..1
+  aimY: number;
   specialTimer: number;
   guardTimer: number;
   stun: number; // sisa frame terhuyung setelah kewalahan: tidak bisa bergerak atau menyerang
@@ -314,6 +323,7 @@ export type GameEvent =
   | { type: "dash"; player: number; dir: number }
   | { type: "land"; player: number }
   | { type: "whiff"; player: number }
+  | { type: "aimStart"; player: number; x: number; y: number }
   | { type: "special"; player: number }
   | { type: "specialHit"; player: number; kind: SpecialKind; x: number; y: number }
   | { type: "curveDrop" }
@@ -397,6 +407,11 @@ function makePlayer(i: number, teamSize: number): Player {
     airDashUsed: false,
     smashTimer: 0,
     smashRecover: 0,
+    aimTimer: 0,
+    aimPerfect: false,
+    aimElapsed: 0,
+    aimX: 0,
+    aimY: 0,
     specialTimer: 0,
     guardTimer: 0,
     stun: 0,
@@ -499,6 +514,28 @@ function stepPlayer(s: GameState, i: number, rawInput: number): void {
   const side = sideOf(i) === 0 ? -1 : 1;
   const ax = (input & Btn.RIGHT ? 1 : 0) - (input & Btn.LEFT ? 1 : 0);
 
+  // Membidik smash: karakter mengapung diam, arah diambil dari input, bola dilepas saat tombol dilepas.
+  if (p.aimTimer > 0) {
+    if (p.stun > 0) {
+      // Terhuyung saat membidik: batal, bola jatuh biasa.
+      p.aimTimer = 0;
+      p.smashRecover = SMASH_RECOVER;
+    } else {
+      p.aimX = ax;
+      p.aimY = (input & Btn.UP ? 1 : 0) - (input & Btn.DOWN ? 1 : 0);
+      p.vx = 0;
+      p.vy = 0;
+      p.dashTimer = 0;
+      p.aimTimer--;
+      const spent = AIM_MAX - p.aimTimer;
+      if (p.aimTimer === 0 || ((input & Btn.SMASH) === 0 && spent >= AIM_MIN)) {
+        p.aimTimer = 0;
+        launchSmash(s, i, input, p.aimPerfect, p.aimElapsed);
+      }
+      return;
+    }
+  }
+
   if (p.dashCd > 0) p.dashCd--;
   if (p.hitCd > 0) p.hitCd--;
 
@@ -592,6 +629,41 @@ function stepPlayer(s: GameState, i: number, rawInput: number): void {
     p.x = PLAYER_MAX_X * side;
     p.vx = 0;
   }
+}
+
+// Arah lepasan smash (vektor satuan) dari arah yang ditahan; tanpa arah, bola menukik ke depan.
+// Dipakai juga oleh tampilan untuk menggambar panah bidik.
+export function smashDir(grounded: boolean, ax: number, ay: number, dir: number): [number, number] {
+  let nx = ax;
+  let ny = ay;
+  if (nx === 0 && ny === 0) {
+    nx = dir;
+    ny = grounded ? 0.6 : -0.35;
+  } else if (nx !== 0 && ny === 0) {
+    ny = grounded ? 0.25 : -0.12;
+  }
+  const len = Math.hypot(nx, ny);
+  return [nx / len, ny / len];
+}
+
+// Melepas smash: arah dari input saat ini, kecepatan dari karakter, panas, dan penggandaan timing sempurna.
+function launchSmash(s: GameState, i: number, input: number, perfect: boolean, elapsed: number): void {
+  const p = s.players[i];
+  const b = s.ball;
+  const c = CHARS[s.chars[i]];
+  const dir = sideOf(i) === 0 ? 1 : -1;
+  const ax = (input & Btn.RIGHT ? 1 : 0) - (input & Btn.LEFT ? 1 : 0);
+  const ay = (input & Btn.UP ? 1 : 0) - (input & Btn.DOWN ? 1 : 0);
+  const [ux, uy] = smashDir(p.grounded, ax, ay, dir);
+  const speed = c.smashSpeed * heatMul(s) * (perfect ? PERFECT_BOOST : 1);
+  b.vx = ux * speed + p.vx * 0.3;
+  b.vy = uy * speed;
+  p.smashTimer = 0;
+  p.smashRecover = SMASH_RECOVER;
+  addMeter(s, i, perfect ? METER_PERFECT : METER_SMASH);
+  s.heat += (perfect ? 2 : 1) * heatGain(s);
+  s.hitstop = 5 + Math.floor(Math.min(s.heat, HEAT_MAX) / 6) + (perfect ? 3 : 0);
+  s.events.push({ type: "smash", player: i, x: b.x, y: b.y, perfect, elapsed });
 }
 
 function tryHit(s: GameState, i: number, input: number): void {
@@ -728,26 +800,25 @@ function tryHit(s: GameState, i: number, input: number): void {
     s.heat += 2 * heatGain(s);
     s.events.push({ type: "specialHit", player: i, kind: c.special, x: b.x, y: b.y });
   } else if (smashing && (!hadFx || smashPerfect)) {
-    let nx = ax;
-    let ny = ay;
-    if (nx === 0 && ny === 0) {
-      nx = dir;
-      ny = p.grounded ? 0.6 : -0.35;
-    } else if (nx !== 0 && ny === 0) {
-      ny = p.grounded ? 0.25 : -0.12;
-    }
-    const len = Math.hypot(nx, ny);
-    const elapsed = SMASH_ACTIVE - p.smashTimer;
-    const perfect = elapsed >= PERFECT_FROM && elapsed <= PERFECT_TO;
-    const speed = c.smashSpeed * heatMul(s) * (perfect ? PERFECT_BOOST : 1);
-    b.vx = (nx / len) * speed + p.vx * 0.3;
-    b.vy = (ny / len) * speed;
+    const perfect = smashPerfect;
     p.smashTimer = 0;
-    p.smashRecover = SMASH_RECOVER;
-    addMeter(s, i, perfect ? METER_PERFECT : METER_SMASH);
-    s.heat += (perfect ? 2 : 1) * heatGain(s);
-    s.hitstop = 5 + Math.floor(Math.min(s.heat, HEAT_MAX) / 6) + (perfect ? 3 : 0);
-    s.events.push({ type: "smash", player: i, x: b.x, y: b.y, perfect, elapsed });
+    if ((input & Btn.SMASH) !== 0) {
+      // Tombol masih ditahan: karakter dan bola mengapung, pemain memilih arah.
+      p.aimTimer = AIM_MAX;
+      p.aimPerfect = perfect;
+      p.aimElapsed = smashElapsed;
+      p.aimX = ax;
+      p.aimY = ay;
+      p.vx = 0;
+      p.vy = 0;
+      p.dashTimer = 0;
+      b.vx = 0;
+      b.vy = 0;
+      s.events.push({ type: "aimStart", player: i, x: b.x, y: b.y });
+    } else {
+      // Tekan-lepas cepat: langsung melesat.
+      launchSmash(s, i, input, perfect, smashElapsed);
+    }
   } else {
     const d = Math.hypot(dx, dy);
     const ux = d > 1e-6 ? dx / d : 0;
@@ -799,6 +870,8 @@ function tryHit(s: GameState, i: number, input: number): void {
 
 function stepBall(s: GameState, inputs: readonly number[]): void {
   const b = s.ball;
+  // Ada yang sedang membidik smash: bola diam di tempatnya dan tidak bisa disentuh siapa pun.
+  for (const q of s.players) if (q.aimTimer > 0) return;
   const h = DT / BALL_SUBSTEPS;
   let powered = b.power > 0;
   if (powered) b.power--;
@@ -1082,6 +1155,18 @@ const CPU_LEVELS = [
   { jump: 85, smash: 94, perfect: 42, special: 78, sharp: 55, guard: 60, lazy: 0, miss: 5, readCurve: 40 },
 ] as const;
 
+// Apakah smash dari posisi bola sekarang dengan kemiringan ny (menukik < 0) melewati net.
+function cpuClearsNet(s: GameState, i: number, ny: number): boolean {
+  const b = s.ball;
+  const smashV = CHARS[s.chars[i]].smashSpeed * heatMul(s);
+  const len = Math.hypot(1, ny);
+  const vx = smashV / len;
+  const vy = (ny / len) * smashV;
+  const t = Math.abs(b.x) / vx;
+  const yAtNet = b.y + vy * t - 0.5 * BALL_GRAVITY * t * t;
+  return yAtNet > NET_H + NET_R + BALL_R + 0.25;
+}
+
 export function cpuInput(s: GameState, i: number, level = 1): number {
   const L = CPU_LEVELS[Math.min(2, Math.max(0, level))];
   const p = s.players[i];
@@ -1094,6 +1179,16 @@ export function cpuInput(s: GameState, i: number, level = 1): number {
   let out = 0;
 
   if (s.phase === "over") return 0;
+
+  // Sedang membidik smash: menahan tombol 3-10 frame (dari hash, bukan acak), lalu melepas
+  // ke arah yang melewati net.
+  if (p.aimTimer > 0) {
+    const hold = 3 + ((Math.imul(s.rally * 9 + i * 5 + s.score[0] * 3 + s.score[1], 40503) >>> 0) % 8);
+    let o = toward;
+    if (cpuClearsNet(s, i, -1)) o |= Btn.DOWN;
+    if (AIM_MAX - p.aimTimer < hold) o |= Btn.SMASH;
+    return o;
+  }
 
   const ballOnMySide = b.x * side > -0.3;
   const incoming = b.vx * side > 0.5;
@@ -1195,15 +1290,7 @@ export function cpuInput(s: GameState, i: number, level = 1): number {
     ) {
       // Pilih arah yang benar-benar melewati net: menukik kalau bisa, datar kalau tidak.
       // Kalau dua-duanya bakal nyangkut, CPU tidak memaksa smash.
-      const smashV = CHARS[s.chars[i]].smashSpeed * heatMul(s);
-      const clearsNet = (ny: number): boolean => {
-        const len = Math.hypot(1, ny);
-        const vx = smashV / len;
-        const vy = (ny / len) * smashV;
-        const t = Math.abs(b.x) / vx;
-        const yAtNet = b.y + vy * t - 0.5 * BALL_GRAVITY * t * t;
-        return yAtNet > NET_H + NET_R + BALL_R + 0.25;
-      };
+      const clearsNet = (ny: number): boolean => cpuClearsNet(s, i, ny);
       const down = clearsNet(-1);
       const flat = clearsNet(-0.12);
       if (down || flat) {
@@ -1212,6 +1299,8 @@ export function cpuInput(s: GameState, i: number, level = 1): number {
         if (down) out |= Btn.DOWN;
       }
     }
+    // Menahan tombol smash sampai kena, supaya masuk ke bidikan (dilepas lagi di blok bidik di atas).
+    if (p.smashTimer > 0 && p.specialTimer === 0) out = ((out | Btn.SMASH) & ~away) | toward;
     // Jurus kalau meter cukup. Karena jurus sekarang siaga sampai bola kena, hampir semua
     // jenis aman dipakai dari mana saja setelah sentuhan sendiri.
     const ownBall = dx < 1.4 && Math.abs(dy) < 1.4 && s.touches >= 1 && s.lastSide === team;

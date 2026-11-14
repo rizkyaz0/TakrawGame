@@ -136,3 +136,112 @@ test("tiap karakter punya nama dan jurus yang unik namanya", () => {
   assert.equal(new Set(CHARS.map((c) => c.name)).size, CHARS.length);
   assert.equal(new Set(CHARS.map((c) => c.specialName)).size, CHARS.length);
 });
+
+// ---- Smash tahan-bidik ----
+
+// Pemain 0 di udara dengan bola tepat di jangkauan smash.
+function aimSetup() {
+  const s = createState([0, 1]);
+  s.phase = "play";
+  const p = s.players[0];
+  p.x = -2;
+  p.y = 3;
+  p.grounded = false;
+  s.ball.x = p.x + 0.6;
+  s.ball.y = p.y + 0.9;
+  s.ball.vx = 0;
+  s.ball.vy = 0;
+  return s;
+}
+
+test("smash: tekan-lepas cepat melesat langsung, tanpa mengapung", () => {
+  const s = createState([0, 1]);
+  s.phase = "play";
+  const p = s.players[0];
+  p.x = -2;
+  p.y = 3;
+  p.grounded = false;
+  s.ball.x = 3;
+  s.ball.y = 9;
+  s.ball.vx = 0;
+  s.ball.vy = 0;
+  step(s, [Btn.SMASH, 0]); // tombol ditekan, bola jauh
+  s.ball.vy = 0;
+  s.ball.x = p.x + 0.6;
+  s.ball.y = p.y + 0.9;
+  step(s, [0, 0]); // sudah dilepas saat bola kena
+  assert.equal(p.aimTimer, 0);
+  assert.ok(s.events.some((e) => e.type === "smash"));
+  assert.ok(s.ball.vx > 5, "bola melesat ke arah lawan");
+});
+
+test("smash: menahan tombol memaku karakter dan bola", () => {
+  const s = aimSetup();
+  const p = s.players[0];
+  step(s, [Btn.SMASH, 0]);
+  assert.ok(p.aimTimer > 0, "mulai membidik");
+  assert.ok(s.events.some((e) => e.type === "aimStart"));
+  const x0 = p.x;
+  const y0 = p.y;
+  const bx = s.ball.x;
+  const by = s.ball.y;
+  for (let f = 0; f < 6; f++) step(s, [Btn.SMASH | Btn.RIGHT, 0]);
+  assert.equal(p.x, x0);
+  assert.equal(p.y, y0);
+  assert.equal(s.ball.x, bx);
+  assert.equal(s.ball.y, by);
+  assert.ok(p.aimTimer > 0);
+  assert.equal(p.aimX, 1);
+});
+
+test("smash: melepas tombol menembak ke arah yang ditahan", () => {
+  const s = aimSetup();
+  const p = s.players[0];
+  step(s, [Btn.SMASH, 0]);
+  for (let f = 0; f < 5; f++) step(s, [Btn.SMASH | Btn.RIGHT | Btn.DOWN, 0]);
+  step(s, [Btn.RIGHT | Btn.DOWN, 0]); // lepas
+  assert.equal(p.aimTimer, 0);
+  assert.ok(s.events.some((e) => e.type === "smash"));
+  assert.ok(s.ball.vx > 3 && s.ball.vy < -3, "menukik ke arah lawan");
+});
+
+test("smash: lepas lebih cepat dari batas minimum tetap menunggu", () => {
+  const s = aimSetup();
+  const p = s.players[0];
+  step(s, [Btn.SMASH, 0]);
+  step(s, [0, 0]); // dilepas sesudah satu frame
+  assert.ok(p.aimTimer > 0, "belum dilepas: masih di bawah batas minimum");
+  for (let f = 0; f < 6 && p.aimTimer > 0; f++) step(s, [0, 0]);
+  assert.equal(p.aimTimer, 0);
+});
+
+test("smash: batas waktu melepas otomatis", () => {
+  const s = aimSetup();
+  const p = s.players[0];
+  step(s, [Btn.SMASH, 0]);
+  let frames = 0;
+  while (p.aimTimer > 0 && frames < 60) {
+    step(s, [Btn.SMASH, 0]);
+    frames++;
+  }
+  assert.ok(frames <= 24 && p.aimTimer === 0, "dilepas otomatis");
+  assert.ok(s.ball.vx !== 0 || s.ball.vy !== 0);
+});
+
+test("smash: terhuyung saat membidik membatalkannya", () => {
+  const s = aimSetup();
+  const p = s.players[0];
+  step(s, [Btn.SMASH, 0]);
+  p.stun = 10;
+  step(s, [Btn.SMASH, 0]);
+  assert.equal(p.aimTimer, 0);
+  assert.ok(!s.events.some((e) => e.type === "smash"));
+});
+
+test("CPU yang menahan smash tetap menyelesaikan pertandingan dengan deterministik", () => {
+  const a = runCpu([1, 3], 60 * 60 * 4, 2);
+  const b = runCpu([1, 3], 60 * 60 * 4, 2);
+  a.events = [];
+  b.events = [];
+  assert.deepEqual(a, b);
+});

@@ -46,6 +46,8 @@ Tiap tahap berakhir dengan game yang masih bisa dimainkan, `npm run build` lolos
 
 ## Tahap A — Smash tahan-bidik
 
+> **Status (14 Nov 2026): selesai di kode, belum dicoba di HP/online sungguhan.** Sim: `aimTimer`, `launchSmash`, `smashDir` di `src/sim.ts`; CPU menahan 3-10 frame; panah bidik di `render.ts`; pose menahan di `animator.ts`; 7 tes baru. Liga 20 pertandingan: Normal selisih 17,3 poin, Sulit 20,2 (sebelumnya 16,4), kehabisan waktu tetap 14-15. Belum disetel.
+
 ### Perilaku
 
 Sekarang smash langsung melesat begitu kena. Yang diminta: saat smash **mengenai bola**,

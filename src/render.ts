@@ -4,6 +4,7 @@ import { FoodCharacter } from "./foodchar";
 import { Fx } from "./fx";
 import { Scenery, type ArenaId, type TimeId } from "./scenery";
 import {
+  AIM_MAX,
   BALL_R,
   BODY_Y,
   CHARS,
@@ -13,6 +14,7 @@ import {
   SMASH_R,
   SPECIAL_R,
   sideOf,
+  smashDir,
   type GameEvent,
   type GameState,
 } from "./sim";
@@ -29,6 +31,7 @@ interface PlayerView {
   ring: THREE.Mesh;
   disc: THREE.Mesh; // alas warna tim di lantai (mode tim)
   tag: THREE.Mesh; // panah di atas kepala pemain yang dimainkan orang (mode tim)
+  aim: THREE.Mesh; // panah bidik smash tahan-bidik
 }
 
 // Di mode tim, anggota tim berdiri sedikit berbeda kedalamannya supaya tidak saling menutupi.
@@ -234,11 +237,45 @@ export class Renderer {
       tag.rotation.x = Math.PI;
       tag.visible = false;
       this.scene.add(tag);
-      this.players.push({ cue, char: null, ring, disc, tag });
+      // Panah bidik: dari pusat bola ke arah lepasan smash, menghadap kamera.
+      const arrowShape = new THREE.Shape();
+      arrowShape.moveTo(0.5, -0.09);
+      arrowShape.lineTo(1.45, -0.09);
+      arrowShape.lineTo(1.45, -0.26);
+      arrowShape.lineTo(1.95, 0);
+      arrowShape.lineTo(1.45, 0.26);
+      arrowShape.lineTo(1.45, 0.09);
+      arrowShape.lineTo(0.5, 0.09);
+      arrowShape.closePath();
+      const aim = new THREE.Mesh(
+        new THREE.ShapeGeometry(arrowShape),
+        new THREE.MeshBasicMaterial({ color: 0xffd23f, transparent: true, opacity: 0.92, depthTest: false, side: THREE.DoubleSide }),
+      );
+      aim.renderOrder = 20;
+      // Garis tepi gelap di belakang panah supaya terbaca di latar apa pun.
+      const edge = new THREE.Shape();
+      edge.moveTo(0.4, -0.15);
+      edge.lineTo(1.35, -0.15);
+      edge.lineTo(1.35, -0.36);
+      edge.lineTo(2.1, 0);
+      edge.lineTo(1.35, 0.36);
+      edge.lineTo(1.35, 0.15);
+      edge.lineTo(0.4, 0.15);
+      edge.closePath();
+      const back = new THREE.Mesh(
+        new THREE.ShapeGeometry(edge),
+        new THREE.MeshBasicMaterial({ color: 0x17131c, depthTest: false, side: THREE.DoubleSide }),
+      );
+      back.renderOrder = 19;
+      back.position.z = -0.01;
+      aim.add(back);
+      aim.visible = false;
+      this.scene.add(aim);
+      this.players.push({ cue, char: null, ring, disc, tag, aim });
     }
     while (this.players.length > count) {
       const v = this.players.pop()!;
-      for (const o of [v.cue, v.ring, v.disc, v.tag]) {
+      for (const o of [v.cue, v.ring, v.disc, v.tag, v.aim]) {
         this.scene.remove(o);
         o.geometry.dispose();
         (o.material as THREE.Material).dispose();
@@ -500,6 +537,19 @@ export class Renderer {
       v.cue.position.set(p.x, p.y + BODY_Y, z + 0.05);
       (v.cue.material as THREE.MeshBasicMaterial).color.setHex(cueKind === "guard" ? 0x7fd4ff : 0xffd23f);
       v.cue.scale.setScalar(1 + Math.sin(now * 40) * 0.04);
+
+      // Panah bidik: terlihat oleh semua pemain selama smash ditahan.
+      const aiming = p.aimTimer > 0;
+      v.aim.visible = aiming;
+      if (aiming) {
+        const [ux, uy] = smashDir(p.grounded, p.aimX, p.aimY, sideOf(i) === 0 ? 1 : -1);
+        v.aim.position.set(s.ball.x, s.ball.y, z + 0.3);
+        v.aim.rotation.z = Math.atan2(uy, ux);
+        v.aim.scale.setScalar(0.85 + Math.sin(now * 18) * 0.06 + (AIM_MAX - p.aimTimer) * 0.004);
+        (v.aim.material as THREE.MeshBasicMaterial).color.setHex(
+          p.aimPerfect ? 0xfff3a0 : c.color,
+        );
+      }
 
       const guarding = p.guardTimer > 0;
       v.ring.visible = special || guarding || p.smashTimer > 0;

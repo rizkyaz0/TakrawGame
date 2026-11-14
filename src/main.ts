@@ -236,7 +236,7 @@ function updateCue(): void {
   renderer.cues[0] = null;
   if (!app.training || !train.cue || state.phase !== "play" || state.lastSide === 0) return;
   const p = state.players[0];
-  if (p.smashTimer > 0 || p.guardTimer > 0 || p.specialTimer > 0 || p.smashRecover > 0) return;
+  if (p.smashTimer > 0 || p.aimTimer > 0 || p.guardTimer > 0 || p.specialTimer > 0 || p.smashRecover > 0) return;
   const toSmash = framesToReach(SMASH_R);
   const toGuard = framesToReach(GUARD_R);
   const fast = Math.hypot(state.ball.vx, state.ball.vy) > 14.5 || state.ball.power > 0 || state.ball.wave > 0;
@@ -1046,7 +1046,8 @@ const TUT_STEPS: Array<{ title: string; need: number; drill: number; text: () =>
     title: "SMASH",
     need: 3,
     drill: 0,
-    text: () => `Dekati bola, lalu tekan <b>${keyName("smash")}</b> saat bola sudah dekat badan. Lompat dulu supaya lebih tajam.`,
+    text: () =>
+      `Dekati bola, lalu tekan <b>${keyName("smash")}</b> saat bola sudah dekat badan. Kalau terus kamu <b>tahan</b>, kamu melayang sebentar: arahkan bola pakai <b>${keyName("move")}</b>, lalu lepas untuk menembak. Lompat dulu supaya lebih tajam.`,
   },
   {
     title: "SMASH SEMPURNA",
@@ -1800,6 +1801,10 @@ function handleEvent(e: GameEvent): void {
       break;
     case "whiff":
       sfx.swing();
+      break;
+    case "aimStart":
+      sfx.hold();
+      buzz(e.player, 12);
       break;
     case "special":
       sfx.special();

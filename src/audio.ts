@@ -539,6 +539,11 @@ export const sfx = {
     tone("triangle", 1976, 1976, 0.16, 0.2, 0.07);
   },
   receive: () => tone("sine", 240, 420, 0.12, 0.2),
+  // Smash kena dan ditahan: nada naik pelan, tanda sedang membidik.
+  hold: () => {
+    tone("triangle", 330, 760, 0.3, 0.16);
+    tone("sine", 165, 380, 0.3, 0.12);
+  },
   receivePerfect: () => {
     tone("sine", 300, 600, 0.1, 0.2);
     tone("triangle", 1568, 1568, 0.14, 0.18, 0.05);

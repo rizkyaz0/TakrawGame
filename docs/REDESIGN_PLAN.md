@@ -187,6 +187,59 @@ begitu selesai dimuat.
 - Model dimuat hanya saat arenanya dipakai. Saat Grafis = Hemat, pakai cadangan buatan kode.
 - Lisensinya: bebas dipakai dan diubah, termasuk komersial; file modelnya tidak boleh dijual lagi.
 
+### Desain karakter baru (lembar acuan dari pemilik, 14 November 2026)
+
+Pemilik membuat lembar karakter (depan, perspektif, samping, belakang, pose-A) untuk 8
+karakter: Bang Sosis, Pak Ote-Ote, Bung Jagung, Dek Lilin, Kak Pisang, Mas Tahu, Pak Bakso,
+Mbak Lontong. Berkas: `docs/design/characters/<nama>-lembar.jpg`, dan potongan tiap tampak
+`<nama>-depan|perspektif|samping|belakang.jpg`. Ini **desain target** yang menggantikan
+tampilan karakter sekarang. Ciri yang seragam:
+
+- Badan jajanan halus dan mengilap (gaya 3D kartun, bukan arsiran).
+- Wajah besar: mata putih dengan pupil hitam bersinar, alis tebal, pipi merah muda, mulut terbuka.
+- Lengan dan kaki **berwarna sama dengan badan** (bukan hitam), tipis dan lentur.
+- Sarung tangan putih besar **berjari** (bukan bola).
+- Sepatu kets dengan tali, warna aksen sesuai karakter.
+- Tas ransel kecil di punggung, warna beda tiap karakter.
+- Hiasan kepala khas tiap karakter (topi kupluk, blangkon/ikat kepala batik, caping, rambut jagung, api lilin).
+- Pak Ote-Ote (ote-ote dengan udang dan ikat kepala batik) belum ada di roster: itu karakter ke-13. Tanyakan pemilik apakah ditambahkan atau menggantikan salah satu.
+- Empat karakter lain (Om Sate, Mbok Klepon, Cak Kerupuk, Pakde Tempe, Neng Cendol) belum punya lembar.
+- Tulisan di lembar ("berdasarkan Clash", judul) adalah sisa pembuatan gambar; abaikan.
+
+**Status (14 November 2026):** gaya v2 lewat kode sudah dipasang di 7 karakter yang punya
+lembar (Bang Sosis, Mbak Lontong, Pak Bakso, Mas Tahu, Kak Pisang, Dek Lilin, Bung Jagung).
+Cara kerjanya: `BodySpec.v2` di `src/foodchar.ts` (warna lengan-kaki, sepatu, ransel), dengan
+`buildGlove`, `buildSneaker`, `buildBackpack`, dan wajah v2. Karakter tanpa `v2` tetap bergaya
+lama, jadi lima karakter tanpa lembar (Om Sate, Mbok Klepon, Cak Kerupuk, Pakde Tempe, Neng
+Cendol) belum diubah. Dek Lilin sekarang berbentuk lilin (mengikuti lembar), bukan es lilin.
+Belum: proporsi ramping dan kaki panjang (terkunci di fisika), bahan 3D mengilap dan cahaya
+(Tahap C), dan Pak Ote-Ote.
+
+Yang berubah di kode bila desain ini dipakai (urut dari yang termurah):
+
+1. `foodchar.ts`: warna lengan dan kaki mengikuti badan; tangan berjari; sepatu kets bertali; ransel; alis dan pipi. Murni kode, tanpa AI, dan menjaga animasi yang sudah jalan.
+2. Badan lebih detail (tekstur, topi, hiasan): dari kode atau dari model AI (lihat di bawah).
+3. Ganti badan dengan model AI hanya kalau hasilnya jelas lebih bagus dari langkah 1 dan 2.
+
+### Badan karakter dari model 3D hasil AI (uji coba)
+
+Pemilik membuat akun Meshy, Tripo, Hunyuan3D, dan 3D AI Studio (server MCP
+`3daistudio` sudah didaftarkan di proyek ini; perlu login lewat `/mcp`). Idenya: badan
+jajanan dibuat halus oleh model AI.
+
+**Masalahnya animasi.** Karakter digerakkan `src/animator.ts` lewat sendi terpisah: pinggul,
+lutut, bahu, siku, tulang punggung, dan kaki yang bisa melar. Satu model AI utuh tidak
+punya sendi itu. Jadi yang diganti **hanya badannya**; wajah (mata yang mengikuti bola),
+tangan, kaki, sarung tangan, dan sepatu tetap buatan kode dan tetap dipasang di badan.
+
+- Gambar acuan badan tanpa wajah dan tangan-kaki sudah dibuat: `docs/design/bodies/<nama>-depan.png` dan `-miring.png` (12 karakter, 768 px, latar transparan). Dibuat dengan `new FoodCharacter(id, true)` dan `renderer.portrait(id, 768, true, front)`.
+- Uji dulu **satu** karakter (Bang Sosis) di satu layanan sebelum membuat yang lain. Bandingkan hasilnya dengan badan buatan kode lewat tangkapan layar.
+- Pasang hasilnya (GLB) lewat `src/models.ts`; di `buildBody`, kasus karakter itu memuat GLB kalau ada dan memakai bentuk buatan kode sebagai cadangan.
+- Titik pasang: `spec.faceX`, `faceY`, `armY`, `armZ`, `legZ` di `BodySpec` harus disetel ulang ke bentuk model baru.
+- Syarat model: satu mesh, titik asal di dasar badan, menghadap +x, di bawah 5.000 segitiga, tekstur satu atlas kecil. Tanpa wajah, tangan, dan kaki.
+- Model yang sudah berpose atau berwajah dari AI tidak dipakai untuk pertandingan.
+- Kredit layanan berbayar dipakai pemilik: sebut perkiraan biaya sebelum membuat model.
+
 ### Larangan
 
 - Jangan memakai lambang Garuda Pancasila seperti di `ref-2`. Pemakaian lambang negara diatur undang-undang; di luar keahlian kita untuk menilai boleh-tidaknya, jadi hindari.

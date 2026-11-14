@@ -262,18 +262,43 @@ export class Renderer {
   }
 
   // Potret karakter untuk layar pilih jagoan: model 3D-nya digambar ke gambar kecil.
-  portrait(charId: number, size = 160): string {
+  // bare: hanya badan; front: menghadap lurus ke kamera (untuk gambar acuan model 3D).
+  portrait(charId: number, size = 160, bare = false, front = false): string {
     const scene = new THREE.Scene();
     scene.add(new THREE.HemisphereLight(0xfff6e0, 0x8a7fa8, 1.7));
     const key = new THREE.DirectionalLight(0xfff1d6, 2.4);
     key.position.set(4, 6, 5);
     scene.add(key);
-    const ch = new FoodCharacter(charId);
-    ch.pose();
+    const ch = new FoodCharacter(charId, bare);
+    ch.pose(front ? -Math.PI / 2 : -0.7);
     scene.add(ch.root);
     const cam = new THREE.PerspectiveCamera(26, 1, 0.1, 50);
-    cam.position.set(3.4, 1.5, 3.6);
-    cam.lookAt(0, 0.92, 0);
+    if (bare) {
+      // Gambar acuan: tanpa garis tepi dan arsiran, badan pas di tengah bingkai.
+      ch.root.traverse((o) => {
+        if (o.name === "outline") o.visible = false;
+      });
+      ch.root.updateMatrixWorld(true);
+      const box = new THREE.Box3().setFromObject(ch.root);
+      const center = box.getCenter(new THREE.Vector3());
+      const sz = box.getSize(new THREE.Vector3());
+      const dist = (Math.max(sz.x, sz.y, sz.z) / 2 / Math.tan(THREE.MathUtils.degToRad(13))) * 1.2;
+      const dir = front ? new THREE.Vector3(0, 0.06, 1) : new THREE.Vector3(0.65, 0.22, 0.72);
+      cam.position.copy(center).addScaledVector(dir.normalize(), dist);
+      cam.lookAt(center);
+    } else {
+      // Potret kartu pilih jagoan: bingkai mengikuti ukuran karakter supaya topi dan hiasan tidak terpotong.
+      ch.root.updateMatrixWorld(true);
+      const box = new THREE.Box3().setFromObject(ch.root);
+      const center = box.getCenter(new THREE.Vector3());
+      const sz = box.getSize(new THREE.Vector3());
+      const dist = (Math.max(sz.x, sz.y, sz.z) / 2 / Math.tan(THREE.MathUtils.degToRad(13))) * 1.1;
+      const dir = front ? new THREE.Vector3(0, 0.1, 1) : new THREE.Vector3(0.65, 0.2, 0.72);
+      cam.position.copy(center).addScaledVector(dir.normalize(), dist);
+      cam.lookAt(center);
+    }
+    const sketchBefore = styleUniforms.uSketch.value;
+    if (bare) styleUniforms.uSketch.value = 0;
     const target = new THREE.WebGLRenderTarget(size * 2, size * 2, { samples: 4 });
     const prevTarget = this.renderer.getRenderTarget();
     const prevClear = this.renderer.getClearAlpha();
@@ -285,6 +310,7 @@ export class Renderer {
     this.renderer.readRenderTargetPixels(target, 0, 0, size * 2, size * 2, px);
     this.renderer.setRenderTarget(prevTarget);
     this.renderer.setClearAlpha(prevClear);
+    styleUniforms.uSketch.value = sketchBefore;
     target.dispose();
     ch.dispose();
     // Hasil bacaan terbalik secara vertikal dan masih linear: balik dan ubah ke sRGB.

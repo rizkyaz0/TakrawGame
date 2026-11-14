@@ -8,6 +8,7 @@ export const INK = 0x17131c;
 export const styleUniforms = {
   uBoil: { value: 0 }, // berganti beberapa kali per detik
   uPx: { value: 1 }, // device pixel ratio, supaya goresan sama tebal di semua layar
+  uSketch: { value: 1 }, // 1 = arsiran gambar tangan penuh, 0 = bahan polos (untuk gambar acuan)
 };
 
 const gradientMap = new THREE.DataTexture(new Uint8Array([105, 180, 255]), 3, 1, THREE.RedFormat);
@@ -18,6 +19,7 @@ gradientMap.needsUpdate = true;
 const NOISE_GLSL = /* glsl */ `
 uniform float uBoil;
 uniform float uPx;
+uniform float uSketch;
 float sk_hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float sk_noise(vec2 p) {
   vec2 i = floor(p), f = fract(p);
@@ -38,10 +40,10 @@ const SKETCH_GLSL = /* glsl */ `
   float l2 = abs(fract((sp.x - sp.y * 0.55 + wob * 1.3) * 0.07) - 0.5) * 2.0;
   float shadow = 1.0 - smoothstep(0.55, 0.9, lit);
   float stroke = smoothstep(0.5, 0.72, l1 + (grain - 0.5) * 0.6);
-  gl_FragColor.rgb *= 1.0 - shadow * stroke * 0.42;
+  gl_FragColor.rgb *= 1.0 - shadow * stroke * 0.42 * uSketch;
   float scrib = smoothstep(0.78, 0.95, l2 + (grain - 0.5) * 0.7);
-  gl_FragColor.rgb *= 1.0 - scrib * 0.09;
-  gl_FragColor.rgb += (grain - 0.5) * 0.045;
+  gl_FragColor.rgb *= 1.0 - scrib * 0.09 * uSketch;
+  gl_FragColor.rgb += (grain - 0.5) * 0.045 * uSketch;
 }
 `;
 
@@ -49,6 +51,7 @@ function sketchify(mat: THREE.Material): void {
   mat.onBeforeCompile = (sh) => {
     sh.uniforms.uBoil = styleUniforms.uBoil;
     sh.uniforms.uPx = styleUniforms.uPx;
+    sh.uniforms.uSketch = styleUniforms.uSketch;
     sh.fragmentShader = sh.fragmentShader
       .replace("#include <common>", `#include <common>\n${NOISE_GLSL}`)
       .replace("#include <dithering_fragment>", `#include <dithering_fragment>\n${SKETCH_GLSL}`);

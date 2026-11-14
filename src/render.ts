@@ -3,6 +3,11 @@ import type { AnimKind } from "./animator";
 import { FoodCharacter } from "./foodchar";
 import { Fx } from "./fx";
 import { Scenery, type ArenaId, type TimeId } from "./scenery";
+import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
+import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
+import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
+import { ShaderPass } from "three/addons/postprocessing/ShaderPass.js";
+import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
 import {
   AIM_MAX,
   BALL_R,
@@ -18,7 +23,7 @@ import {
   type GameEvent,
   type GameState,
 } from "./sim";
-import { addOutline, styleUniforms, toon } from "./style";
+import { addOutline, setStyleKind, styleUniforms, toon, type StyleKind } from "./style";
 
 const FOV = 32;
 const VIEW_W = COURT_HALF * 2 + 1.8;
@@ -105,9 +110,85 @@ export class Renderer {
 
   // Grafis hemat: resolusi 1x dan tanpa bayangan, untuk HP yang berat.
   setLowGfx(low: boolean): void {
+    this.low = low;
     this.renderer.setPixelRatio(low ? 1 : this.fullRatio);
     this.sun.castShadow = !low;
     styleUniforms.uPx.value = this.renderer.getPixelRatio();
+    this.composer?.setPixelRatio(this.renderer.getPixelRatio());
+    this.applyPost();
+  }
+
+  // Gaya tampilan: "soft" = kartun 3D halus mengilap (cahaya hangat, cahaya tepi, bloom tipis,
+  // vinyet); "hand" = gambar tangan berarsir seperti semula.
+  private styleKind: StyleKind = "hand";
+  private low = false;
+  private rim!: THREE.DirectionalLight;
+  private composer: EffectComposer | null = null;
+  private fxAuto = true; // dimatikan sendiri kalau frame rate jatuh
+  private frameTimes: number[] = [];
+  private fxSince = 0;
+  setStyle(kind: StyleKind): void {
+    this.styleKind = kind;
+    setStyleKind(kind);
+    const soft = kind === "soft";
+    this.renderer.toneMapping = soft ? THREE.ACESFilmicToneMapping : THREE.NoToneMapping;
+    this.renderer.toneMappingExposure = soft ? 0.72 : 1;
+    this.rim.visible = soft;
+    this.sun.shadow.radius = soft ? 4 : 1;
+    this.fxAuto = true;
+    this.frameTimes.length = 0;
+    this.applyPost();
+  }
+
+  private get postOn(): boolean {
+    return this.styleKind === "soft" && !this.low && this.fxAuto;
+  }
+
+  private applyPost(): void {
+    if (!this.postOn) return;
+    if (!this.composer) {
+      const size = this.renderer.getSize(new THREE.Vector2());
+      const target = new THREE.WebGLRenderTarget(size.x, size.y, { type: THREE.HalfFloatType, samples: 4 });
+      const c = new EffectComposer(this.renderer, target);
+      c.setPixelRatio(this.renderer.getPixelRatio());
+      c.addPass(new RenderPass(this.scene, this.camera));
+      c.addPass(new UnrealBloomPass(new THREE.Vector2(size.x, size.y), 0.14, 0.5, 0.92));
+      c.addPass(
+        new ShaderPass({
+          uniforms: { tDiffuse: { value: null } },
+          vertexShader: "varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }",
+          // Vinyet halus dan sedikit tambahan warna, sebelum nada warna akhir.
+          fragmentShader: `uniform sampler2D tDiffuse; varying vec2 vUv;
+            void main() {
+              vec4 c = texture2D(tDiffuse, vUv);
+              vec2 d = (vUv - 0.5) * vec2(1.0, 0.92);
+              float v = smoothstep(0.82, 0.22, length(d));
+              c.rgb *= mix(0.7, 1.0, v);
+              float l = dot(c.rgb, vec3(0.299, 0.587, 0.114));
+              c.rgb = mix(vec3(l), c.rgb, 1.3);
+              c.rgb = max((c.rgb - 0.18) * 1.12 + 0.18, 0.0);
+              gl_FragColor = c;
+            }`,
+        }),
+      );
+      c.addPass(new OutputPass());
+      this.composer = c;
+    }
+    this.fxSince = performance.now();
+  }
+
+  // Frame rate rata-rata jatuh di bawah ±38 fps selama beberapa detik: pasca-proses dimatikan sendiri.
+  private watchFps(now: number): void {
+    if (!this.postOn) return;
+    this.frameTimes.push(now);
+    if (this.frameTimes.length > 150) this.frameTimes.shift();
+    if (this.frameTimes.length === 150 && now - this.fxSince > 4000) {
+      const avg = (this.frameTimes[149] - this.frameTimes[0]) / 149;
+      if (avg > 26) {
+        this.fxAuto = false;
+        this.renderer.setRenderTarget(null);
+      }
+    }
   }
 
   constructor() {
@@ -135,6 +216,11 @@ export class Renderer {
     sun.shadow.camera.far = 50;
     sun.shadow.bias = -0.0005;
     this.scene.add(sun);
+    // Cahaya tepi dari belakang-atas (hanya gaya kartun 3D): garis terang di pinggir badan.
+    this.rim = new THREE.DirectionalLight(0xa8d4ff, 0.9);
+    this.rim.position.set(5, 9, -11);
+    this.rim.visible = false;
+    this.scene.add(this.rim);
 
     this.scenery = new Scenery(this.scene, hemi, sun);
     this.fx = new Fx(this.scene);
@@ -378,6 +464,7 @@ export class Renderer {
     const w = window.innerWidth;
     const h = window.innerHeight;
     this.renderer.setSize(w, h);
+    this.composer?.setSize(w, h);
     this.camera.aspect = w / h;
     const t = Math.tan(THREE.MathUtils.degToRad(FOV / 2));
     this.camDist = Math.max(VIEW_W / 2 / (t * this.camera.aspect), VIEW_H / 2 / t);
@@ -673,6 +760,8 @@ export class Renderer {
     this.camera.position.set(this.camX + sx, this.camY + 1.1 * this.camZoom + sy, this.camDist * this.camZoom);
     this.camera.lookAt(this.camX + sx, this.camY + sy, 0);
 
-    this.renderer.render(this.scene, this.camera);
+    this.watchFps(performance.now());
+    if (this.postOn && this.composer) this.composer.render();
+    else this.renderer.render(this.scene, this.camera);
   }
 }

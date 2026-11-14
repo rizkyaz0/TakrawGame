@@ -9,17 +9,41 @@ export const styleUniforms = {
   uBoil: { value: 0 }, // berganti beberapa kali per detik
   uPx: { value: 1 }, // device pixel ratio, supaya goresan sama tebal di semua layar
   uSketch: { value: 1 }, // 1 = arsiran gambar tangan penuh, 0 = bahan polos (untuk gambar acuan)
+  uGloss: { value: 0 }, // kilap dan cahaya tepi gaya kartun 3D (0 = mati)
+  uOutline: { value: 1 }, // pengali tebal garis tepi
 };
 
-const gradientMap = new THREE.DataTexture(new Uint8Array([105, 180, 255]), 3, 1, THREE.RedFormat);
+export type StyleKind = "soft" | "hand";
+
+// Peta gradasi bayangan 64 titik: gaya gambar tangan = tiga undakan tegas, gaya kartun 3D =
+// peralihan halus. Isinya ditulis ulang saat gaya diganti, jadi semua bahan ikut berubah.
+const GRAD_N = 64;
+const gradData = new Uint8Array(GRAD_N);
+const gradientMap = new THREE.DataTexture(gradData, GRAD_N, 1, THREE.RedFormat);
 gradientMap.minFilter = THREE.NearestFilter;
 gradientMap.magFilter = THREE.NearestFilter;
-gradientMap.needsUpdate = true;
+
+export function setStyleKind(kind: StyleKind): void {
+  for (let i = 0; i < GRAD_N; i++) {
+    const t = i / (GRAD_N - 1);
+    if (kind === "hand") gradData[i] = t < 0.34 ? 105 : t < 0.67 ? 180 : 255;
+    else {
+      const e = t * t * (3 - 2 * t);
+      gradData[i] = Math.round(120 + e * 135);
+    }
+  }
+  gradientMap.needsUpdate = true;
+  styleUniforms.uSketch.value = kind === "hand" ? 1 : 0;
+  styleUniforms.uGloss.value = kind === "hand" ? 0 : 1;
+  styleUniforms.uOutline.value = kind === "hand" ? 1 : 0.4;
+}
+setStyleKind("hand");
 
 const NOISE_GLSL = /* glsl */ `
 uniform float uBoil;
 uniform float uPx;
 uniform float uSketch;
+uniform float uGloss;
 float sk_hash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
 float sk_noise(vec2 p) {
   vec2 i = floor(p), f = fract(p);
@@ -44,6 +68,11 @@ const SKETCH_GLSL = /* glsl */ `
   float scrib = smoothstep(0.78, 0.95, l2 + (grain - 0.5) * 0.7);
   gl_FragColor.rgb *= 1.0 - scrib * 0.09 * uSketch;
   gl_FragColor.rgb += (grain - 0.5) * 0.045 * uSketch;
+  // Kartun 3D: pantulan lembut dari kiri atas dan cahaya tepi hangat, supaya bentuknya terasa mengilap.
+  vec3 gn = normalize(normal);
+  float gspec = pow(max(dot(gn, normalize(vec3(-0.4, 0.6, 0.7))), 0.0), 22.0);
+  float grim = pow(1.0 - clamp(gn.z, 0.0, 1.0), 2.6);
+  gl_FragColor.rgb += uGloss * (gspec * 0.2 + grim * vec3(0.1, 0.07, 0.04));
 }
 `;
 
@@ -52,6 +81,7 @@ function sketchify(mat: THREE.Material): void {
     sh.uniforms.uBoil = styleUniforms.uBoil;
     sh.uniforms.uPx = styleUniforms.uPx;
     sh.uniforms.uSketch = styleUniforms.uSketch;
+    sh.uniforms.uGloss = styleUniforms.uGloss;
     sh.fragmentShader = sh.fragmentShader
       .replace("#include <common>", `#include <common>\n${NOISE_GLSL}`)
       .replace("#include <dithering_fragment>", `#include <dithering_fragment>\n${SKETCH_GLSL}`);
@@ -74,13 +104,14 @@ function outlineMaterial(thickness: number, color: number): THREE.MeshBasicMater
     mat.onBeforeCompile = (sh) => {
       sh.uniforms.uBoil = styleUniforms.uBoil;
       sh.uniforms.uT = { value: thickness };
+      sh.uniforms.uOutline = styleUniforms.uOutline;
       sh.vertexShader = sh.vertexShader
-        .replace("#include <common>", "#include <common>\nuniform float uBoil;\nuniform float uT;")
+        .replace("#include <common>", "#include <common>\nuniform float uBoil;\nuniform float uT;\nuniform float uOutline;")
         .replace(
           "#include <begin_vertex>",
           `#include <begin_vertex>
            float ow = fract(sin(dot(position.xyz * 9.0 + uBoil, vec3(12.9898, 78.233, 37.719))) * 43758.5453);
-           transformed += normalize(normal) * uT * (0.7 + 0.6 * ow);`,
+           transformed += normalize(normal) * uT * uOutline * (0.7 + 0.6 * ow);`,
         );
     };
     // Tiap ketebalan butuh program sendiri karena nilainya menempel di uniform.

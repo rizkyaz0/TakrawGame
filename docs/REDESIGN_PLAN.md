@@ -146,6 +146,8 @@ Satu layar menggantikan "Pengaturan Kontrol" yang sekarang:
 
 ## Tahap C — Tampilan 3D kartun
 
+> **Status (14 Nov 2026): C1 selesai, sisanya belum.** C1 = pilihan "Gaya" di Pengaturan (KARTUN 3D bawaan / GAMBAR TANGAN): `setStyleKind` di `src/style.ts` (peta gradasi halus, kilap dan cahaya tepi di shader, garis tepi lebih tipis), `Renderer.setStyle` di `src/render.ts` (ACES, cahaya tepi, bayangan lebih lembut, bloom tipis, vinyet dan warna lewat `EffectComposer`; mati otomatis saat Grafis = Hemat atau fps rata-rata di bawah ±38). Belum: tribun kayu bertingkat, buram kedalaman di menu, panel HUD bersudut bulat, penyesuaian karakter (sarung tangan/mata), model 3DGarden untuk Kampung/Sekolah/Pasar Malam. Belum diukur di HP; di panel browser (render perangkat lunak) gaya baru ±1,8x lebih lambat dari gaya lama.
+
 ### Arah baru
 
 Sekarang gayanya "gambar tangan": bahan kartun bertingkat, arsiran, garis tepi tinta

@@ -68,6 +68,9 @@ import {
 
 const state: GameState = createState([0, 1]);
 const renderer = new Renderer();
+// Gaya tampilan harus terpasang sebelum potret karakter digambar.
+loadSettings();
+renderer.setStyle(settings.style);
 
 const $ = (id: string) => document.getElementById(id)!;
 const hex = (color: number) => `#${color.toString(16).padStart(6, "0")}`;
@@ -1292,6 +1295,7 @@ function applySettings(): void {
   setBusLevel("sfx", settings.sfx);
   setBusLevel("voice", settings.voice);
   renderer.shakeScale = settings.calm ? 0.25 : 1;
+  renderer.setStyle(settings.style);
   renderer.setLowGfx(settings.lowGfx);
   document.body.classList.toggle("calm", settings.calm);
   document.documentElement.style.setProperty("--ts", String([0.85, 1, 1.2][settings.touchSize]));
@@ -1353,6 +1357,12 @@ function settingRows(): SettingRow[] {
       step: () => (settings.calm = !settings.calm),
     },
     {
+      label: "Gaya",
+      note: "Kartun 3D halus, atau gambar tangan berarsir",
+      value: () => (settings.style === "soft" ? "KARTUN 3D" : "GAMBAR TANGAN"),
+      step: () => (settings.style = settings.style === "soft" ? "hand" : "soft"),
+    },
+    {
       label: "Grafis",
       note: "Hemat: lebih lancar di HP yang berat",
       value: () => (settings.lowGfx ? "HEMAT" : "TINGGI"),
@@ -1368,6 +1378,7 @@ function stepSetting(row: number, dir: number): void {
   r.step(dir);
   applySettings();
   saveSettings();
+  if (r.label === "Gaya") CHARS.forEach((_, k) => (portraits[k] = renderer.portrait(k)));
   if (r.label === "Komentator") voice("vo_mulai");
   else if (r.label === "Getaran" && settings.vibrate) navigator.vibrate?.(40);
   else sfx.smash(0);

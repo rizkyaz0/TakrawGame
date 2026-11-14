@@ -1,5 +1,6 @@
 import * as THREE from "three";
-import { COURT_HALF, NET_H, NET_R } from "./sim";
+import { COURT_HALF, NET_H, NET_R, CHARS } from "./sim";
+import { crowdGeometry, crowdMaterial } from "./crowd";
 import { addOutline, toon } from "./style";
 
 // Arena: lapangan takraw dengan empat latar (kampung, pantai, pasar malam, sekolah) dan
@@ -235,6 +236,8 @@ export class Scenery {
   private waves: THREE.Mesh[] = [];
   private blinkers: Array<{ m: THREE.MeshBasicMaterial; on: number; off: number; phase: number }> = [];
   private cheerUntil = 0;
+  private fanMeshes: THREE.Mesh[] = [];
+  private crowdChars: readonly number[] = [];
   private buildId = 0; // naik tiap arena dibangun ulang; muatan model yang terlambat diabaikan
   private target: THREE.Object3D = this.root; // tempat add() menaruh benda
 
@@ -443,40 +446,27 @@ export class Scenery {
   }
 
   // Penonton: dua baris jajanan kecil di belakang lapangan, baris belakang di atas bangku.
+  // Bentuknya dari 12 jajanan (tanpa yang sedang bertanding); lihat setCrowdLineup.
   private buildCrowd(): void {
     const bench = addOutline(new THREE.Mesh(new THREE.BoxGeometry(COURT_HALF * 2 + 1, 0.5, 0.9), toon(0xa9744a)), 0.04);
     this.add(bench, 0, -0.05, -5.75);
-    const fanColors = [0xd4583c, 0x5aa852, 0xa98470, 0xe9b95a, 0xf6cf2f, 0x86dcf0, 0xf7d03a, 0xe88fb0, 0x9a66e0];
-    const eyeWhite = new THREE.MeshBasicMaterial({ color: 0xffffff });
-    const eyeInk = new THREE.MeshBasicMaterial({ color: 0x17131c });
+    const ink = new THREE.MeshBasicMaterial({ color: 0x17131c });
+    this.fanMeshes = [];
+    let n = 0;
     for (let row = 0; row < 2; row++) {
       for (let k = 0; k < 15; k++) {
         const x = -7.6 + k * 1.085 + (row === 1 ? 0.5 : 0);
         if (row === 1 && k === 14) continue;
-        const kind = (k * 7 + row * 3) % 3;
         const fan = new THREE.Group();
-        const geo =
-          kind === 0
-            ? new THREE.CapsuleGeometry(0.26, 0.3, 4, 12)
-            : kind === 1
-              ? new THREE.SphereGeometry(0.36, 14, 10)
-              : new THREE.CylinderGeometry(0.26, 0.3, 0.72, 12);
-        const body = addOutline(new THREE.Mesh(geo, toon(fanColors[(k * 5 + row * 4) % fanColors.length])), 0.03);
-        body.position.y = 0.4;
+        const body = addOutline(new THREE.Mesh(crowdGeometry(n % CHARS.length), crowdMaterial()), 0.025);
+        body.userData.shared = true; // geometri dan bahan dipakai bersama; jangan dibuang saat arena berganti
+        body.children[0].userData.shared = true;
+        body.rotation.y = 0.12 * Math.sin(n * 2.3); // sedikit menoleh ke sana-sini
         fan.add(body);
-        for (const ex of [-0.1, 0.1]) {
-          const eye = new THREE.Mesh(new THREE.SphereGeometry(0.07, 8, 8), eyeWhite);
-          eye.position.set(ex, 0.5, kind === 1 ? 0.3 : 0.24);
-          eye.scale.z = 0.4;
-          fan.add(eye);
-          const pupil = new THREE.Mesh(new THREE.SphereGeometry(0.035, 6, 6), eyeInk);
-          pupil.position.set(ex, 0.5, kind === 1 ? 0.33 : 0.27);
-          pupil.scale.z = 0.4;
-          fan.add(pupil);
-        }
+        this.fanMeshes.push(body);
         // Sebagian penonton membawa bendera kecil.
         if ((k + row * 2) % 4 === 0) {
-          const stick = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.5, 4), eyeInk);
+          const stick = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.5, 4), ink);
           stick.position.set(0.3, 0.75, 0);
           fan.add(stick);
           const mini = new THREE.Mesh(new THREE.PlaneGeometry(0.26, 0.16), new THREE.MeshBasicMaterial({ color: 0xe5392d, side: THREE.DoubleSide }));
@@ -486,8 +476,26 @@ export class Scenery {
         const baseY = row === 0 ? 0 : 0.2;
         this.add(fan, x, baseY, row === 0 ? -4.7 : -5.7);
         this.fans.push({ body: fan, baseY, phase: k * 1.7 + row * 0.9 });
+        n++;
       }
     }
+    this.assignCrowd();
+  }
+
+  // Jajanan yang sedang bertanding tidak ikut duduk di tribun.
+  setCrowdLineup(chars: readonly number[]): void {
+    this.crowdChars = chars;
+    this.assignCrowd();
+  }
+
+  private assignCrowd(): void {
+    const allowed = CHARS.map((_, k) => k).filter((k) => !this.crowdChars.includes(k));
+    const pool = allowed.length > 0 ? allowed : CHARS.map((_, k) => k);
+    this.fanMeshes.forEach((m, i) => {
+      const geo = crowdGeometry(pool[((Math.imul(i + 7, 2654435761) >>> 0) >>> 8) % pool.length]);
+      m.geometry = geo;
+      (m.children[0] as THREE.Mesh).geometry = geo;
+    });
   }
 
   private hills(look: Look, list: Array<[number, number, number, number]>): void {

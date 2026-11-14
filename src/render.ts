@@ -107,6 +107,7 @@ export class Renderer {
   humanSlots: number[] = []; // nomor pemain yang dimainkan orang di perangkat ini, urut P1, P2
   private sun!: THREE.DirectionalLight;
   private fullRatio = 1;
+  private crowdKey = "";
 
   // Grafis hemat: resolusi 1x dan tanpa bayangan, untuk HP yang berat.
   setLowGfx(low: boolean): void {
@@ -596,6 +597,14 @@ export class Renderer {
       const v = this.players[i];
       const z = teamMode ? TEAM_Z[i >> 1] : 0;
 
+      if (i === 0) {
+        // Penonton tidak memakai jajanan yang sedang bertanding.
+        const key = s.chars.join(",");
+        if (key !== this.crowdKey) {
+          this.crowdKey = key;
+          this.scenery.setCrowdLineup(s.chars);
+        }
+      }
       // Karakter dibangun ulang kalau pemain ganti karakter.
       if (!v.char || v.char.charId !== s.chars[i]) {
         if (v.char) {

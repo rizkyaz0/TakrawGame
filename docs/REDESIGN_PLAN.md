@@ -257,6 +257,8 @@ tangan, kaki, sarung tangan, dan sepatu tetap buatan kode dan tetap dipasang di 
 
 ## Tahap D — Penonton berbentuk karakter
 
+> **Status (14 Nov 2026): selesai.** `src/crowd.ts` menggabungkan badan jajanan (dari `FoodCharacter` mode bare) dan wajah jadi satu geometri berwarna per jenis; `Scenery.setCrowdLineup` memilih jenis penonton tanpa jajanan yang sedang bertanding. Satu penonton = satu mesh + garis tepi. Tribun bertingkat (Tahap C) belum, jadi jumlah penonton masih 29.
+
 - Ganti penonton kapsul di `src/scenery.ts` (`buildCrowd`) dengan versi kecil dan sederhana dari 12 jajanan: badan dan wajah saja, tanpa tangan-kaki beranimasi.
 - Ambil bentuk badan dari `FoodCharacter.buildBody`; pisahkan jadi fungsi yang bisa dipanggil tanpa membuat seluruh karakter.
 - Pakai `InstancedMesh` per jenis badan bila memungkinkan. Penonton bertambah (tribun bertingkat di tahap C), jadi jumlah panggilan gambar harus dijaga.

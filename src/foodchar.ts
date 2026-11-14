@@ -76,7 +76,7 @@ interface StyleV2 {
   pack: number; // warna ransel
 }
 
-interface BodySpec {
+export interface BodySpec {
   v2?: StyleV2;
   faceX: number; // posisi wajah di permukaan depan badan
   faceY: number;
@@ -89,11 +89,12 @@ interface BodySpec {
 export class FoodCharacter {
   readonly root = new THREE.Group();
   readonly charId: number;
+  readonly spec!: BodySpec; // ukuran dan posisi wajah badan ini (dipakai penonton)
 
   private model = new THREE.Group();
   private flip = new THREE.Group(); // titik putar salto, di tengah badan
   private body = new THREE.Group();
-  private spine = new THREE.Group();
+  readonly spine = new THREE.Group();
   private legL = new THREE.Group();
   private legR = new THREE.Group();
   private kneeL = new THREE.Group();
@@ -143,6 +144,7 @@ export class FoodCharacter {
 
     this.skin = toon(0xffffff);
     const spec = this.buildBody(kind, part, accent);
+    (this as { spec: BodySpec }).spec = spec;
     if (bare) {
       this.model.scale.setScalar(MODEL_SCALE);
       return;

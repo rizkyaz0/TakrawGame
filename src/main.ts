@@ -450,7 +450,7 @@ const devHelp = (d: Device) =>
 // Tombol yang selalu terlihat dan bisa diklik atau di-tap; pintasan keyboard-nya ditulis di dalamnya.
 const tapBtn = (cls: string, tap: string, label: string, key = "") =>
   `<span class="tapbtn ${cls}" data-tap="${tap}">${label}${key ? ` <kbd>${key}</kbd>` : ""}</span>`;
-const backBtn = () => tapBtn("back", "Escape", "◂ KEMBALI", "Esc");
+const backBtn = () => tapBtn("back", "Escape", `<i class="bk">◂</i> KEMBALI`, "Esc");
 
 // Tamu online yang kursinya masih tercatat tapi orangnya sudah putus.
 const guestGone = (d: SpecDevice) => d.kind === "net" && !net.guests.has(d.id);
@@ -883,12 +883,13 @@ function renderRoom(): void {
     else if (kind === "bot" && seatConvertible(i)) acts += btn("JADI PEMAIN", `rs:${i}`);
     const on = room.focus === `s${i}`;
     return (
-      `<div class="slot${on ? " on" : ""}${on && room.grid ? " edit" : ""}${waiting ? " empty" : ""}" style="--pc:${hex(c.color)}" data-tap="rf:s${i}">` +
+      `<div class="slot ${i & 1 ? "b" : "r"}${on ? " on" : ""}${on && room.grid ? " edit" : ""}${waiting ? " empty" : ""}" style="--pc:${hex(c.color)}" data-tap="rf:s${i}">` +
       `<div class="stag display">${tag}</div>` +
       (waiting
         ? `<img class="spic" src="/ui/card-empty.webp" alt="" draggable="false" />`
         : `<img class="spic" src="${portraits[room.chars[i]]}" alt="" draggable="false" />`) +
-      `<div class="sinfo"><div class="splate display">${waiting ? "KOSONG" : c.name}</div>${bar}<div class="sacts">${acts}</div></div></div>`
+      `<div class="splate display">${waiting ? "KOSONG" : c.name}</div>` +
+      `<div class="sinfo">${bar}<div class="sacts">${acts}</div></div></div>`
     );
   };
   const col = (t: 0 | 1) =>
@@ -1204,10 +1205,11 @@ function renderRoomClient(): void {
     const tag = you ? `P${i + 1} · KAMU` : i === 0 ? "P1 · HOST" : "P2";
     const on = you;
     return (
-      `<div class="slot${on ? " on" : ""}${on && room.grid ? " edit" : ""}" style="--pc:${hex(c.color)}"${you ? ` data-tap="rf:s${i}"` : ""}>` +
+      `<div class="slot ${i & 1 ? "b" : "r"}${on ? " on" : ""}${on && room.grid ? " edit" : ""}" style="--pc:${hex(c.color)}"${you ? ` data-tap="rf:s${i}"` : ""}>` +
       `<div class="stag display">${tag}</div>` +
       `<img class="spic" src="${portraits[room.chars[i]]}" alt="" draggable="false" />` +
-      `<div class="sinfo"><div class="splate display">${c.name}</div><span class="sbar${you ? "" : " bot"}">${you ? "KAMU" : i === 0 ? "HOST" : "PEMAIN"}</span></div></div>`
+      `<div class="splate display">${c.name}</div>` +
+      `<div class="sinfo"><span class="sbar${you ? "" : " bot"}">${you ? "KAMU" : i === 0 ? "HOST" : "PEMAIN"}</span></div></div>`
     );
   };
   const active = mine === 0 || mine === 1 ? mine : 0;

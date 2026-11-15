@@ -114,7 +114,7 @@ Keputusan yang dibutuhkan: profil dan peringkat butuh akun dan basis data.
 
 - [x] Tes otomatis untuk simulasi dan aturan (`npm test`, 11 tes)
 - [ ] Laporan error dari pemain dan data pemakaian dasar
-- [ ] Ukur dan perbaiki performa di HP kelas bawah; pecah unduhan awal
+- [ ] Ukur dan perbaiki performa di HP kelas bawah. Sudah: 13 model karakter (±5 MB) dimuat bertahap setelah layar judul tampil, bukan sekaligus di awal
 - [ ] Domain sendiri
 - [x] Halaman privasi. Belum: ketentuan pakai dan lisensi repo (perlu keputusan pemilik)
 - [ ] Tombol lapor bug dan masukan

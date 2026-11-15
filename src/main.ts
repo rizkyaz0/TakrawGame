@@ -1346,14 +1346,33 @@ function statBar(key: "moveSpeed" | "jumpV" | "smashSpeed", value: number): numb
 
 // Potret tiap karakter, digambar sekali dari model 3D-nya.
 const portraits: string[] = CHARS.map((_, k) => renderer.portrait(k));
-// Karakter yang punya model AI: potretnya digambar ulang begitu modelnya selesai dimuat.
-CHARS.forEach((_, k) => {
-  void loadAiBody(k).then((b) => {
-    if (!b) return;
-    portraits[k] = renderer.portrait(k);
-    renderSelect();
-  });
-});
+// Model AI dimuat bertahap setelah layar judul tampil (tidak menahan layar pertama), jagoan
+// terakhir dipakai lebih dulu. Potret tiap karakter digambar ulang begitu modelnya siap, dan
+// layar yang sedang terbuka ikut disegarkan.
+{
+  const order = [app.chars[0], app.chars[1], ...CHARS.map((_, k) => k)].filter((k, i, a) => a.indexOf(k) === i);
+  const refresh = (): void => {
+    if (app.mode === "select") renderSelect();
+    else if (app.mode === "room" && app.online !== "client") renderRoom();
+    else if (app.mode === "room") renderRoomClient();
+    else if (app.mode === "pickchar") renderPickChar();
+  };
+  const next = (i: number): void => {
+    if (i >= order.length) return;
+    const k = order[i];
+    void loadAiBody(k).then((b) => {
+      if (b) {
+        portraits[k] = renderer.portrait(k);
+        refresh();
+      }
+      window.setTimeout(() => next(i + 1), 150); // jeda kecil supaya tidak menyendat
+    });
+  };
+  const start = (): void => next(0);
+  const ric = (window as unknown as { requestIdleCallback?: (f: () => void, o?: object) => void }).requestIdleCallback;
+  if (ric) ric.call(window, start, { timeout: 2500 });
+  else window.setTimeout(start, 1200);
+}
 
 function renderSelect(): void {
   const cpu = app.humans === 1;

@@ -20,7 +20,8 @@ type BodyKind =
   | "klepon"
   | "kerupuk"
   | "tempe"
-  | "cendol";
+  | "cendol"
+  | "oteote";
 
 // Urutannya sama dengan CHARS di sim.ts.
 const KINDS: readonly BodyKind[] = [
@@ -36,11 +37,12 @@ const KINDS: readonly BodyKind[] = [
   "kerupuk",
   "tempe",
   "cendol",
+  "oteote",
 ];
 
 const HIP_Y = 0.42;
 // Skin "warna lain" untuk badan model AI: pewarna yang dikalikan ke teksturnya.
-const AI_TINT: Record<number, number> = { 0: 0x9ab4ff, 4: 0xff9ad0, 5: 0xffc2a0, 6: 0xa0ffd0 };
+const AI_TINT: Record<number, number> = { 0: 0x9ab4ff, 1: 0xffc8a0, 2: 0xa0c8ff, 3: 0xd0a0ff, 4: 0xff9ad0, 5: 0xffc2a0, 6: 0xa0ffd0, 12: 0xa0ffc8 };
 const THIGH = 0.2;
 const SHIN = 0.2;
 const UPPER_ARM = 0.2;
@@ -557,6 +559,36 @@ export class FoodCharacter {
           armZ: 0.34,
           legZ: 0.14,
           v2: { limb: 0x3f7f33, shoe: 0x35a64a, pack: 0x5a3a2e },
+        };
+      }
+      case "oteote": {
+        // Ote-ote: gorengan bulat keemasan berbintil renyah dengan topi cokelat.
+        skin.color.setHex(0xd9a84a);
+        const blob = add(part(new THREE.SphereGeometry(0.42, 24, 18), skin, 0.022), 0, 0.5);
+        blob.scale.set(1, 1.22, 0.96);
+        const crisp = toon(0xb8782a);
+        for (let k = 0; k < 28; k++) {
+          const h = Math.imul(k + 9, 2654435761) >>> 0;
+          const th = ((h % 1000) / 1000) * Math.PI * 2;
+          const ph = 0.5 + (((h >>> 10) % 1000) / 1000) * 1.9;
+          const bx = Math.sin(ph) * Math.cos(th) * 0.42;
+          const bz = Math.sin(ph) * Math.sin(th) * 0.4;
+          if (bx > 0.18 && Math.abs(bz) < 0.3) continue; // bagian wajah dibiarkan polos
+          const b = new THREE.Mesh(new THREE.SphereGeometry(0.04, 6, 5), crisp);
+          b.scale.set(1, 0.8, 0.7);
+          add(b, bx, 0.5 + Math.cos(ph) * 0.5, bz);
+        }
+        const cap = part(new THREE.SphereGeometry(0.3, 18, 10, 0, Math.PI * 2, 0, Math.PI / 2), toon(0x6a3d22), 0.018);
+        cap.scale.y = 0.7;
+        add(cap, 0, 0.96);
+        return {
+          faceX: 0.4,
+          faceY: 0.58,
+          faceSize: 0.95,
+          armY: 0.5,
+          armZ: 0.4,
+          legZ: 0.15,
+          v2: { limb: 0xc98e3a, shoe: 0x6a3d22, pack: 0x2f6b4f },
         };
       }
       case "bakso": {

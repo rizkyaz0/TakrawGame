@@ -81,7 +81,7 @@ export const ACHIEVEMENTS: readonly Achievement[] = [
 ];
 
 // Karakter ke-8 sampai ke-12 terbuka seiring jumlah kemenangan.
-const UNLOCK_AT: Record<number, number> = { 7: 1, 8: 2, 9: 4, 10: 6, 11: 9 };
+const UNLOCK_AT: Record<number, number> = { 7: 1, 8: 2, 9: 4, 10: 6, 11: 9, 12: 12 };
 export const unlockWins = (charId: number) => UNLOCK_AT[charId] ?? 0;
 export const isUnlocked = (charId: number) => progress.wins >= unlockWins(charId);
 

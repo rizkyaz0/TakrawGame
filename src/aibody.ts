@@ -51,6 +51,10 @@ interface Rig {
 }
 
 const RIGS: Record<number, Rig> = {
+  1: { slug: "mbak-lontong", z0: -0.01, stubHi: 0.19, hipY: 0.29, shoulder: { x: 0.19, y: 0.6 }, hand: { x: 0.42, y: 0.28 }, armX: [0.15, 0.19], legFade: [-0.06, 0] },
+  2: { slug: "pak-bakso", z0: 0, stubHi: 0.26, shoulder: { x: 0.3, y: 0.62 }, hand: { x: 0.49, y: 0.22 }, armX: [0.27, 0.33], legFade: [-0.01, 0.05] },
+  3: { slug: "mas-tahu", z0: -0.03, stubHi: 0.19, hipY: 0.26, shoulder: { x: 0.3, y: 0.57 }, hand: { x: 0.53, y: 0.22 }, armX: [0.26, 0.31], legFade: [-0.06, 0] },
+  12: { slug: "pak-ote-ote", z0: -0.02, stubHi: 0.21, shoulder: { x: 0.27, y: 0.57 }, hand: { x: 0.41, y: 0.3 }, armX: [0.22, 0.27], legFade: [-0.06, 0] },
   0: { slug: "bang-sosis", z0: 0.01, stubHi: 0.21, shoulder: { x: 0.15, y: 0.62 }, hand: { x: 0.4, y: 0.24 }, armX: [0.12, 0.16], legFade: [-0.01, 0.09] },
   4: { slug: "kak-pisang", z0: -0.01, stubHi: 0.25, shoulder: { x: 0.17, y: 0.62 }, hand: { x: 0.41, y: 0.3 }, armX: [0.12, 0.16], legFade: [-0.01, 0.07] },
   5: { slug: "dek-lilin", z0: 0, stubHi: 0.19, shoulder: { x: 0.19, y: 0.56 }, hand: { x: 0.39, y: 0.22 }, armX: [0.15, 0.19], legFade: [-0.06, 0] },

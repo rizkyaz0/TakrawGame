@@ -191,6 +191,16 @@ export const CHARS: readonly CharDef[] = [
     specialName: "Hujan Cendol",
     charge: 0.5,
   },
+  {
+    name: "Pak Ote-Ote",
+    color: 0xd9a84a,
+    moveSpeed: 6.8,
+    jumpV: 12.9,
+    smashSpeed: 17.2,
+    special: "fire",
+    specialName: "Ote-Ote Panas",
+    charge: 0.65,
+  },
 ];
 
 // Panas reli: tiap smash yang masuk menaikkan kecepatan bola sampai servis berikutnya.

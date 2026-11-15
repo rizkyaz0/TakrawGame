@@ -133,6 +133,80 @@ export class Renderer {
   private fxAuto = true; // dimatikan sendiri kalau frame rate jatuh
   private frameTimes: number[] = [];
   private fxSince = 0;
+  // Panggung layar judul: dua jajanan besar menendang bola di depan gambar latar (CSS), dirender
+  // di kanvas transparan. Menggantikan arena 3D selama layar judul.
+  private stageOn = false;
+  private stageScene: THREE.Scene | null = null;
+  private stageCam = new THREE.PerspectiveCamera(30, 1.78, 0.1, 60);
+  private stageChars: FoodCharacter[] = [];
+  private stageBall: THREE.Mesh | null = null;
+  private stageIds: [number, number] = [-1, -1];
+  setStage(on: boolean, a = 0, b = 1): void {
+    this.stageOn = on;
+    this.renderer.setClearColor(0x000000, on ? 0 : 1);
+    if (!on) return;
+    if (!this.stageScene) {
+      const sc = new THREE.Scene();
+      sc.add(new THREE.HemisphereLight(0xfff2d6, 0x6a7fb8, 1.5));
+      const key = new THREE.DirectionalLight(0xffe2b0, 2.6);
+      key.position.set(-5, 7, 6);
+      sc.add(key);
+      const rim = new THREE.DirectionalLight(0x9fd0ff, 1.2);
+      rim.position.set(5, 5, -6);
+      sc.add(rim);
+      this.stageScene = sc;
+      const ball = new THREE.Mesh(new THREE.SphereGeometry(0.34, 22, 16), this.ballMat);
+      sc.add(ball);
+      this.stageBall = ball;
+      for (const sx of [-1, 1]) {
+        const sh = new THREE.Mesh(
+          new THREE.CircleGeometry(1.0, 24),
+          new THREE.MeshBasicMaterial({ color: 0x17131c, transparent: true, opacity: 0.28, depthWrite: false }),
+        );
+        sh.rotation.x = -Math.PI / 2;
+        sh.position.set(sx * 3.6, 0.02, 0);
+        sh.scale.set(1.2, 0.55, 1);
+        sc.add(sh);
+      }
+    }
+    if (this.stageIds[0] !== a || this.stageIds[1] !== b) {
+      for (const c of this.stageChars) {
+        this.stageScene.remove(c.root);
+        c.dispose();
+      }
+      this.stageChars = [a, b].map((id, i) => {
+        const c = new FoodCharacter(id, false, 0);
+        c.root.position.set(i === 0 ? -3.7 : 3.7, 0, 0);
+        c.root.scale.setScalar(1.18);
+        this.stageScene!.add(c.root);
+        return c;
+      });
+      this.stageIds = [a, b];
+    }
+  }
+
+  private drawStage(now: number): void {
+    const sc = this.stageScene;
+    if (!sc) return;
+    const t = now / 1000;
+    this.stageChars.forEach((c, i) => c.poseKick(t, i * 0.5, i === 0 ? -0.45 : Math.PI + 0.45));
+    if (this.stageBall) {
+      // Bola melayang bolak-balik di antara keduanya.
+      const k = (Math.sin(t * 1.2) + 1) / 2;
+      this.stageBall.position.set(-1.6 + k * 3.2, 1.4 + Math.abs(Math.sin(t * 2.4)) * 0.9, 0.3);
+      this.stageBall.rotation.z -= 0.08;
+    }
+    const aspect = window.innerWidth / window.innerHeight;
+    this.stageCam.aspect = aspect;
+    // Jarak kamera menjaga kedua karakter di dalam layar pada rasio berapa pun.
+    const need = 5.3 / Math.tan(THREE.MathUtils.degToRad(this.stageCam.fov / 2)) / Math.min(aspect, 1.9) * 1.25;
+    this.stageCam.position.set(0, 1.5, Math.max(9, need));
+    this.stageCam.lookAt(0, 1.45, 0);
+    this.stageCam.updateProjectionMatrix();
+    styleUniforms.uBoil.value = Math.floor(now * 0.008) % 16;
+    this.renderer.render(sc, this.stageCam);
+  }
+
   setStyle(kind: StyleKind): void {
     this.styleKind = kind;
     setStyleKind(kind);
@@ -198,7 +272,7 @@ export class Renderer {
   }
 
   constructor() {
-    this.renderer = new THREE.WebGLRenderer({ antialias: true });
+    this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
     // HP: resolusi dan bayangan diturunkan supaya tetap lancar.
     const mobile = window.matchMedia("(pointer: coarse)").matches;
     this.fullRatio = Math.min(window.devicePixelRatio, mobile ? 1.5 : 2);
@@ -609,6 +683,10 @@ export class Renderer {
   }
 
   draw(s: GameState, excite = 0): void {
+    if (this.stageOn) {
+      this.drawStage(performance.now());
+      return;
+    }
     const now = performance.now() / 1000;
     // Goresan berganti 8 kali per detik: efek "boil" gambar tangan.
     styleUniforms.uBoil.value = Math.floor(now * 8) % 16;

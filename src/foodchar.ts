@@ -943,6 +943,30 @@ export class FoodCharacter {
     this.legR.rotation.z = 0.12;
   }
 
+  // Pose menendang yang berulang untuk panggung layar judul: t = detik, phase = geseran 0..1,
+  // yaw = putaran badan ke arah kamera.
+  poseKick(t: number, phase: number, yaw: number): void {
+    const u = (((t / 2.6 + phase) % 1) + 1) % 1;
+    const kick = Math.sin(Math.PI * Math.min(1, u / 0.55)) * (u < 0.55 ? 1 : 0); // ayunan cepat lalu istirahat
+    const rest = u >= 0.55 ? Math.sin(((u - 0.55) / 0.45) * Math.PI) : 0;
+    this.model.rotation.y = yaw;
+    this.flip.rotation.z = 0;
+    this.body.position.y = -FLIP_Y + 0.1 + kick * 0.22 + Math.sin(t * 5 + phase * 6) * 0.025;
+    this.body.scale.set(1, 1, 1);
+    this.spine.rotation.z = 0.06 + kick * 0.22 - rest * 0.04;
+    this.spine.rotation.y = 0;
+    this.legR.rotation.z = -0.35 + kick * 2.35;
+    this.kneeR.rotation.z = -0.9 + kick * 0.8;
+    this.legR.scale.y = 1 + kick * 0.45;
+    if (this.footR) this.footR.scale.y = 1 / (1 + kick * 0.45);
+    this.legL.rotation.z = -0.1 - kick * 0.35;
+    this.kneeL.rotation.z = -0.45;
+    this.armL.rotation.z = 1.1 + kick * 0.6;
+    this.armR.rotation.z = -0.9 - kick * 0.5;
+    this.elbowL.rotation.z = 0.5;
+    this.elbowR.rotation.z = 0.5;
+  }
+
   play(kind: AnimKind, frame: number, roll = false): void {
     this.animator.play(kind, frame, roll);
   }

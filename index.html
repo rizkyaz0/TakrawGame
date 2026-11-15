@@ -283,6 +283,42 @@
       body.soft #keysBody .kcol { border-radius: 16px; }
 
 
+
+      /* Layar judul bergaya referensi: gambar latar di belakang kanvas transparan, dua jajanan 3D besar,
+         tombol MAIN kuning dan tombol krem berikon dari gambar. */
+      #menuBg { position: fixed; inset: 0; z-index: 0; display: none; background: #6fb8ff url(/ui/bg-menu.webp) center bottom / cover no-repeat; }
+      body.titlebg #menuBg { display: block; }
+      body.titlebg canvas { filter: none; position: relative; z-index: 1; }
+      #titleFg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; pointer-events: none; z-index: 0; }
+      #title { background: radial-gradient(ellipse at 50% 55%, rgba(23, 19, 28, 0), rgba(23, 19, 28, 0.35)); }
+      body.titlebg #title .tagline { display: none; }
+      body.titlebg #title .logo { top: 1%; }
+      body.titlebg #title .logo img { width: min(440px, 46vw, 46vh * 1.41); }
+      body.titlebg #title .menu { top: 45%; gap: 6px; z-index: 2; }
+      body.titlebg #title .menu .mrow { gap: 8px; justify-content: center; }
+      body.titlebg #title .menu .item {
+        min-width: 188px; height: 54px; padding: 0 18px 0 52px; display: flex; align-items: center; justify-content: flex-start;
+        background: url(/ui/btn-menu.webp) center / 100% 100% no-repeat; color: var(--ink); border: 0; box-shadow: none; transform: none;
+        font-size: 15px; opacity: 1; position: relative; text-shadow: none; filter: drop-shadow(0 4px 0 rgba(23, 19, 28, 0.28));
+      }
+      body.titlebg #title .menu .item::before { content: ""; position: absolute; left: 14px; top: 50%; width: 30px; height: 30px; transform: translateY(-50%); background: center / contain no-repeat; }
+      body.titlebg #title .menu .item[data-ic="trophy"]::before { background-image: url(/ui/icon-trophy.webp); }
+      body.titlebg #title .menu .item[data-ic="arcade"]::before { background-image: url(/ui/icon-arcade.webp); }
+      body.titlebg #title .menu .item[data-ic="book"]::before { background-image: url(/ui/icon-book.webp); }
+      body.titlebg #title .menu .item[data-ic="person"]::before { background-image: url(/ui/icon-person.webp); }
+      body.titlebg #title .menu .item[data-ic="gear"]::before { background-image: url(/ui/icon-gear.webp); }
+      body.titlebg #title .menu .item[data-ic="calendar"]::before { background-image: url(/ui/icon-calendar.webp); }
+      body.titlebg #title .menu .item:not([data-ic]) { padding-left: 22px; justify-content: center; }
+      body.titlebg #title .menu .item.on { animation: none; transform: scale(1.07); filter: drop-shadow(0 0 12px #ffd23f) drop-shadow(0 4px 0 rgba(23, 19, 28, 0.28)) brightness(1.05); }
+      body.titlebg #title .menu .item.new::after, body.titlebg #title .menu .item.soon::after { margin-left: 6px; font-size: 9px; }
+      body.titlebg #title .menu .item.mainbtn {
+        width: 300px; height: 150px; min-width: 0; margin: -42px 0 -34px; padding: 0; font-size: 0; justify-content: center;
+        background-image: url(/ui/btn-main.webp); filter: drop-shadow(0 6px 4px rgba(23, 19, 28, 0.3));
+      }
+      body.titlebg #title .menu .item.mainbtn::before { display: none; }
+      body.titlebg #title .menu .item.mainbtn.on { filter: drop-shadow(0 0 14px #ffd23f) brightness(1.06); transform: scale(1.06); }
+      body.titlebg #title .mtitle { color: var(--paper); text-shadow: 0 3px 0 var(--ink), 0 0 10px rgba(23, 19, 28, 0.6); }
+
       /* Pilih jagoan: panggung studio dengan karakter besar */
       #pickchar { background: radial-gradient(ellipse at 50% 38%, rgba(30, 90, 190, 0.92), rgba(8, 16, 52, 0.97) 70%); }
       #pickStage { position: absolute; top: 62px; left: 50%; transform: translateX(-50%); width: 380px; height: 290px; }
@@ -640,6 +676,7 @@
     </style>
   </head>
   <body>
+    <div id="menuBg" aria-hidden="true"></div>
     <div id="hud">
       <div id="grain"></div>
       <div id="tension"></div>
@@ -690,6 +727,7 @@
 
       <!-- Layar judul -->
       <div id="title" class="screen">
+        <img id="titleFg" src="/ui/fg-leaves.webp" alt="" draggable="false" />
         <div class="logo"><img src="/logo.webp" alt="Takraw Clash" draggable="false" /></div>
         <div class="tagline">jajanan kampung adu sepak di lapangan 17-an</div>
         <div class="menu" id="titleMenu"></div>

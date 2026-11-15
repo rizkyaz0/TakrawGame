@@ -285,10 +285,20 @@ function resetShown(): void {
   elHud.dataset.over = "0"; // kalau tertinggal "1", tombol layar HP tetap tersembunyi
 }
 
+let titleStageOn = false;
 function setMode(mode: Mode): void {
   app.mode = mode;
   // Latar 3D dikaburkan sedikit di layar yang isinya teks saja; Room dan Pilih Jagoan tetap tajam karena menampilkan karakter.
-  document.body.classList.toggle("menubg", mode === "title" || mode === "settings" || mode === "profile" || mode === "join" || mode === "howto" || mode === "keys");
+  document.body.classList.toggle("titlebg", mode === "title");
+  if (mode === "title") {
+    const other = (app.chars[0] + 1 + Math.floor(Math.random() * (CHARS.length - 1))) % CHARS.length;
+    if (!titleStageOn) renderer.setStage(true, app.chars[0], other);
+    titleStageOn = true;
+  } else if (titleStageOn) {
+    renderer.setStage(false);
+    titleStageOn = false;
+  }
+  document.body.classList.toggle("menubg", mode === "settings" || mode === "profile" || mode === "join" || mode === "howto" || mode === "keys");
   app.paused = false;
   elHud.dataset.mode = mode;
   elHud.dataset.paused = "0";
@@ -1174,6 +1184,7 @@ interface TitleItem {
   run: () => void;
 }
 const menuNav = { id: "root" as MenuId, kind: "cpu" as "cpu" | "local", stack: [] as Array<{ id: MenuId; index: number }> };
+const TITLE_ICONS: Record<string, string> = { RANKED: "trophy", ARCADE: "arcade", TUTORIAL: "book", "CARA MAIN": "book", PROFIL: "person", PENGATURAN: "gear", LATIHAN: "calendar" };
 const TITLE_HEADINGS: Record<MenuId, string> = {
   root: "",
   play: "MAIN · PILIH CARA MAIN",
@@ -1260,8 +1271,7 @@ function titleItems(): TitleItem[] {
     { label: "MAIN", row: 0, big: true, run: () => titleOpen("play") },
     {
       label: "RANKED",
-      row: 0,
-      big: true,
+      row: 1,
       flag: "soon",
       run: () => {
         sfx.fault();
@@ -1284,13 +1294,13 @@ function titleItems(): TitleItem[] {
     },
     {
       label: "TUTORIAL",
-      row: 1,
+      row: 2,
       flag: settings.tutorialDone ? undefined : "new",
       run: () => (sfx.receivePerfect(), startTutorial()),
     },
     {
       label: "LATIHAN",
-      row: 1,
+      row: 2,
       run: () => {
         app.humans = 1;
         app.mate = false;
@@ -1301,9 +1311,9 @@ function titleItems(): TitleItem[] {
         goControls(menuPad);
       },
     },
-    { label: "CARA MAIN", row: 2, run: () => (sfx.receivePerfect(), goHowto()) },
-    { label: "PROFIL", row: 2, run: () => (sfx.receivePerfect(), goProfile()) },
-    { label: "PENGATURAN", row: 2, run: () => (sfx.receivePerfect(), goSettings()) },
+    { label: "CARA MAIN", row: 3, run: () => (sfx.receivePerfect(), goHowto()) },
+    { label: "PROFIL", row: 3, run: () => (sfx.receivePerfect(), goProfile()) },
+    { label: "PENGATURAN", row: 4, run: () => (sfx.receivePerfect(), goSettings()) },
   ];
 }
 
@@ -1315,8 +1325,10 @@ function renderMenus(): void {
   const items = titleItems();
   const rows: string[] = [];
   items.forEach((it, i) => {
-    const cls = `item${i === app.titleIndex ? " on" : ""}${it.flag === "new" ? " new" : ""}${it.flag === "soon" ? " soon" : ""}`;
-    const html = `<div class="${cls}" data-tap="title:${i}">${it.label}</div>`;
+    const ic = TITLE_ICONS[it.label];
+    const isMain = menuNav.id === "root" && it.label === "MAIN";
+    const cls = `item${i === app.titleIndex ? " on" : ""}${it.flag === "new" ? " new" : ""}${it.flag === "soon" ? " soon" : ""}${isMain ? " mainbtn" : ""}`;
+    const html = `<div class="${cls}" data-tap="title:${i}"${ic ? ` data-ic="${ic}"` : ""}>${it.label}</div>`;
     const r = it.row;
     rows[r] = (rows[r] ?? `<div class="mrow${it.big ? " big" : ""}">`) + html;
   });

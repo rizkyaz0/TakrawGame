@@ -1762,7 +1762,9 @@ function stepSetting(row: number, dir: number): void {
 }
 
 function renderSettings(): void {
-  $("setRows").innerHTML = settingRows()
+  const box = $("setRows");
+  const keep = box.scrollTop;
+  box.innerHTML = settingRows()
     .map(
       (r, i) =>
         `<div class="srow${app.setRow === i ? " on" : ""}" data-tap="setrow:${i}">` +
@@ -1771,6 +1773,13 @@ function renderSettings(): void {
         `<span class="carr" data-tap="set:${i}:1">▸</span></div>`,
     )
     .join("");
+  // Daftar yang panjang bisa digulir; gulirannya dijaga, dan baris terpilih selalu terlihat.
+  box.scrollTop = keep;
+  const on = box.querySelector<HTMLElement>(".srow.on");
+  if (on) {
+    if (on.offsetTop < box.scrollTop) box.scrollTop = on.offsetTop - 4;
+    else if (on.offsetTop + on.offsetHeight > box.scrollTop + box.clientHeight) box.scrollTop = on.offsetTop + on.offsetHeight - box.clientHeight + 8;
+  }
   $("setHint").innerHTML = backBtn();
 }
 

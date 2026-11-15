@@ -292,6 +292,72 @@ export class Scenery {
     else if (arena === "pantai") this.buildPantai(look);
     else if (arena === "pasarmalam") this.buildPasarMalam(look);
     else this.buildSekolah(look);
+    if (arena !== "pantai") void this.loadProps(arena, this.buildId);
+  }
+
+  // Properti tambahan dari 3DGarden (koleksi Street furniture dan Candy shop) di depan latar buatan
+  // kode. Dimuat setelah arenanya tampil; kalau gagal dimuat, arena tetap utuh tanpa properti itu.
+  // Bentuk: [model, x, z, skala, putar-y, berdiri-tegak (model rebah di sumbu z), tinggi tumpukan]
+  private async loadProps(arena: ArenaId, id: number): Promise<void> {
+    type Prop = [string, number, number, number, number, boolean?, number?];
+    const lists: Record<string, Prop[]> = {
+      kampung: [
+        ["vintage-street-light", -10.2, -8.3, 1.3, 0],
+        ["vintage-street-light", 8.6, -8.5, 1.3, 0],
+        ["electric-pole-01", -3.4, -9.4, 0.62, 0.2],
+        ["mail-box", -7.8, -8.0, 1.2, 0.5],
+        ["cast-iron-wooden-park-bench", -5.3, -8.0, 1.7, 0],
+        ["cast-iron-wooden-park-bench", 4.9, -8.1, 1.7, 0],
+        ["trash-can", 10.6, -8.0, 1.7, 0],
+        ["fire-hydrant", 6.8, -8.2, 1.7, 0],
+        ["city-bush-01", -13.3, -8.2, 2.2, 0.4],
+        ["city-bush-01", 14.8, -8.4, 2.2, 2.0],
+      ],
+      sekolah: [
+        ["bus-stop-01", 10.6, -9.6, 1.7, 0],
+        ["bike-rack-barricade", -8.2, -8.4, 1.6, 0],
+        ["bike-rack-barricade", -5.6, -8.5, 1.6, 0.1],
+        ["sharp-fence-2", -16.8, -8.8, 1.8, 0],
+        ["sharp-fence-2", 17.2, -8.8, 1.8, Math.PI / 2],
+        ["vintage-street-light", -3.6, -8.6, 1.3, 0],
+        ["vintage-street-light", 4.4, -8.6, 1.3, 0],
+        ["cast-iron-wooden-park-bench", 0.6, -8.2, 1.7, 0],
+        ["city-bush-01", -10.8, -8.4, 2.2, 0.8],
+        ["city-bush-01", 15.6, -8.4, 2.2, 1.9],
+      ],
+      pasarmalam: [
+        // Tumpukan donat raksasa dan lolipop spiral berdiri sebagai dekor pasar malam.
+        ["donut", -13.8, -9.6, 9, 0.3],
+        ["donut", -13.7, -9.5, 9, 1.2, false, 1.13],
+        ["donut", 14.6, -9.8, 9, 0.9],
+        ["sucette-spirale", -5.2, -9.4, 6, 0.2, true],
+        ["sucette-spirale", 5.4, -9.4, 6, -0.3, true],
+        ["sucette-spirale", 10.8, -9.8, 5.2, 0.5, true],
+      ],
+    };
+    const list = lists[arena] ?? [];
+    try {
+      const { getModel, stand } = await import("./models");
+      const group = new THREE.Group();
+      await Promise.all(
+        list.map(async ([slug, x, z, scale, rot, upright, lift]) => {
+          const m = await getModel(slug);
+          let obj: THREE.Object3D = m;
+          if (upright) {
+            // Lolipop dari katalog rebah di lantai: tegakkan.
+            obj = new THREE.Group();
+            m.rotation.x = -Math.PI / 2;
+            obj.add(m);
+          }
+          stand(obj, x, -0.3 + (lift ?? 0), z, scale, rot);
+          group.add(obj);
+        }),
+      );
+      if (id !== this.buildId) return; // arena sudah diganti selagi memuat
+      this.root.add(group);
+    } catch {
+      // gagal dimuat: arena tetap tampil tanpa properti tambahan
+    }
   }
 
   private add<T extends THREE.Object3D>(o: T, x = 0, y = 0, z = 0): T {

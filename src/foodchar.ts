@@ -129,6 +129,7 @@ export class FoodCharacter {
   // acuan model 3D, dan nanti sebagai pengganti badan kalau badannya diganti model hasil AI.
   constructor(charId: number, bare = false, skinId = 0) {
     this.charId = charId;
+    this.animator.styleId = charId % 3;
     this.skinId = skinId;
     const def = CHARS[charId];
     const kind = KINDS[charId % KINDS.length];

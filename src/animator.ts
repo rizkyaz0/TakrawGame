@@ -46,7 +46,7 @@ function kickKnee(t: number): number {
   return lerp(0, -0.25, ease((t - STRIKE_U) / (1 - STRIKE_U)));
 }
 
-type Part = "foot" | "knee" | "head";
+type Part = "foot" | "knee" | "head" | "high";
 
 interface Anim {
   kind: AnimKind;
@@ -87,6 +87,8 @@ export class Animator {
   private lastFrame = -1;
   private anim: Anim | null = null;
   private look = 0;
+  private chargeStart = -1;
+  styleId = 0; // gaya ulti: 0, 1, atau 2 (dipilih dari nomor karakter)
 
   // hipHeight dan legLength dalam satuan dunia, sesuai rig yang dipakai.
   // maxReach: batas kaki memanjang; karakter berkaki karet boleh jauh lebih besar.
@@ -117,13 +119,13 @@ export class Animator {
       if (this.anim && this.anim.kind !== "touch") return;
       // Seperti takraw sungguhan: bola tinggi disundul, sedang pakai lutut, rendah pakai kaki.
       const rel = by - p.y;
-      part = rel > 1.75 ? "head" : rel > 1.05 ? "knee" : "foot";
+      part = rel > 1.75 ? "high" : rel > 1.05 ? "knee" : "foot";
       lead = 0.35;
     } else if (kind === "guard") {
       // Terima bola: sama seperti sentuhan, tanpa tangan. Tinggi disundul, sedang
       // ditahan dada/paha, rendah ditahan kaki.
       const rel = by - p.y;
-      part = rel > 1.75 ? "head" : rel > 1.05 ? "knee" : "foot";
+      part = rel > 1.75 ? "high" : rel > 1.05 ? "knee" : "foot";
       lead = 0.4;
     }
     // Kalau ayunannya sudah berjalan sebagai roll spike, tetap roll spike.
@@ -272,13 +274,14 @@ export class Animator {
           o.kneeR = lerp(o.kneeR, -1.1, w);
           o.lean = lerp(o.lean, 0.14, w);
           o.bob = lerp(o.bob, -0.05, w);
-        } else if (an.part === "head") {
-          // Sundulan menahan: badan naik, kepala mendongak.
-          lift = 0.12 * w;
-          nod = 0.5 * w;
-          o.lean = lerp(o.lean, 0.1, w);
-          o.kneeL = lerp(o.kneeL, -0.2, w);
-          o.kneeR = lerp(o.kneeR, -0.2, w);
+        } else if (an.part === "high") {
+          // Bola tinggi: kaki diangkat tinggi menyambut, badan condong ke belakang.
+          lift = 0.1 * w;
+          o.hipR = lerp(o.hipR, clamp(an.aim, 1.5, 2.7), w);
+          o.kneeR = lerp(o.kneeR, -0.4, w);
+          o.lean = lerp(o.lean, 0.34, w);
+          o.kneeL = lerp(o.kneeL, -0.3, w);
+          legStretch = 1 + (Math.min(an.reach, this.maxReach * 0.75) - 1) * w;
         } else if (an.part === "knee") {
           // Dada dan paha: badan condong ke belakang, paha naik menyambut bola.
           o.hipR = lerp(o.hipR, clamp(an.aim, 0.9, 1.9), w);
@@ -297,17 +300,16 @@ export class Animator {
         const w = bell(u);
         const aim = an.aim ?? 1.2;
         face = w * 0.6;
-        if (an.part === "head") {
-          // Sundulan: badan naik, kepala mendongak menyambut bola.
-          lift = 0.14 * w;
-          nod = 0.45 * w;
-          o.lean = lerp(o.lean, -0.12, w);
-          o.shL = lerp(o.shL, -0.9, w);
-          o.shR = lerp(o.shR, -0.7, w);
-          o.elL = lerp(o.elL, 0.4, w);
-          o.elR = lerp(o.elR, 0.4, w);
-          o.kneeL = lerp(o.kneeL, -0.1, w);
-          o.kneeR = lerp(o.kneeR, -0.1, w);
+        if (an.part === "high") {
+          // Bola setinggi kepala atau lebih: kaki otomatis menyambar ke atas, badan condong ke belakang.
+          lift = 0.12 * w;
+          o.hipR = lerp(o.hipR, clamp(aim, 1.5, 2.7), w);
+          o.kneeR = lerp(o.kneeR, -0.25, w);
+          o.hipL = lerp(o.hipL, -0.3, w);
+          o.lean = lerp(o.lean, 0.38, w);
+          o.shL = lerp(o.shL, 1.4, w);
+          o.shR = lerp(o.shR, -1.2, w);
+          legStretch = 1 + (Math.min(an.reach, this.maxReach * 0.85) - 1) * w;
         } else if (an.part === "knee") {
           // Lutut: paha mengarah ke bola, betis terlipat.
           o.hipR = lerp(o.hipR, clamp(aim, 0.7, 2.0), w);
@@ -408,25 +410,59 @@ export class Animator {
 
     // Mengumpulkan tenaga saat layar membeku sebelum ulti: jongkok, tangan mengepal, bergetar.
     let jitterX = 0;
+    const nowMs = performance.now();
     if (charging) {
-      const now = performance.now();
-      glow = 0.6 + Math.sin(now * 0.03) * 0.4;
-      // Pose jongkok hanya saat diam di tanah; kalau sedang bergerak atau melompat sambil
-      // menunggu bola, karakter tetap bergerak biasa dan hanya badannya yang menyala.
-      if (p.grounded && speed < 0.8 && !this.anim) {
-        jitterX = Math.sin(now * 0.09) * 0.025;
-        o.kneeL = -1.0;
-        o.kneeR = -0.95;
-        o.hipL = 0.75;
-        o.hipR = 0.35;
-        o.lean = -0.2;
-        o.shL = -0.5;
-        o.shR = -0.3;
-        o.elL = 0.9;
-        o.elR = 0.9;
-        o.bob = -0.02;
+      if (this.chargeStart < 0) this.chargeStart = nowMs;
+      const cw = ease(clamp01((nowMs - this.chargeStart) / 220));
+      glow = 0.6 + Math.sin(nowMs * 0.03) * 0.4;
+      // Bergaya sebelum ulti. Tiga gaya, tiap karakter punya satu: otot, tunjuk langit, dan
+      // berkacak pinggang; semuanya melonjak kecil dan bergetar, di darat maupun di udara.
+      jitterX = Math.sin(nowMs * 0.09) * 0.02 * cw;
+      lift = Math.max(lift, 0.12 * cw + Math.abs(Math.sin(nowMs * 0.012)) * 0.05 * cw);
+      face = Math.max(face, cw);
+      // Gaya penuh di awal ulti (layar membeku) atau saat diam di tanah; setelah itu kaki dibebaskan mengejar bola.
+      if (!this.anim && (p.specialTimer > 40 || (p.grounded && speed < 0.8 && p.specialTimer === 0))) {
+        const lw = (a: number, b: number) => lerp(a, b, cw);
+        if (this.styleId === 0) {
+          // Pamer otot: kedua lengan ditekuk ke atas, dada membusung.
+          o.shL = lw(o.shL, 2.0);
+          o.shR = lw(o.shR, 2.0);
+          o.elL = lw(o.elL, 2.1);
+          o.elR = lw(o.elR, 2.1);
+          o.lean = lw(o.lean, 0.3);
+          o.kneeL = lw(o.kneeL, -0.55);
+          o.kneeR = lw(o.kneeR, -0.55);
+          o.hipL = lw(o.hipL, 0.3);
+          o.hipR = lw(o.hipR, -0.3);
+          o.twist = lw(o.twist, Math.sin(nowMs * 0.02) * 0.25);
+        } else if (this.styleId === 1) {
+          // Tunjuk langit: satu lengan lurus ke atas, kaki lain menyilang, badan meliuk.
+          o.shR = lw(o.shR, 3.0);
+          o.elR = lw(o.elR, 0.05);
+          o.shL = lw(o.shL, -0.6);
+          o.elL = lw(o.elL, 0.9);
+          o.lean = lw(o.lean, 0.38);
+          o.twist = lw(o.twist, -0.4);
+          o.hipR = lw(o.hipR, 0.55);
+          o.kneeR = lw(o.kneeR, -0.9);
+          o.hipL = lw(o.hipL, -0.2);
+          o.kneeL = lw(o.kneeL, -0.3);
+        } else {
+          // Berkacak pinggang: kaki melebar, dagu naik, badan condong ke belakang.
+          o.shL = lw(o.shL, 0.5);
+          o.shR = lw(o.shR, -0.5);
+          o.elL = lw(o.elL, 1.9);
+          o.elR = lw(o.elR, 1.9);
+          o.lean = lw(o.lean, 0.45);
+          o.hipL = lw(o.hipL, 0.5);
+          o.hipR = lw(o.hipR, -0.5);
+          o.kneeL = lw(o.kneeL, -0.3);
+          o.kneeR = lw(o.kneeR, -0.3);
+          nod = Math.max(nod, 0.35 * cw);
+        }
+        o.bob = lw(o.bob, -0.02);
       }
-    }
+    } else this.chargeStart = -1;
 
     o.kneeL = Math.min(0.15, o.kneeL);
     o.kneeR = Math.min(0.15, o.kneeR);

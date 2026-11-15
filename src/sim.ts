@@ -731,7 +731,10 @@ function tryHit(s: GameState, i: number, input: number): void {
   const reach = (special ? SPECIAL_R : smashing ? SMASH_R : guarding ? GUARD_R : BODY_R) + BALL_R;
   const dx = b.x - p.x;
   const dy = b.y - (p.y + BODY_Y);
-  if (dx * dx + dy * dy > reach * reach) return;
+  // Bola di atas badan (setinggi kepala saat melompat) lebih mudah disambar kaki: jangkauan
+  // ke atas sedikit lebih longgar, khusus sentuhan biasa.
+  const dyEff = dy > 0 && !special && !smashing && !guarding ? dy * 0.93 : dy;
+  if (dx * dx + dyEff * dyEff > reach * reach) return;
 
   if (s.lastSide !== team) {
     s.lastSide = team;

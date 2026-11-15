@@ -21,6 +21,12 @@ import {
   saveDevices,
   trackPads,
   type Device,
+  KEY_ACTIONS,
+  keyFor,
+  keyHelp,
+  keyLabel,
+  resetKeys,
+  setKey,
 } from "./input";
 import {
   broadcast,
@@ -90,6 +96,7 @@ const elLines = $("lines");
 const elFlash = $("flash");
 const elHud = $("hud");
 const elHelp = $("help");
+const elSetInfo = $("setinfo");
 const cards =[1, 2].map((n) => ({
   root: $(`c${n}`),
   name: $(`n${n}`),
@@ -103,7 +110,7 @@ const shown = { score: [-1, -1], char: [-1, -1], rally: -1, heat: -1, over: fals
 const elMates = [$("mates1"), $("mates2")];
 
 // ===== Alur aplikasi: judul -> pilih karakter -> pertandingan =====
-type Mode = "title" | "settings" | "profile" | "join" | "controls" | "room" | "select" | "match";
+type Mode = "title" | "settings" | "profile" | "join" | "howto" | "keys" | "controls" | "room" | "select" | "match";
 const app = {
   mode: "title" as Mode,
   paused: false,
@@ -119,6 +126,10 @@ const app = {
   teamSize: 1 as 1 | 2 | 3, // pemain per sisi
   mate: false, // mode tim dengan dua orang: pemain kedua jadi teman setim (bukan lawan)
   winScore: 7, // poin untuk menang
+  sets: 1 as 1 | 3 | 5, // pilihan jumlah set (terbaik dari)
+  setsActive: 1, // jumlah set pertandingan yang sedang berjalan (1 untuk arcade, latihan, online)
+  setWins: [0, 0] as [number, number],
+  setNo: 1,
   arcade: { on: false, stage: 0, foes: [] as number[] }, // lima lawan berturut-turut, makin sulit
   arena: "acak" as ArenaId | "acak",
   time: "acak" as TimeId | "acak",
@@ -258,6 +269,8 @@ const SPECIAL_DESC: Record<string, string> = {
   freeze: "Bola berhenti di udara di atas lawan sebentar, lalu jatuh lurus.",
   heavy: "Bola batu yang lambat dan berat. Tidak bisa di-smash balik, hanya diterima.",
   bounce: "Bola melesat, memantul sekali di lantai lawan tanpa dihitung poin, lalu melambung.",
+  rain: "Bola naik tinggi, lalu jatuh di salah satu dari tiga titik yang ditandai. Hanya satu yang asli.",
+  split: "Bola cepat yang tampak tiga. Hanya satu yang asli.",
 };
 
 function resetShown(): void {
@@ -274,6 +287,8 @@ function resetShown(): void {
 
 function setMode(mode: Mode): void {
   app.mode = mode;
+  // Latar 3D dikaburkan sedikit di layar yang isinya teks saja; Room dan Pilih Jagoan tetap tajam karena menampilkan karakter.
+  document.body.classList.toggle("menubg", mode === "title" || mode === "settings" || mode === "profile" || mode === "join" || mode === "howto" || mode === "keys");
   app.paused = false;
   elHud.dataset.mode = mode;
   elHud.dataset.paused = "0";
@@ -385,10 +400,7 @@ function goTitle(): void {
 
 // ===== Pengaturan kontrol =====
 // Tiap pemain memilih alatnya sendiri: keyboard WASD, keyboard panah, atau salah satu stick.
-const KEY_HELP = [
-  "A D gerak · W lompat · S bawah · F smash · E terima · G dash · H jurus",
-  "← → gerak · ↑ lompat · ↓ bawah · K smash · O terima · L dash · ; jurus",
-];
+const KEY_HELP = { 0: () => keyHelp(0), 1: () => keyHelp(1) } as const;
 const PAD_HELP = "D-pad/stick gerak · ✕ lompat · □ smash · L1 terima · ○ dash · △ jurus";
 let hadSavedDevices = loadDevices();
 
@@ -418,7 +430,7 @@ function defaultDevices(fromPad: number | null): void {
 
 const devHelp = (d: Device) =>
   d.kind === "kbd"
-    ? KEY_HELP[d.set]
+    ? (d.set === 2 ? "" : KEY_HELP[d.set]())
     : d.kind === "net"
       ? "Main dari perangkatnya sendiri, lewat internet."
       : d.kind === "touch"
@@ -632,7 +644,7 @@ const seatConvertible = (i: number) => i === 1 || (i === 2 && app.teamSize > 1);
 
 function roomFocusList(): string[] {
   const seats = Array.from({ length: roomSize() }, (_, i) => `s${i}`);
-  return ["start", ...seats, "arena", "time", "win", "cpu", "spec"];
+  return ["start", ...seats, "arena", "time", "win", "sets", "cpu", "spec"];
 }
 
 function roomPreview(): void {
@@ -747,7 +759,12 @@ function roomSeat(i: number): void {
 }
 
 function roomCycle(what: string, dir: number): void {
-  if (what === "cpu") {
+  if (what === "sets") {
+    const opts = [1, 3, 5] as const;
+    app.sets = opts[(opts.indexOf(app.sets) + dir + 3) % 3];
+    sfx.swing();
+    renderRoom();
+  } else if (what === "cpu") {
     app.cpuLevel = (app.cpuLevel + dir + 3) % 3;
     sfx.swing();
     renderRoom();
@@ -809,6 +826,7 @@ function renderRoom(): void {
     chip("arena", "ARENA", arenaName()) +
     chip("time", "WAKTU", timeName()) +
     chip("win", "POIN", String(app.winScore)) +
+    chip("sets", "SET", app.sets === 1 ? "1" : `${app.sets} (BEST OF)`) +
     chip("cpu", "BOT", CPU_NAMES[app.cpuLevel]) +
     chip("spec", "PENONTON", deviceLabel(spectator.device));
   $("roomBody").innerHTML = team(0) + team(1) + `<div class="ropts">${opts}</div>`;
@@ -858,7 +876,16 @@ const ARCADE_LEVELS = [0, 0, 1, 1, 2];
 // Karakter terkunci hanya berlaku saat main sendiri di perangkat ini; online semua terbuka.
 const canPick = (k: number) => app.online !== "off" || isUnlocked(k);
 
-function startMatch(): void {
+// Set: pertandingan terbaik dari 1/3/5 set. Set berikutnya dimulai dengan startMatch(true).
+const setNeed = () => (app.setsActive + 1) / 2;
+const matchDecided = () => app.setsActive <= 1 || Math.max(app.setWins[0], app.setWins[1]) >= setNeed();
+
+function startMatch(keepSets = false): void {
+  if (!keepSets) {
+    app.setsActive = app.arcade.on || app.training || app.tutorial || app.online !== "off" ? 1 : app.sets;
+    app.setWins = [0, 0];
+    app.setNo = 1;
+  }
   if (app.arcade.on) {
     app.chars[1] = app.arcade.foes[app.arcade.stage] ?? app.chars[1];
     app.cpuLevel = ARCADE_LEVELS[app.arcade.stage] ?? 2;
@@ -1082,6 +1109,7 @@ function titleItems(): TitleItem[] {
         goControls(menuPad);
       },
     },
+    { label: "CARA MAIN", row: 2, run: () => (sfx.receivePerfect(), goHowto()) },
     { label: "PROFIL", row: 2, run: () => (sfx.receivePerfect(), goProfile()) },
     { label: "PENGATURAN", row: 2, run: () => (sfx.receivePerfect(), goSettings()) },
   ];
@@ -1239,6 +1267,12 @@ function handleTap(v: string): void {
     const [, i, dir] = v.split(":");
     room.focus = `s${i}`;
     roomChar(Number(i), Number(dir));
+  } else if (cmd === "kk") {
+    const [, set, row] = v.split(":");
+    keysUi.set = Number(set) === 1 ? 1 : 0;
+    keysUi.row = Number(row);
+    keysUi.waiting = true;
+    renderKeys();
   } else if (cmd === "rk") {
     room.focus = `s${arg}`;
     roomSkin(Number(arg), 1);
@@ -1336,6 +1370,8 @@ function applySettings(): void {
   renderer.shakeScale = settings.calm ? 0.25 : 1;
   renderer.setStyle(settings.style);
   renderer.setLowGfx(settings.lowGfx);
+  document.body.classList.toggle("soft", settings.style === "soft");
+  fitUi();
   document.body.classList.toggle("calm", settings.calm);
   document.documentElement.style.setProperty("--ts", String([0.85, 1, 1.2][settings.touchSize]));
 }
@@ -1396,6 +1432,18 @@ function settingRows(): SettingRow[] {
       step: () => (settings.calm = !settings.calm),
     },
     {
+      label: "Tombol keyboard",
+      note: "Ubah tombol untuk P1 (WASD) dan P2 (panah)",
+      value: () => "UBAH ▸",
+      step: () => undefined,
+    },
+    {
+      label: "Teks menu",
+      note: "Perbesar tulisan dan tombol menu",
+      value: () => (settings.bigText ? "BESAR" : "NORMAL"),
+      step: () => (settings.bigText = !settings.bigText),
+    },
+    {
       label: "Gaya",
       note: "Kartun 3D halus, atau gambar tangan berarsir",
       value: () => (settings.style === "soft" ? "KARTUN 3D" : "GAMBAR TANGAN"),
@@ -1414,6 +1462,7 @@ function settingRows(): SettingRow[] {
 function stepSetting(row: number, dir: number): void {
   const r = settingRows()[row];
   if (!r) return;
+  if (r.label === "Tombol keyboard") return goKeys();
   r.step(dir);
   applySettings();
   saveSettings();
@@ -1435,6 +1484,79 @@ function renderSettings(): void {
     )
     .join("");
   $("setHint").innerHTML = backBtn();
+}
+
+// ===== Ubah tombol keyboard =====
+const keysUi = { set: 0 as 0 | 1, row: 0, waiting: false };
+const RESERVED_KEYS = new Set(["Escape", "Enter", "NumpadEnter", "Backspace", "Tab", "MetaLeft", "MetaRight", "ContextMenu"]);
+
+function goKeys(): void {
+  setMode("keys");
+  keysUi.waiting = false;
+  renderKeys();
+}
+
+function renderKeys(): void {
+  const col = (set: 0 | 1) =>
+    `<div class="kcol"><h3>${set === 0 ? "PEMAIN 1 · WASD" : "PEMAIN 2 · PANAH"}</h3>` +
+    KEY_ACTIONS.map((a, r) => {
+      const on = keysUi.set === set && keysUi.row === r;
+      const wait = on && keysUi.waiting;
+      return (
+        `<div class="krow${on ? " on" : ""}" data-tap="kk:${set}:${r}"><span>${a.label}</span>` +
+        `<b class="display">${wait ? "TEKAN TOMBOL…" : keyLabel(keyFor(set, a.id))}</b></div>`
+      );
+    }).join("") +
+    `</div>`;
+  $("keysBody").innerHTML = col(0) + col(1);
+  $("keysNote").innerHTML = keysUi.waiting
+    ? `Tekan tombol baru. <kbd>Esc</kbd> batal. Kalau tombolnya sudah dipakai aksi lain, keduanya bertukar.`
+    : `<kbd>W</kbd><kbd>S</kbd> pilih · <kbd>A</kbd><kbd>D</kbd> pindah pemain · <kbd>Enter</kbd> ubah · <kbd>R</kbd> kembalikan bawaan`;
+  $("keysHint").innerHTML = backBtn() + tapBtn("go", "KeyR", "KEMBALIKAN BAWAAN", "R");
+}
+
+function keysKey(code: string): void {
+  if (keysUi.waiting) {
+    if (code !== "Escape" && !RESERVED_KEYS.has(code)) {
+      setKey(keysUi.set, KEY_ACTIONS[keysUi.row].id, code);
+      sfx.receivePerfect();
+    } else if (code !== "Escape") sfx.fault();
+    keysUi.waiting = false;
+    renderKeys();
+    return;
+  }
+  const n = KEY_ACTIONS.length;
+  if (code === "Escape" || code === "Backspace") goSettings();
+  else if (UP.has(code)) (keysUi.row = (keysUi.row + n - 1) % n), sfx.swing(), renderKeys();
+  else if (DOWN.has(code)) (keysUi.row = (keysUi.row + 1) % n), sfx.swing(), renderKeys();
+  else if (LEFT.has(code) || RIGHT.has(code)) (keysUi.set = keysUi.set === 0 ? 1 : 0), sfx.swing(), renderKeys();
+  else if (code === "KeyR") {
+    resetKeys();
+    sfx.swing();
+    renderKeys();
+  } else if (CONFIRM.has(code)) {
+    keysUi.waiting = true;
+    sfx.swing();
+    renderKeys();
+  }
+}
+
+function goHowto(): void {
+  setMode("howto");
+  const keys = (set: 0 | 1) => `<p><b>${set === 0 ? "Keyboard WASD" : "Keyboard panah"}</b><br />${KEY_HELP[set]()}</p>`;
+  const jurus = CHARS.map(
+    (c) => `<b style="--pc:${hex(c.color)}">${c.name}</b><span><i>${c.specialName}</i> · ${SPECIAL_DESC[c.special]}</span>`,
+  ).join("");
+  $("howBody").innerHTML =
+    `<div class="hcol"><h3>KONTROL</h3>${keys(0)}${keys(1)}<p><b>Stick</b><br />${PAD_HELP}</p>` +
+    `<p><b>HP</b><br />Stik di kiri layar untuk gerak, tombol aksi di kanan layar.</p>` +
+    `<h3>ATURAN SINGKAT</h3>` +
+    `<p>Satu tim boleh menyentuh bola maksimal <b>3 kali</b>. Bola jatuh di lantai lawan = poin. Menang di ${app.winScore} poin dengan selisih 2.</p>` +
+    `<p><b>Smash</b>: tekan saat bola dekat badan. <b>Tahan</b> tombolnya saat kena: kamu melayang sebentar, arahkan bola, lepas untuk menembak. Tekan tepat saat cincin emas = <b>sempurna</b>.</p>` +
+    `<p><b>Terima</b>: tekan sedikit sebelum bola sampai untuk menjinakkan bola kencang atau bola jurus.</p>` +
+    `<p>Meter terisi dari sentuhan, smash, dan terima. Penuh = <b>jurus</b>.</p></div>` +
+    `<div class="hcol"><h3>JURUS TIAP JAGOAN</h3><div class="jur">${jurus}</div></div>`;
+  $("howHint").innerHTML = backBtn();
 }
 
 function goProfile(): void {
@@ -1681,7 +1803,8 @@ if (fsRoot.requestFullscreen || fsRoot.webkitRequestFullscreen) {
 
 // Seluruh HUD diperkecil di layar pendek atau sempit, supaya tidak saling tumpuk.
 function fitUi(): void {
-  const z = Math.max(0.42, Math.min(1, window.innerHeight / 640, window.innerWidth / 880));
+  const base = Math.max(0.42, Math.min(1, window.innerHeight / 640, window.innerWidth / 880));
+  const z = Math.min(1.3, base * (settings.bigText ? 1.18 : 1));
   elHud.style.setProperty("zoom", String(z));
 }
 window.addEventListener("resize", fitUi);
@@ -1755,6 +1878,11 @@ function menuKey(code: string): void {
     return;
   }
 
+  if (app.mode === "keys") return keysKey(code);
+  if (app.mode === "howto") {
+    if (code === "Escape" || code === "Backspace" || CONFIRM.has(code)) goTitle();
+    return;
+  }
   if (app.mode === "profile") {
     if (code === "Escape" || code === "Backspace" || CONFIRM.has(code)) goTitle();
     return;
@@ -1878,7 +2006,10 @@ function menuKey(code: string): void {
 
   // Pertandingan.
   if (state.phase === "over") {
-    if (CONFIRM.has(code)) {
+    if (CONFIRM.has(code) && !matchDecided()) {
+      app.setNo++;
+      startMatch(true);
+    } else if (CONFIRM.has(code)) {
       if (app.arcade.on) {
         const won = state.score[0] > state.score[1];
         // Menang: lanjut ke lawan berikutnya. Kalah atau sudah tamat: mulai lagi dari babak 1.
@@ -2176,7 +2307,11 @@ function handleEvent(e: GameEvent): void {
     else if (e.type === "specialHit") progress.specials++;
   }
   if (counting() && e.type === "score") progress.bestRally = Math.max(progress.bestRally, state.rally);
-  if (e.type === "over") recordMatch(e.winner);
+  if (e.type === "over") {
+    // Beberapa set: statistik baru dicatat kalau pertandingannya sudah diputuskan.
+    if (app.setsActive > 1) app.setWins[e.winner]++;
+    if (matchDecided()) recordMatch(e.winner);
+  }
   if (app.tutorial) tutEvent(e);
   if (app.training && trainEvent(e)) return;
   switch (e.type) {
@@ -2244,6 +2379,7 @@ function handleEvent(e: GameEvent): void {
     case "specialHit":
       if (e.kind === "fire" || e.kind === "meteor" || e.kind === "bounce") sfx.fire();
       else if (e.kind === "heavy") sfx.smash(1);
+      else if (e.kind === "rain") sfx.curveDrop();
       else sfx.curve();
       flash(e.kind === "fire" || e.kind === "meteor" ? "#fff1c4" : "#e6f4ff");
       crowdSfx.cheer(0.7);
@@ -2450,6 +2586,11 @@ function updateHud(): void {
     }
   }
 
+  const setText = app.mode === "match" && app.setsActive > 1 ? `SET ${app.setNo} · ${app.setWins[0]}–${app.setWins[1]}` : "";
+  if (elSetInfo.textContent !== setText) {
+    elSetInfo.textContent = setText;
+    elSetInfo.classList.toggle("on", setText !== "");
+  }
   const over = state.phase === "over";
   if (shown.over !== over) {
     shown.over = over;
@@ -2458,13 +2599,15 @@ function updateHud(): void {
     if (over) {
       const w = state.score[0] > state.score[1] ? 0 : 1;
       elBanner.style.setProperty("--cc", hex(charOf(w).color));
+      const decided = matchDecided();
       elBanner.innerHTML =
-        `<div class="big display">${overTitle(w)}</div>` +
+        `<div class="big display">${decided ? overTitle(w) : `SET ${app.setNo} UNTUK ${charOf(w).name.toUpperCase()}`}</div>` +
         `<div class="bscore display">${state.score[0]} – ${state.score[1]}</div>` +
+        (app.setsActive > 1 ? `<small>Set: ${app.setWins[0]} – ${app.setWins[1]} · terbaik dari ${app.setsActive}</small>` : "") +
         (app.online === "client"
           ? `<small>Menunggu host memilih: main lagi atau ganti jagoan…</small>` +
             `<div class="bbtns">${tapBtn("back", "KeyM", "KELUAR ROOM", "M")}</div>`
-          : `<div class="bbtns">${tapBtn("go", "KeyF", againLabel(w), "F")}` +
+          : `<div class="bbtns">${tapBtn("go", "KeyF", decided ? againLabel(w) : "SET BERIKUTNYA ▸", "F")}` +
             `${tapBtn("back", "KeyC", "GANTI JAGOAN", "C")}${tapBtn("back", "KeyM", "MENU UTAMA", "M")}</div>`) +
         `<small style="display:none"><span data-tap="KeyF"><kbd>F</kbd> main lagi</span> &nbsp;·&nbsp; ` +
         `<span data-tap="KeyC"><kbd>C</kbd> pilih karakter</span> &nbsp;·&nbsp; ` +
@@ -2492,6 +2635,7 @@ function hostBroadcast(events: GameEvent[]): void {
     chars: app.chars,
     locked: app.locked,
     ar: [renderer.arena, renderer.time],
+    sk: renderer.skins,
     s: app.mode === "select" || app.mode === "match" ? { ...state, events: [] } : undefined,
     ev: events,
   });
@@ -2637,6 +2781,7 @@ interface FrameMsg {
   p: boolean;
   seats: number[];
   ar?: [ArenaId, TimeId];
+  sk?: number[]; // skin tiap kursi (tampilan saja)
   chars: [number, number];
   locked: [boolean, boolean];
   s?: GameState;
@@ -2651,7 +2796,7 @@ function clientHelp(): void {
         ? "<b>KAMU PENONTON USIL</b> stik geser bidikan · SMASH kulit pisang · LOMPAT sandal"
         : "<b>KAMU PENONTON USIL</b> mouse membidik · klik kiri kulit pisang · klik kanan sandal (atau C B geser, V pisang, Spasi sandal)"
       : app.seat >= 0
-        ? `<b>KAMU P${app.seat + 1}</b> ${KEY_HELP[0]}`
+        ? `<b>KAMU P${app.seat + 1}</b> ${KEY_HELP[0]()}`
         : "<b>KAMU MENONTON</b>";
   elHelp.innerHTML = `${text} &nbsp;·&nbsp; <kbd>Esc</kbd> menu`;
 }
@@ -2664,6 +2809,8 @@ function applyFrame(m: FrameMsg): void {
   ) {
     renderer.setArena(m.ar[0], m.ar[1]);
   }
+  // Skin dari host: hanya angka 0..2, paling banyak 6 kursi.
+  if (Array.isArray(m.sk)) renderer.skins = m.sk.slice(0, 6).map((x) => (x === 1 || x === 2 ? x : 0));
   const seat = Array.isArray(m.seats) ? m.seats.indexOf(net.myId) : -1;
   const seatChanged = seat !== app.seat;
   app.seat = seat;

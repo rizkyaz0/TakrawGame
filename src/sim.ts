@@ -56,7 +56,7 @@ export const Btn = {
   GUARD: 256,
 } as const;
 
-export type SpecialKind = "fire" | "curve" | "zigzag" | "meteor" | "ghost" | "freeze" | "heavy" | "bounce";
+export type SpecialKind = "fire" | "curve" | "zigzag" | "meteor" | "ghost" | "freeze" | "heavy" | "bounce" | "rain" | "split";
 
 export interface CharDef {
   name: string;
@@ -89,7 +89,7 @@ export const CHARS: readonly CharDef[] = [
     smashSpeed: 15.9,
     special: "curve",
     specialName: "Bola Pelintir",
-    charge: 1.07,
+    charge: 0.85,
   },
   {
     name: "Pak Bakso",
@@ -139,7 +139,7 @@ export const CHARS: readonly CharDef[] = [
     smashSpeed: 16.7,
     special: "meteor",
     specialName: "Hujan Jagung",
-    charge: 1.14,
+    charge: 1.25,
   },
   {
     name: "Om Sate",
@@ -167,9 +167,9 @@ export const CHARS: readonly CharDef[] = [
     moveSpeed: 7.4,
     jumpV: 13.8,
     smashSpeed: 15.4,
-    special: "zigzag",
-    specialName: "Kerupuk Terbang",
-    charge: 0.72,
+    special: "split",
+    specialName: "Kerupuk Kembar",
+    charge: 1.37,
   },
   {
     name: "Pakde Tempe",
@@ -187,9 +187,9 @@ export const CHARS: readonly CharDef[] = [
     moveSpeed: 6.9,
     jumpV: 13.1,
     smashSpeed: 16.4,
-    special: "curve",
-    specialName: "Santan Tumpah",
-    charge: 1.1,
+    special: "rain",
+    specialName: "Hujan Cendol",
+    charge: 0.5,
   },
 ];
 
@@ -235,6 +235,9 @@ const METEOR_TOP = 10.5;
 const METEOR_SPEED = 30;
 const GHOST_FRAMES = 42;
 const GHOST_SPEED = 22;
+export const SPLIT_FRAMES = 40; // lama bayangan bola kembar terlihat
+const SPLIT_SPEED = 21;
+export const RAIN_XS = [2.4, 4.3, 6.2]; // tiga titik jatuh Hujan (jarak dari net)
 const METER_TOUCH = 8;
 const METER_SMASH = 14;
 const METER_CONCEDE = 15;
@@ -244,6 +247,7 @@ const FREEZE_HOLD = 20; // frame bola diam di udara (Bola Beku)
 const FREEZE_DROP = 28;
 const BALL_MAX_SPEED = 24;
 const BALL_POWER_MAX_SPEED = 30;
+export const SERVE_EVERY = 3; // servis berpindah sisi tiap sekian poin
 const BALL_SUBSTEPS = 4;
 const PLAYER_GRAVITY = 34;
 const DASH_SPEED = 15;
@@ -302,11 +306,14 @@ export interface Ball {
   freeze: number; // Bola Beku: 1 = sedang menuju titik henti, 2 = sudah berhenti
   hold: number; // sisa frame bola diam di udara (Bola Beku)
   heavy: number; // 1 = Bola Batu: berat, tidak bisa di-smash balik, hanya diterima
+  rain: number; // 1 = Hujan: tiga titik jatuh ditandai, hanya satu yang asli (b.tx)
+  split: number; // sisa frame bola kembar (dua bayangan palsu menyatu kembali)
+  splitK: number; // posisi bola asli di antara tiga bayangan: 0 atas, 1 tengah, 2 bawah
 }
 
 // Apakah bola sedang membawa efek jurus apa pun.
 export function ballHasFx(b: Ball): boolean {
-  return b.power > 0 || b.curveSide >= 0 || b.wave > 0 || b.rise > 0 || b.ghost > 0 || b.skip > 0 || b.freeze > 0 || b.hold > 0 || b.heavy > 0;
+  return b.power > 0 || b.curveSide >= 0 || b.wave > 0 || b.rise > 0 || b.ghost > 0 || b.skip > 0 || b.freeze > 0 || b.hold > 0 || b.heavy > 0 || b.rain > 0 || b.split > 0;
 }
 
 function clearBallFx(b: Ball): void {
@@ -322,6 +329,8 @@ function clearBallFx(b: Ball): void {
   b.freeze = 0;
   b.hold = 0;
   b.heavy = 0;
+  b.rain = 0;
+  b.split = 0;
 }
 
 export type Phase = "serve" | "play" | "point" | "over";
@@ -396,7 +405,8 @@ export interface GameState {
   winCap: number; // skor yang selalu menang
   ball: Ball;
   score: [number, number];
-  server: number;
+  server: number; // pencetak poin terakhir (dipakai untuk selebrasi)
+  serving: number; // sisi yang melakukan servis: bergantian tiap SERVE_EVERY poin
   rally: number; // jumlah pukulan dalam reli yang sedang berjalan
   heat: number; // panas reli, naik tiap smash yang masuk
   lastSide: number; // sisi yang terakhir menyentuh bola, -1 = belum ada
@@ -447,9 +457,10 @@ export function createState(chars: readonly number[] = [0, 1]): GameState {
     players: chars.map((_, i) => makePlayer(i, chars.length >> 1)),
     winScore: WIN_SCORE,
     winCap: WIN_CAP,
-    ball: { x: 0, y: 0, vx: 0, vy: 0, power: 0, curveSide: -1, wave: 0, waveT: 0, waveBase: 0, rise: 0, tx: 0, ghost: 0, skip: 0, freeze: 0, hold: 0, heavy: 0 },
+    ball: { x: 0, y: 0, vx: 0, vy: 0, power: 0, curveSide: -1, wave: 0, waveT: 0, waveBase: 0, rise: 0, tx: 0, ghost: 0, skip: 0, freeze: 0, hold: 0, heavy: 0, rain: 0, split: 0, splitK: 1 },
     score: [0, 0],
     server: 0,
+    serving: 0,
     rally: 0,
     heat: 0,
     lastSide: -1,
@@ -471,7 +482,9 @@ function startServe(s: GameState): void {
     s.players[i].prev = old[i].prev;
     s.players[i].meter = old[i].meter;
   }
-  s.ball.x = s.server === 0 ? -4 : 4;
+  // Servis bergantian tiap 3 poin, seperti takraw sungguhan.
+  s.serving = Math.floor((s.score[0] + s.score[1]) / SERVE_EVERY) % 2;
+  s.ball.x = s.serving === 0 ? -4 : 4;
   s.ball.y = 4.5;
   s.ball.vx = 0;
   s.ball.vy = 0;
@@ -740,7 +753,34 @@ function tryHit(s: GameState, i: number, input: number): void {
     p.specialTimer = 0;
     p.smashRecover = SPECIAL_RECOVER;
     p.meter = Math.max(0, p.meter - SPECIAL_COST); // jurus jadi: baru sekarang meternya terpakai
-    if (c.special === "heavy") {
+    if (c.special === "rain") {
+      // Hujan: bola naik tegak di atas titik tengah, lalu jatuh di salah satu dari tiga titik yang
+      // ditandai. Yang asli dipilih dari hash (bukan acak) dan arah lintasan tidak membocorkannya.
+      const k = (Math.imul(s.rally * 7 + s.score[0] * 3 + s.score[1] * 5 + i * 11 + 1, 40503) >>> 0) % 3;
+      b.tx = dir * RAIN_XS[k];
+      b.rise = METEOR_RISE;
+      b.vx = (dir * RAIN_XS[1] - b.x) / (METEOR_RISE * DT);
+      b.vy = (METEOR_TOP - b.y) / (METEOR_RISE * DT);
+      b.rain = 1;
+      s.hitstop = 7;
+    } else if (c.special === "split") {
+      // Kembar: bola cepat yang tampak tiga; hanya satu yang asli (posisinya dari hash).
+      let nx = dir;
+      let ny = p.grounded ? 0.3 : -0.12;
+      for (let k = 0; k < 40; k++) {
+        const l = Math.hypot(nx, ny);
+        const t = Math.abs(b.x) / ((Math.abs(nx) / l) * SPLIT_SPEED);
+        const yAtNet = b.x * dir < 0 ? b.y + (ny / l) * SPLIT_SPEED * t - 0.5 * BALL_GRAVITY * t * t : 9;
+        if (yAtNet > NET_H + NET_R + BALL_R + 0.3) break;
+        ny += 0.15;
+      }
+      const l = Math.hypot(nx, ny);
+      b.vx = (nx / l) * SPLIT_SPEED;
+      b.vy = (ny / l) * SPLIT_SPEED;
+      b.split = SPLIT_FRAMES;
+      b.splitK = (Math.imul(s.rally * 5 + s.score[0] * 7 + s.score[1] * 3 + i * 13 + 2, 40503) >>> 0) % 3;
+      s.hitstop = 6;
+    } else if (c.special === "heavy") {
       // Bola Batu: lob lambat dan berat ke belakang lapangan lawan. Tidak bisa di-smash balik:
       // yang mencoba cuma kewalahan; satu-satunya jawaban adalah menerimanya.
       const T = 0.45;
@@ -942,6 +982,7 @@ function stepBall(s: GameState, inputs: readonly number[]): void {
     b.power = FIRE_FRAMES;
   }
   if (b.ghost > 0) b.ghost--;
+  if (b.split > 0) b.split--;
   // Bola Beku: begitu sampai di titik henti, bola diam di udara lalu jatuh lurus.
   if (b.freeze === 1 && b.x * b.tx >= 3.6) {
     b.freeze = 2;
@@ -966,7 +1007,8 @@ function stepBall(s: GameState, inputs: readonly number[]): void {
     // Fase naik Bola Blusukan; di puncak bola berhenti lalu jatuh lurus.
     powered = true;
     if (--b.rise === 0) {
-      b.vx = 0;
+      // Hujan melayang ke titik jatuhnya selama jatuh; Blusukan jatuh lurus.
+      b.vx = b.rain > 0 ? (b.tx - b.x) / ((b.y / METEOR_SPEED) || 1) : 0;
       b.vy = -METEOR_SPEED;
       b.power = 40;
       s.events.push({ type: "curveDrop" });
@@ -1292,7 +1334,7 @@ export function cpuInput(s: GameState, i: number, level = 1): number {
     if (px * side > 0.2) targetX = px + 0.35 * side; // berdiri sedikit di belakang bola
   }
   // Bola Blusukan lawan: CPU kadang membaca titik jatuhnya selagi bola masih naik.
-  if (b.rise > 0 && b.tx * side > 0 && (Math.imul(s.rally + s.score[0] + 3, 40503) >>> 0) % 100 < 68) {
+  if (b.rise > 0 && b.rain === 0 && b.tx * side > 0 && (Math.imul(s.rally + s.score[0] + 3, 40503) >>> 0) % 100 < 68) {
     targetX = b.tx + 0.3 * side;
   }
   // Bola Siluman: CPU juga "tidak melihat" bolanya, jadi tebakannya meleset.

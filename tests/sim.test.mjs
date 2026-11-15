@@ -277,7 +277,7 @@ function fireSpecial(charId) {
 
 test("jurus baru: tiap karakter punya jenis yang valid", () => {
   const kinds = new Set(CHARS.map((c) => c.special));
-  for (const k of ["fire", "curve", "zigzag", "meteor", "ghost", "freeze", "heavy", "bounce"]) {
+  for (const k of ["fire", "curve", "zigzag", "meteor", "ghost", "freeze", "heavy", "bounce", "rain", "split"]) {
     assert.ok(kinds.has(k), `ada karakter dengan jurus ${k}`);
   }
 });
@@ -335,4 +335,43 @@ test("Bola Mantul: pantulan pertama di lantai lawan tidak dihitung poin", () => 
   }
   assert.ok(bounced, "memantul sekali");
   assert.deepEqual(s.score, [1, 0], "poin untuk penyerang setelah pantulan kedua");
+});
+
+test("servis bergantian tiap 3 poin", () => {
+  const s = createState([0, 1]);
+  const seen = [];
+  for (let n = 0; n < 8; n++) {
+    s.phase = "play";
+    s.ball.x = 3;
+    s.ball.y = 0.3;
+    s.ball.vx = 0;
+    s.ball.vy = -1; // jatuh di sisi kanan: poin untuk kiri
+    for (let f = 0; f < 5 && s.phase === "play"; f++) step(s, [0, 0]);
+    for (let f = 0; f < 200 && s.phase === "point"; f++) step(s, [0, 0]);
+    if (s.phase === "serve") seen.push(s.serving);
+  }
+  assert.deepEqual(seen.slice(0, 6), [0, 0, 1, 1, 1, 0], "bergantian tiap 3 poin");
+});
+
+test("Hujan: jatuh di salah satu dari tiga titik yang ditandai", () => {
+  const s = fireSpecial(CHARS.findIndex((c) => c.special === "rain"));
+  assert.equal(s.ball.rain, 1);
+  s.players[1].x = 7.6; // lawan menjauh
+  let lastX = 0;
+  for (let f = 0; f < 300 && s.phase === "play"; f++) {
+    lastX = s.ball.x;
+    step(s, [0, 0]);
+  }
+  assert.deepEqual(s.score, [1, 0], "poin untuk penyerang");
+  const marks = [2.4, 4.3, 6.2];
+  assert.ok(marks.some((m) => Math.abs(lastX - m) < 0.5), `jatuh di titik tanda (x=${lastX.toFixed(2)})`);
+});
+
+test("Kembar: bola asli melesat cepat dan bayangan palsu menyatu lagi", () => {
+  const s = fireSpecial(CHARS.findIndex((c) => c.special === "split"));
+  assert.ok(s.ball.split > 0);
+  assert.ok(Math.hypot(s.ball.vx, s.ball.vy) > 15, "bola cepat");
+  s.players[1].x = 7.6;
+  for (let f = 0; f < 60; f++) step(s, [0, 0]);
+  assert.equal(s.ball.split, 0, "bayangan hilang");
 });

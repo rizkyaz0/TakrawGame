@@ -8,6 +8,7 @@ export const settings = {
   touchSize: 1, // 0 kecil, 1 sedang, 2 besar
   calm: false, // kurangi guncangan dan kilatan layar
   lowGfx: false, // grafis hemat untuk HP yang berat
+  bigText: false, // teks dan tombol menu diperbesar
   style: "soft" as "soft" | "hand", // soft = kartun 3D halus mengilap, hand = gambar tangan berarsir
   tutorialDone: false,
 };
@@ -29,6 +30,7 @@ export function loadSettings(): void {
     if (raw.touchSize === 0 || raw.touchSize === 1 || raw.touchSize === 2) settings.touchSize = raw.touchSize;
     if (typeof raw.calm === "boolean") settings.calm = raw.calm;
     if (typeof raw.lowGfx === "boolean") settings.lowGfx = raw.lowGfx;
+    if (typeof raw.bigText === "boolean") settings.bigText = raw.bigText;
     if (raw.style === "soft" || raw.style === "hand") settings.style = raw.style;
     if (typeof raw.tutorialDone === "boolean") settings.tutorialDone = raw.tutorialDone;
   } catch {

@@ -88,10 +88,10 @@
 
       /* ===== Layar menu ===== */
       .screen { position: absolute; inset: 0; display: none; }
-      #hud[data-mode="title"] #title, #hud[data-mode="settings"] #settings, #hud[data-mode="profile"] #profile, #hud[data-mode="join"] #join, #hud[data-mode="controls"] #controls, #hud[data-mode="room"] #room, #hud[data-mode="select"] #select, #hud[data-paused="1"] #pause { display: block; }
+      #hud[data-mode="title"] #title, #hud[data-mode="settings"] #settings, #hud[data-mode="profile"] #profile, #hud[data-mode="join"] #join, #hud[data-mode="controls"] #controls, #hud[data-mode="room"] #room, #hud[data-mode="howto"] #howto, #hud[data-mode="keys"] #keys, #hud[data-mode="select"] #select, #hud[data-paused="1"] #pause { display: block; }
       /* Elemen pertandingan disembunyikan di luar pertandingan. */
       #hud:not([data-mode="match"]) > :is(#top, #c1, #c2, #help, #banner, #callout, #pop, #cutin, #dim, #lines, #flash, #tension) { display: none !important; }
-      #title, #pause, #controls, #room { background: radial-gradient(ellipse at 50% 40%, rgba(23, 19, 28, 0.25), rgba(23, 19, 28, 0.78)); }
+      #title, #pause, #controls, #room, #howto, #keys { background: radial-gradient(ellipse at 50% 40%, rgba(23, 19, 28, 0.25), rgba(23, 19, 28, 0.78)); }
       .logo { position: absolute; top: 13%; left: 0; right: 0; text-align: center; line-height: 0.92; transform: rotate(-4deg); }
       .logo span, .logo b {
         display: inline-block; padding: 0 22px 6px; border: 8px solid var(--ink); box-shadow: 12px 12px 0 var(--ink);
@@ -253,6 +253,44 @@
       .chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; padding: 6px 12px 7px; background: var(--paper); color: var(--ink); border: 4px solid var(--ink); }
       .chips > b { font-size: 13px; flex-basis: 100%; }
       .chips small { font-size: 11px; font-weight: 700; margin-left: auto; }
+
+
+      /* Latar menu kabur dan panel bersudut bulat (gaya Kartun 3D). */
+      canvas { transition: filter 0.25s; }
+      body.menubg canvas { filter: blur(2.5px) saturate(1.05); }
+      body.soft .menu .item, body.soft .tapbtn, body.soft .chip, body.soft .rb { border-radius: 14px; }
+      body.soft .crow, body.soft .seat, body.soft .detail, body.soft .card2, body.soft .room, body.soft .chips,
+      body.soft #joinBox, body.soft .rhead, body.soft .mate, body.soft #roomBody .rteam { border-radius: 16px; }
+      body.soft .menu .item.on, body.soft .seat.on, body.soft .crow.on { box-shadow: 0 10px 24px rgba(23, 19, 28, 0.45); }
+      body.soft .heading { border-radius: 18px; box-shadow: 0 10px 24px rgba(23, 19, 28, 0.45); }
+
+
+      #setinfo { position: absolute; top: 74px; left: 50%; transform: translateX(-50%); display: none; padding: 1px 14px 3px; font-size: 14px; background: var(--ink); color: var(--sun); border: 3px solid var(--paper); z-index: 4; }
+      #setinfo.on { display: block; }
+      #hud:not([data-mode="match"]) #setinfo { display: none; }
+
+      /* Ubah tombol */
+      #keysBody { position: absolute; top: 80px; left: 50%; transform: translateX(-50%); width: min(720px, 94%); display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+      #keysBody .kcol { background: var(--ink); border: 4px solid rgba(255, 246, 224, 0.35); padding: 8px 12px 10px; }
+      #keysBody h3 { margin: 0 0 6px; font-size: 15px; color: var(--sun); font-family: "Bungee", sans-serif; font-weight: 400; letter-spacing: 1px; }
+      #keysBody .krow { display: flex; align-items: center; justify-content: space-between; padding: 3px 8px; font-size: 14px; font-weight: 700; border: 3px solid transparent; cursor: pointer; }
+      #keysBody .krow b { min-width: 90px; text-align: center; padding: 0 10px 2px; background: var(--paper); color: var(--ink); font-size: 16px; }
+      #keysBody .krow.on { border-color: var(--sun); background: rgba(255, 210, 63, 0.12); }
+      #keysNote { position: absolute; left: 50%; bottom: 76px; transform: translateX(-50%); width: min(720px, 92%); text-align: center; font-size: 13px; font-weight: 700; text-shadow: 0 2px 0 var(--ink); }
+      #keysHint { background: none; border: none; bottom: 18px; }
+      body.soft #keysBody .kcol { border-radius: 16px; }
+
+      /* Cara main */
+      #howBody { position: absolute; top: 74px; left: 50%; transform: translateX(-50%); width: min(840px, 96%); display: grid; grid-template-columns: 1fr 1.25fr; gap: 12px; align-items: start; font-size: 12.5px; line-height: 1.4; }
+      #howBody .hcol { background: var(--ink); border: 4px solid rgba(255, 246, 224, 0.35); padding: 8px 12px 10px; }
+      #howBody h3 { margin: 0 0 4px; font-size: 14px; color: var(--sun); font-family: "Bungee", sans-serif; font-weight: 400; letter-spacing: 1px; }
+      #howBody p { margin: 0 0 5px; }
+      #howBody kbd { font-size: 11px; }
+      #howBody .jur { display: grid; grid-template-columns: auto 1fr; gap: 1px 8px; }
+      #howBody .jur b { color: var(--pc); white-space: nowrap; }
+      #howBody .jur span { opacity: 0.9; }
+      #howHint { background: none; border: none; bottom: 18px; }
+      body.soft #howBody .hcol { border-radius: 16px; }
 
       /* Room offline */
       #roomBody { position: absolute; top: 74px; left: 50%; transform: translateX(-50%); width: min(840px, 96%); display: grid; grid-template-columns: 1fr 1fr; gap: 8px 16px; align-items: start; }
@@ -571,6 +609,7 @@
       <div id="spec" class="display"></div>
       <div class="mates" id="mates1"></div>
       <div class="mates" id="mates2"></div>
+      <div id="setinfo" class="display"></div>
       <div id="netNote" class="display"></div>
       <div id="top">
         <div class="scorebox display"><span id="s1">0</span><i>:</i><span id="s2">0</span></div>
@@ -651,6 +690,21 @@
         <div id="ctrlRows"></div>
         <div id="ctrlNote"></div>
         <div class="hint" id="ctrlHint"></div>
+      </div>
+
+      <!-- Ubah tombol keyboard -->
+      <div id="keys" class="screen">
+        <div class="heading display">TOMBOL KEYBOARD</div>
+        <div id="keysBody"></div>
+        <div id="keysNote"></div>
+        <div class="hint" id="keysHint"></div>
+      </div>
+
+      <!-- Cara main: kontrol, aturan singkat, dan jurus tiap jagoan -->
+      <div id="howto" class="screen">
+        <div class="heading display">CARA MAIN</div>
+        <div id="howBody"></div>
+        <div class="hint" id="howHint"></div>
       </div>
 
       <!-- Room offline: kartu tiap kursi, opsi pertandingan, MULAI -->

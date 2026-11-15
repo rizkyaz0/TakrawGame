@@ -44,6 +44,77 @@ const KEYMAPS: [KeyMap, KeyMap, KeyMap] = [
   ],
 ];
 
+// ===== Tombol keyboard yang bisa diubah (set 0 = WASD, set 1 = panah) =====
+export type KeyAction = "left" | "right" | "jump" | "down" | "smash" | "dash" | "special" | "guard";
+export const KEY_ACTIONS: ReadonlyArray<{ id: KeyAction; label: string; bits: number; short: string }> = [
+  { id: "left", label: "Kiri", bits: Btn.LEFT, short: "gerak kiri" },
+  { id: "right", label: "Kanan", bits: Btn.RIGHT, short: "gerak kanan" },
+  { id: "jump", label: "Lompat", bits: Btn.UP | Btn.JUMP, short: "lompat" },
+  { id: "down", label: "Bawah", bits: Btn.DOWN, short: "bawah" },
+  { id: "smash", label: "Smash", bits: Btn.SMASH, short: "smash" },
+  { id: "guard", label: "Terima", bits: Btn.GUARD, short: "terima" },
+  { id: "dash", label: "Dash", bits: Btn.DASH, short: "dash" },
+  { id: "special", label: "Jurus", bits: Btn.SPECIAL, short: "jurus" },
+];
+const DEFAULT_KEYS: [Record<KeyAction, string>, Record<KeyAction, string>] = [
+  { left: "KeyA", right: "KeyD", jump: "KeyW", down: "KeyS", smash: "KeyF", dash: "KeyG", special: "KeyH", guard: "KeyE" },
+  { left: "ArrowLeft", right: "ArrowRight", jump: "ArrowUp", down: "ArrowDown", smash: "KeyK", dash: "KeyL", special: "Semicolon", guard: "KeyO" },
+];
+const KEYS_STORE = "takraw.keys";
+let custom: [Partial<Record<KeyAction, string>>, Partial<Record<KeyAction, string>>] = [{}, {}];
+try {
+  const raw = JSON.parse(localStorage.getItem(KEYS_STORE) ?? "null") as unknown;
+  if (Array.isArray(raw) && raw.length === 2) {
+    custom = raw.map((o) => {
+      const out: Partial<Record<KeyAction, string>> = {};
+      for (const a of KEY_ACTIONS) {
+        const v = (o as Record<string, unknown> | null)?.[a.id];
+        if (typeof v === "string" && /^[A-Za-z0-9]{1,16}$/.test(v)) out[a.id] = v;
+      }
+      return out;
+    }) as typeof custom;
+  }
+} catch {
+  // penyimpanan diblokir atau isinya rusak: pakai bawaan
+}
+export const keyFor = (set: 0 | 1, a: KeyAction): string => custom[set][a] ?? DEFAULT_KEYS[set][a];
+function rebuildKeys(): void {
+  for (const set of [0, 1] as const) KEYMAPS[set] = KEY_ACTIONS.map((a) => [keyFor(set, a.id), a.bits] as [string, number]);
+}
+rebuildKeys();
+function saveKeys(): void {
+  try {
+    localStorage.setItem(KEYS_STORE, JSON.stringify(custom));
+  } catch {
+    // tidak apa-apa: berlaku untuk sesi ini saja
+  }
+}
+// Pasang tombol baru; kalau sudah dipakai aksi lain di set yang sama, keduanya bertukar.
+export function setKey(set: 0 | 1, a: KeyAction, code: string): void {
+  const old = keyFor(set, a);
+  const clash = KEY_ACTIONS.find((x) => x.id !== a && keyFor(set, x.id) === code);
+  custom[set][a] = code;
+  if (clash) custom[set][clash.id] = old;
+  rebuildKeys();
+  saveKeys();
+}
+export function resetKeys(): void {
+  custom = [{}, {}];
+  rebuildKeys();
+  saveKeys();
+}
+export function keyLabel(code: string): string {
+  if (code.startsWith("Key")) return code.slice(3);
+  if (code.startsWith("Digit")) return code.slice(5);
+  const map: Record<string, string> = { ArrowLeft: "←", ArrowRight: "→", ArrowUp: "↑", ArrowDown: "↓", Semicolon: ";", Space: "Spasi", Comma: ",", Period: ".", Slash: "/", Quote: "'" };
+  return map[code] ?? code;
+}
+// Teks petunjuk tombol untuk satu set, mengikuti pengaturan sekarang.
+export function keyHelp(set: 0 | 1): string {
+  const k = (a: KeyAction) => keyLabel(keyFor(set, a));
+  return `${k("left")} ${k("right")} gerak · ${k("jump")} lompat · ${k("down")} bawah · ${k("smash")} smash · ${k("guard")} terima · ${k("dash")} dash · ${k("special")} jurus`;
+}
+
 // ===== Alat kontrol per pemain =====
 // Tiap pemain memakai satu alat yang dipilih di layar pengaturan: salah satu dari dua
 // set tombol keyboard, atau salah satu stick yang terhubung.

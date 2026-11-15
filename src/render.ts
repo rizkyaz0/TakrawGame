@@ -10,6 +10,8 @@ import { ShaderPass } from "three/addons/postprocessing/ShaderPass.js";
 import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
 import {
   AIM_MAX,
+  RAIN_XS,
+  SPLIT_FRAMES,
   BALL_R,
   BODY_Y,
   CHARS,
@@ -89,6 +91,8 @@ export class Renderer {
   private players: PlayerView[] = [];
   private ball: THREE.Mesh;
   private ballMat: THREE.MeshToonMaterial;
+  private decoys: THREE.Mesh[] = []; // bayangan palsu Bola Kembar
+  private rainMarks: THREE.Mesh[] = []; // tiga penanda jatuh Hujan
   private marker: THREE.Mesh;
   private reticle: THREE.Group; // bidikan penonton, terlihat semua pemain
   private reticleMat = new THREE.MeshBasicMaterial({ color: 0x7dff6a, transparent: true, opacity: 0.9 });
@@ -231,6 +235,23 @@ export class Renderer {
     this.ball = addOutline(new THREE.Mesh(new THREE.SphereGeometry(BALL_R, 24, 16), this.ballMat), 0.03);
     this.ball.castShadow = true;
     this.scene.add(this.ball);
+    for (let k = 0; k < 2; k++) {
+      const d = new THREE.Mesh(new THREE.SphereGeometry(BALL_R, 20, 14), this.ballMat);
+      d.visible = false;
+      this.scene.add(d);
+      this.decoys.push(d);
+    }
+    for (let k = 0; k < 3; k++) {
+      const m = new THREE.Mesh(
+        new THREE.RingGeometry(0.34, 0.5, 24),
+        new THREE.MeshBasicMaterial({ color: 0x4dffd2, transparent: true, opacity: 0.85, depthWrite: false }),
+      );
+      m.rotation.x = -Math.PI / 2;
+      m.position.y = 0.05;
+      m.visible = false;
+      this.scene.add(m);
+      this.rainMarks.push(m);
+    }
 
     // Penanda di lantai tepat di bawah bola, membantu membaca posisi.
     this.marker = new THREE.Mesh(
@@ -663,6 +684,22 @@ export class Renderer {
     const b = s.ball;
     const speed = Math.hypot(b.vx, b.vy);
     this.ball.position.set(b.x, b.y, 0);
+    // Bola Kembar: dua bayangan palsu di atas dan/atau bawah bola asli, menyatu lagi seiring waktu.
+    const f = b.split / SPLIT_FRAMES;
+    const gap = 0.35 + 1.1 * f;
+    const offs = b.splitK === 0 ? [-gap, -2 * gap] : b.splitK === 2 ? [gap, 2 * gap] : [gap, -gap];
+    this.decoys.forEach((d, k) => {
+      d.visible = b.split > 0;
+      d.position.set(b.x, Math.max(BALL_R, b.y + offs[k]), -0.05);
+      d.rotation.z = this.ball.rotation.z;
+    });
+    // Hujan: tiga titik jatuh ditandai di sisi lawan; hanya satu yang asli.
+    const rs = b.tx >= 0 ? 1 : -1;
+    this.rainMarks.forEach((m, k) => {
+      m.visible = b.rain > 0;
+      m.position.x = rs * RAIN_XS[k];
+      m.scale.setScalar(1 + Math.sin(performance.now() * 0.012 + k) * 0.12);
+    });
     if (s.hitstop === 0) this.ball.rotation.z -= b.vx * 0.03;
     // Bola melar searah lajunya kalau sedang kencang.
     const stretch = 1 + Math.min(0.45, Math.max(0, speed - 10) * 0.03);

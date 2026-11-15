@@ -36,11 +36,11 @@ Selesai kalau: game bersuara penuh di HP dan komputer, ukuran unduhan suara di b
 ## Tahap 2 — Pemain baru dan kenyamanan
 
 - [x] Tutorial 6 langkah yang bisa dilewati: gerak, lompat, smash, smash sempurna, terima, jurus
-- [ ] Layar "Cara main" dan daftar gerakan per karakter
+- [x] Layar "Cara main": kontrol, aturan singkat, dan jurus tiap karakter
 - [x] Menu utama dikelompokkan: Main, Online, Latihan, Pengaturan
 - [x] Layar Pengaturan: volume, kualitas grafis, ukuran tombol layar, getaran. Belum: posisi tombol
-- [ ] Ubah tombol keyboard dan stick
-- [x] Kurangi kilatan dan guncangan. Belum: teks lebih besar, mode buta warna
+- [x] Ubah tombol keyboard (P1 dan P2). Belum: stick
+- [x] Kurangi kilatan dan guncangan, teks menu lebih besar. Belum: mode buta warna
 - [x] Bisa dipasang ke layar utama HP dan dimainkan tanpa internet (PWA)
 - [x] Ikon aplikasi, gambar pratinjau link, judul tab tanpa "prototipe"
 - [x] Layar pemuatan. Belum: transisi antar layar
@@ -54,8 +54,8 @@ tanpa dijelaskan siapa pun.
 - [x] Alat ukur otomatis: `npm run league`
 - [x] Rapatkan tingkat menang karakter: dari 32–69% jadi 44–60% (Normal) dan 40–56% (Sulit). Target 45–55% belum tercapai
 - [ ] Setel angka penonton usil dari hasil uji bertiga
-- [ ] Servis bergantian dan posisi servis seperti takraw asli
-- [x] Pilihan poin untuk menang (5, 7, 11, 15). Belum: beberapa set
+- [x] Servis bergantian tiap 3 poin (posisi servis seperti takraw asli belum)
+- [x] Pilihan poin untuk menang (5, 7, 11, 15) dan beberapa set (terbaik dari 1/3/5, offline)
 - [ ] CPU dengan gaya main per karakter, dan tingkat keempat "Jagoan"
 
 Selesai kalau: liga 500 pertandingan per pasangan menunjukkan tidak ada karakter di
@@ -95,7 +95,7 @@ Keputusan yang dibutuhkan sebelum mulai: server sendiri berarti ada biaya bulana
 ## Tahap 6 — Isi dan alasan untuk kembali
 
 - [x] Arena baru: pantai, pasar malam, lapangan sekolah; variasi siang, sore, malam
-- [x] Karakter baru sampai 12. Belum: jenis jurus baru (masih 5 jenis, namanya saja yang beda)
+- [x] Karakter baru sampai 12, dengan 10 jenis jurus (freeze, heavy, bounce, rain, split ditambah). Belum: jurus gabungan
 - [x] Tiga gaya selebrasi dan dua gaya lesu. Belum: animasi masuk lapangan
 - [x] Mode arcade lima babak. Belum: turnamen 4–8 pemain
 - [ ] Tantangan harian

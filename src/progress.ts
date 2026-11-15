@@ -14,6 +14,7 @@ export const progress = {
   arcadeClears: 0,
   arenas: [] as string[], // arena yang pernah dimainkan
   winsByChar: {} as Record<string, number>,
+  skins: {} as Record<string, number>, // skin terakhir yang dipilih per karakter
   achievements: [] as string[],
 };
 
@@ -32,9 +33,9 @@ export function loadProgress(): void {
         (progress[k] as number) = Math.floor(v);
       } else if (Array.isArray(cur) && Array.isArray(v)) {
         (progress[k] as string[]) = v.filter((x): x is string => typeof x === "string").slice(0, 64);
-      } else if (k === "winsByChar" && v && typeof v === "object" && !Array.isArray(v)) {
+      } else if ((k === "winsByChar" || k === "skins") && v && typeof v === "object" && !Array.isArray(v)) {
         for (const [name, n] of Object.entries(v)) {
-          if (typeof n === "number" && n >= 0) progress.winsByChar[name] = Math.floor(n);
+          if (typeof n === "number" && n >= 0) progress[k][name] = Math.floor(n);
         }
       }
     }

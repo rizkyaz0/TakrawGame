@@ -146,7 +146,7 @@ Satu layar menggantikan "Pengaturan Kontrol" yang sekarang:
 
 ## Tahap C — Tampilan 3D kartun
 
-> **Status (14 Nov 2026): C1 selesai, sisanya belum.** C1 = pilihan "Gaya" di Pengaturan (KARTUN 3D bawaan / GAMBAR TANGAN): `setStyleKind` di `src/style.ts` (peta gradasi halus, kilap dan cahaya tepi di shader, garis tepi lebih tipis), `Renderer.setStyle` di `src/render.ts` (ACES, cahaya tepi, bayangan lebih lembut, bloom tipis, vinyet dan warna lewat `EffectComposer`; mati otomatis saat Grafis = Hemat atau fps rata-rata di bawah ±38). Belum: tribun kayu bertingkat, buram kedalaman di menu, panel HUD bersudut bulat, penyesuaian karakter (sarung tangan/mata), model 3DGarden untuk Kampung/Sekolah/Pasar Malam. Belum diukur di HP; di panel browser (render perangkat lunak) gaya baru ±1,8x lebih lambat dari gaya lama.
+> **Status (15 Nov 2026): C1 dan tribun bertingkat selesai (tiga baris penonton di panggung kayu, `buildCrowd`); sisanya belum.** C1 = pilihan "Gaya" di Pengaturan (KARTUN 3D bawaan / GAMBAR TANGAN): `setStyleKind` di `src/style.ts` (peta gradasi halus, kilap dan cahaya tepi di shader, garis tepi lebih tipis), `Renderer.setStyle` di `src/render.ts` (ACES, cahaya tepi, bayangan lebih lembut, bloom tipis, vinyet dan warna lewat `EffectComposer`; mati otomatis saat Grafis = Hemat atau fps rata-rata di bawah ±38). Belum: tribun kayu bertingkat, buram kedalaman di menu, panel HUD bersudut bulat, penyesuaian karakter (sarung tangan/mata), model 3DGarden untuk Kampung/Sekolah/Pasar Malam. Belum diukur di HP; di panel browser (render perangkat lunak) gaya baru ±1,8x lebih lambat dari gaya lama.
 
 ### Arah baru
 
@@ -271,7 +271,7 @@ Selesai kalau: fps di HP tidak turun lebih dari 10% dibanding penonton lama.
 
 ## Tahap E — Jurus baru dan skin
 
-> **Status (14 Nov 2026): E1 (jurus) selesai, E2 (skin) belum.** Jenis baru: `freeze` (Mas Tahu, "Tahu Beku"), `heavy` (Pak Bakso, "Bom Bakso"), `bounce` (Om Sate, "Sate Mental"); logika di `tryHit`/`stepBall` (`src/sim.ts`), 4 tes baru. Liga 20 pertandingan setelah disetel (`charge` Tahu 0,5, Bakso 2,6): Normal selisih 18,9 poin, kehabisan waktu 1; Sulit selisih 23,4, kehabisan waktu 17 (sebelumnya 20,2 dan 15). Pak Bakso masih lemah di Normal (39,5%). Jenis `split`, `boomerang`, `spin`, `rain` tidak dikerjakan.
+> **Status (15 Nov 2026): E1 (jurus) dan E2 (skin) selesai; skin belum ikut terkirim ke tamu online.** Skin: `src/skins.ts` (3 skin: Bawaan, Warna Lain dibuka 3 kemenangan, Tema dibuka 8; tema 17-an/Pantai/Malam Minggu dipilih dari nomor karakter), `FoodCharacter(charId, bare, skinId)`, `Renderer.skins`, tombol SKIN di kartu Room, tersimpan di `progress.skins`, notifikasi saat skin terbuka. Tampilan saja: `sim.ts` tidak tahu soal skin. Jenis baru: `freeze` (Mas Tahu, "Tahu Beku"), `heavy` (Pak Bakso, "Bom Bakso"), `bounce` (Om Sate, "Sate Mental"); logika di `tryHit`/`stepBall` (`src/sim.ts`), 4 tes baru. Liga 20 pertandingan setelah disetel (`charge` Tahu 0,5, Bakso 2,6): Normal selisih 18,9 poin, kehabisan waktu 1; Sulit selisih 23,4, kehabisan waktu 17 (sebelumnya 20,2 dan 15). Pak Bakso masih lemah di Normal (39,5%). Jenis `split`, `boomerang`, `spin`, `rain` tidak dikerjakan.
 
 ### Jurus
 

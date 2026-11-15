@@ -1,4 +1,5 @@
 import { loadAiBody } from "./aibody";
+import { SKINS, nextSkin, savedSkin, skinHint, winsWith } from "./skins";
 import { crowdSfx, getVolume, music, setBusLevel, setVolume, sfx, sillySfx, voice, VOLUME_STEPS } from "./audio";
 import { loadSettings, saveSettings, settings } from "./settings";
 import { ACHIEVEMENTS, checkAchievements, isUnlocked, loadProgress, progress, saveProgress, unlockWins } from "./progress";
@@ -330,6 +331,7 @@ function cycleOption(what: "arena" | "time" | "win"): void {
 
 // Layar judul: pertandingan demo CPU lawan CPU berjalan di latar.
 function startDemo(): void {
+  renderer.skins = [];
   renderer.setArena(pick(ARENAS).id, pick(TIMES).id);
   const a = Math.floor(Math.random() * CHARS.length);
   const b = (a + 1 + Math.floor(Math.random() * (CHARS.length - 1))) % CHARS.length;
@@ -620,7 +622,7 @@ function goSelect(): void {
 // Satu layar untuk mengatur pertandingan 1v1/2v2/3v3: kartu tiap kursi (jagoan, alat, bot),
 // lalu arena, waktu, poin, tingkat CPU, penonton, dan MULAI. Kursi genap = Tim Merah (kiri),
 // ganjil = Tim Biru (kanan). Baru dua kursi yang bisa diisi orang (P1 dan satu orang lagi).
-const room = { active: false, chars: [0, 1, 2, 3, 4, 5] as number[], focus: "start" };
+const room = { active: false, chars: [0, 1, 2, 3, 4, 5] as number[], skins: [0, 0, 0, 0, 0, 0] as number[], focus: "start" };
 
 const roomSize = () => app.teamSize * 2;
 const p2Seat = () => (app.humans === 2 ? slotOf(1) : -1);
@@ -634,6 +636,7 @@ function roomFocusList(): string[] {
 }
 
 function roomPreview(): void {
+  renderer.skins = room.skins.slice(0, roomSize());
   Object.assign(state, createState(room.chars.slice(0, roomSize())));
 }
 
@@ -660,6 +663,8 @@ function goRoom(): void {
     used.add(room.chars[i]);
   }
   if (p2Seat() >= 0 && !canPick(room.chars[p2Seat()])) room.chars[p2Seat()] = firstOpen(room.chars[p2Seat()]);
+  // Skin: pilihan terakhir untuk P1 dan P2; bot memakai skin acak (semua terbuka bagi bot).
+  for (let i = 0; i < n; i++) room.skins[i] = seatKind(i) === "bot" ? Math.floor(Math.random() * SKINS.length) : savedSkin(room.chars[i]);
   room.focus = "start";
   applyArena();
   roomPreview();
@@ -685,6 +690,22 @@ function roomChar(i: number, dir: number): void {
     if (!human || canPick(k)) break;
   }
   room.chars[i] = k;
+  room.skins[i] = seatKind(i) === "bot" ? room.skins[i] : savedSkin(k);
+  sfx.swing();
+  roomPreview();
+  renderRoom();
+}
+
+function roomSkin(i: number, dir: number): void {
+  const k = seatKind(i);
+  // Bot bebas memakai skin apa pun; pemain hanya yang sudah dibuka dengan kemenangan.
+  const next = k === "bot" ? (room.skins[i] + dir + SKINS.length) % SKINS.length : nextSkin(room.chars[i], room.skins[i], dir);
+  if (next === room.skins[i]) return sfx.fault();
+  room.skins[i] = next;
+  if (k !== "bot") {
+    progress.skins[CHARS[room.chars[i]].name] = next;
+    saveProgress();
+  }
   sfx.swing();
   roomPreview();
   renderRoom();
@@ -766,6 +787,7 @@ function renderRoom(): void {
     const btn = (label: string, tap: string) => `<span class="rb" data-tap="${tap}">${label}</span>`;
     let acts = `${btn("◂", `rc:${i}:-1`)}${btn("▸", `rc:${i}:1`)}`;
     if (dev) acts += btn(`${deviceLabel(dev)} ▸`, `rd:${kind === "p1" ? 0 : 1}:1`) + `<i class="lamp" id="rlamp${kind === "p1" ? 0 : 1}"></i>`;
+    acts += btn(`SKIN: ${SKINS[room.skins[i]].name(room.chars[i])} ▸`, `rk:${i}`);
     if (kind === "p2") acts += btn("JADI BOT", `rs:${i}`);
     else if (kind === "bot" && seatConvertible(i)) acts += btn("JADI PEMAIN", `rs:${i}`);
     return (
@@ -793,10 +815,11 @@ function renderRoom(): void {
   const bad = roomConflict();
   const focusSeat = room.focus.startsWith("s") ? Number(room.focus.slice(1)) : -1;
   const focusDev = focusSeat >= 0 ? (seatKind(focusSeat) === "p1" ? devices[0] : seatKind(focusSeat) === "p2" ? devices[1] : null) : null;
+  const hint = focusSeat >= 0 && seatKind(focusSeat) !== "bot" ? skinHint(room.chars[focusSeat]) : "";
   $("roomNote").innerHTML = bad
     ? `<b class="bad">${bad}</b>`
     : focusDev
-      ? `${devHelp(focusDev)}`
+      ? `${devHelp(focusDev)}${hint ? `<br />${hint}` : ""}`
       : `Sisa kursi diisi bot. <kbd>W</kbd><kbd>S</kbd> pindah &nbsp;·&nbsp; <kbd>A</kbd><kbd>D</kbd> ganti &nbsp;·&nbsp; <kbd>Enter</kbd> pilih`;
   $("roomHint").innerHTML =
     backBtn() + tapBtn(`go${bad ? " off" : ""}${room.focus === "start" ? " foc" : ""}`, "rstart", "MULAI PERTANDINGAN ▸", "Enter");
@@ -823,6 +846,8 @@ function roomKey(code: string): void {
       if (k === "bot") roomSeat(i);
       else roomDevice(k === "p1" ? 0 : 1, 1);
     } else roomCycle(room.focus, 1);
+  } else if (code === "KeyX" && room.focus.startsWith("s")) {
+    roomSkin(Number(room.focus.slice(1)), 1);
   } else if (code === "KeyT" && room.focus.startsWith("s")) {
     const i = Number(room.focus.slice(1));
     if (seatKind(i) !== "p1") roomSeat(i);
@@ -839,6 +864,7 @@ function startMatch(): void {
     app.cpuLevel = ARCADE_LEVELS[app.arcade.stage] ?? 2;
   }
   Object.assign(state, createState(buildLineup()));
+  renderer.skins = room.active ? room.skins.slice(0, roomSize()) : [savedSkin(app.chars[0])];
   renderer.humanSlots = app.humans === 2 ? [0, slotOf(1)] : [0];
   state.winScore = app.training ? 7 : app.winScore;
   state.winCap = state.winScore + 3;
@@ -892,6 +918,7 @@ function recordMatch(winnerSide: number): void {
   matchRecorded = true;
   const before = CHARS.map((_, k) => isUnlocked(k));
   progress.matches++;
+  const skinWinsBefore = winsWith(state.chars[0]);
   if (winnerSide === 0) {
     progress.wins++;
     const name = CHARS[state.chars[0]].name;
@@ -902,6 +929,12 @@ function recordMatch(winnerSide: number): void {
       progress.arcadeBest = Math.max(progress.arcadeBest, app.arcade.stage + 1);
       if (app.arcade.stage === ARCADE_LEVELS.length - 1) progress.arcadeClears++;
     }
+  }
+  if (winnerSide === 0) {
+    const after = winsWith(state.chars[0]);
+    SKINS.forEach((sk, k) => {
+      if (k > 0 && skinWinsBefore < sk.need && after >= sk.need) toast(`SKIN BARU: ${sk.name(state.chars[0]).toUpperCase()}`);
+    });
   }
   for (const a of checkAchievements()) toast(`PENCAPAIAN: ${a.name.toUpperCase()}`);
   CHARS.forEach((c, k) => {
@@ -1206,6 +1239,9 @@ function handleTap(v: string): void {
     const [, i, dir] = v.split(":");
     room.focus = `s${i}`;
     roomChar(Number(i), Number(dir));
+  } else if (cmd === "rk") {
+    room.focus = `s${arg}`;
+    roomSkin(Number(arg), 1);
   } else if (cmd === "rd") {
     const [, who, dir] = v.split(":");
     roomDevice(Number(who) === 1 ? 1 : 0, Number(dir));

@@ -445,18 +445,35 @@ export class Scenery {
     }
   }
 
-  // Penonton: dua baris jajanan kecil di belakang lapangan, baris belakang di atas bangku.
+  // Penonton: tiga baris jajanan kecil di tribun kayu bertingkat di belakang lapangan.
   // Bentuknya dari 12 jajanan (tanpa yang sedang bertanding); lihat setCrowdLineup.
   private buildCrowd(): void {
-    const bench = addOutline(new THREE.Mesh(new THREE.BoxGeometry(COURT_HALF * 2 + 1, 0.5, 0.9), toon(0xa9744a)), 0.04);
+    const wood = toon(0xa9744a);
+    const woodDark = toon(0x8a5a38);
+    const width = COURT_HALF * 2 + 1;
+    // Dua undakan kayu: bangku rendah untuk baris kedua dan panggung lebih tinggi untuk baris ketiga.
+    const bench = addOutline(new THREE.Mesh(new THREE.BoxGeometry(width, 0.5, 0.95), wood), 0.04);
     this.add(bench, 0, -0.05, -5.75);
+    const stage = addOutline(new THREE.Mesh(new THREE.BoxGeometry(width + 0.4, 1.0, 1.0), woodDark), 0.04);
+    this.add(stage, 0, 0.05, -6.75);
+    // Pagar kayu kecil di depan panggung dan tiang penyangga.
+    const rail = addOutline(new THREE.Mesh(new THREE.BoxGeometry(width + 0.4, 0.08, 0.08), wood), 0.025);
+    this.add(rail, 0, 0.95, -6.25);
+    for (let k = 0; k <= 8; k++) {
+      const post = addOutline(new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.5, 0.1), wood), 0.02);
+      this.add(post, -width / 2 - 0.1 + k * ((width + 0.2) / 8), 0.72, -6.25);
+    }
     const ink = new THREE.MeshBasicMaterial({ color: 0x17131c });
     this.fanMeshes = [];
     let n = 0;
-    for (let row = 0; row < 2; row++) {
-      for (let k = 0; k < 15; k++) {
-        const x = -7.6 + k * 1.085 + (row === 1 ? 0.5 : 0);
-        if (row === 1 && k === 14) continue;
+    const rows: Array<{ z: number; base: number; count: number; shift: number }> = [
+      { z: -4.7, base: 0, count: 15, shift: 0 },
+      { z: -5.7, base: 0.2, count: 14, shift: 0.5 },
+      { z: -6.75, base: 0.55, count: 15, shift: 0.25 },
+    ];
+    rows.forEach((r, row) => {
+      for (let k = 0; k < r.count; k++) {
+        const x = -7.6 + k * 1.085 + r.shift;
         const fan = new THREE.Group();
         const body = addOutline(new THREE.Mesh(crowdGeometry(n % CHARS.length), crowdMaterial()), 0.025);
         body.userData.shared = true; // geometri dan bahan dipakai bersama; jangan dibuang saat arena berganti
@@ -473,12 +490,11 @@ export class Scenery {
           mini.position.set(0.44, 0.92, 0);
           fan.add(mini);
         }
-        const baseY = row === 0 ? 0 : 0.2;
-        this.add(fan, x, baseY, row === 0 ? -4.7 : -5.7);
-        this.fans.push({ body: fan, baseY, phase: k * 1.7 + row * 0.9 });
+        this.add(fan, x, r.base, r.z);
+        this.fans.push({ body: fan, baseY: r.base, phase: k * 1.7 + row * 0.9 });
         n++;
       }
-    }
+    });
     this.assignCrowd();
   }
 

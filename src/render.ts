@@ -104,6 +104,7 @@ export class Renderer {
   // Petunjuk timing per pemain: "smash" (emas), "guard" (biru), atau null.
   cues: Array<"smash" | "guard" | null> = [null, null];
   shakeScale = 1; // dikecilkan lewat pengaturan "efek layar dikurangi"
+  skins: number[] = []; // skin tiap kursi (tampilan saja; tidak masuk simulasi)
   humanSlots: number[] = []; // nomor pemain yang dimainkan orang di perangkat ini, urut P1, P2
   private sun!: THREE.DirectionalLight;
   private fullRatio = 1;
@@ -610,12 +611,12 @@ export class Renderer {
         }
       }
       // Karakter dibangun ulang kalau pemain ganti karakter.
-      if (!v.char || v.char.charId !== s.chars[i]) {
+      if (!v.char || v.char.charId !== s.chars[i] || v.char.skinId !== (this.skins[i] ?? 0)) {
         if (v.char) {
           this.scene.remove(v.char.root);
           v.char.dispose();
         }
-        v.char = new FoodCharacter(s.chars[i]);
+        v.char = new FoodCharacter(s.chars[i], false, this.skins[i] ?? 0);
         this.scene.add(v.char.root);
       }
       // Setelah poin: pencetak poin selebrasi, lawannya lesu.

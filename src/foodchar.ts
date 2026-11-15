@@ -39,6 +39,8 @@ const KINDS: readonly BodyKind[] = [
 ];
 
 const HIP_Y = 0.42;
+// Skin "warna lain" untuk badan model AI: pewarna yang dikalikan ke teksturnya.
+const AI_TINT: Record<number, number> = { 0: 0x9ab4ff, 4: 0xff9ad0, 5: 0xffc2a0, 6: 0xa0ffd0 };
 const THIGH = 0.2;
 const SHIN = 0.2;
 const UPPER_ARM = 0.2;
@@ -89,6 +91,7 @@ export interface BodySpec {
 export class FoodCharacter {
   readonly root = new THREE.Group();
   readonly charId: number;
+  readonly skinId: number; // 0 bawaan, 1 warna lain, 2 tema (lihat skins.ts)
   readonly spec!: BodySpec; // ukuran dan posisi wajah badan ini (dipakai penonton)
 
   private model = new THREE.Group();
@@ -114,13 +117,15 @@ export class FoodCharacter {
   private footR: THREE.Group | null = null;
   private aiSkin: THREE.MeshToonMaterial | null = null;
   private disposed = false;
+  private accessory: THREE.Group | null = null; // hiasan kepala skin tema
   // Kaki karet boleh melar jauh, jadi jangkauannya lebih besar dari karakter biasa.
   private animator = new Animator(HIP_Y * MODEL_SCALE, LEG_LEN, 3.2);
 
   // bare = hanya badan jajanannya (tanpa wajah, tangan, kaki): dipakai untuk membuat gambar
   // acuan model 3D, dan nanti sebagai pengganti badan kalau badannya diganti model hasil AI.
-  constructor(charId: number, bare = false) {
+  constructor(charId: number, bare = false, skinId = 0) {
     this.charId = charId;
+    this.skinId = skinId;
     const def = CHARS[charId];
     const kind = KINDS[charId % KINDS.length];
     const accent = toon(def.color);
@@ -264,6 +269,7 @@ export class FoodCharacter {
     buildArm(this.armR, this.elbowR, spec.armZ);
 
     if (v2) this.buildBackpack(spec, v2.pack, part);
+    this.applySkin(spec);
     this.model.scale.setScalar(MODEL_SCALE);
 
     // Karakter yang punya model AI: dipasang begitu modelnya siap, kode di atas jadi cadangan.
@@ -275,12 +281,71 @@ export class FoodCharacter {
       });
   }
 
+  // Skin: 1 = putar warna badan; 2 = hiasan kepala bertema (dipilih dari nomor karakter).
+  private applySkin(spec: BodySpec): void {
+    if (this.skinId === 1) {
+      const seen = new Set<THREE.Material>();
+      this.root.traverse((o) => {
+        if (!(o instanceof THREE.Mesh) || o.name === "outline") return;
+        const mat = o.material as THREE.MeshToonMaterial;
+        if (!(mat instanceof THREE.MeshToonMaterial) || seen.has(mat)) return;
+        seen.add(mat);
+        mat.color.offsetHSL(0.45, 0.05, 0);
+      });
+    } else if (this.skinId === 2) {
+      this.root.updateMatrixWorld(true);
+      const box = new THREE.Box3().setFromObject(this.spine);
+      this.accessory = this.buildAccessory(spec.armZ * 0.62);
+      this.accessory.position.set((box.min.x + box.max.x) / 2, box.max.y - HIP_Y - 0.06, 0);
+      this.spine.add(this.accessory);
+    }
+  }
+
+  private buildAccessory(r: number): THREE.Group {
+    const g = new THREE.Group();
+    const add = (geo: THREE.BufferGeometry, color: number, x = 0, y = 0, z = 0): THREE.Mesh => {
+      const m = new THREE.Mesh(geo, toon(color));
+      m.position.set(x, y, z);
+      m.castShadow = true;
+      m.userData.keep = true;
+      addOutline(m, 0.012).userData.keep = true;
+      m.children[m.children.length - 1].userData.keep = true;
+      g.add(m);
+      return m;
+    };
+    const theme = this.charId % 3;
+    if (theme === 0) {
+      // 17-an: peci hitam dengan bendera merah putih kecil.
+      add(new THREE.CylinderGeometry(r * 0.86, r * 0.95, 0.22, 16), 0x1c1a22, 0, 0.1);
+      add(new THREE.CylinderGeometry(r * 0.88, r * 0.88, 0.04, 16), 0xe5392d, 0, 0.03);
+      add(new THREE.CylinderGeometry(0.012, 0.012, 0.4, 5), 0xfffaf0, r * 0.6, 0.3, 0);
+      add(new THREE.BoxGeometry(0.02, 0.1, 0.16), 0xe5392d, r * 0.6, 0.45, 0.09);
+      add(new THREE.BoxGeometry(0.02, 0.1, 0.16), 0xfffaf0, r * 0.6, 0.35, 0.09);
+    } else if (theme === 1) {
+      // Pantai: topi jerami lebar dengan pita.
+      add(new THREE.CylinderGeometry(r * 1.9, r * 1.9, 0.04, 20), 0xe9c06a, 0, 0.02);
+      add(new THREE.CylinderGeometry(r * 0.85, r * 1.0, 0.18, 16), 0xf0cf7c, 0, 0.12);
+      add(new THREE.CylinderGeometry(r * 1.02, r * 1.02, 0.05, 16), 0x2fb4d6, 0, 0.06);
+    } else {
+      // Malam Minggu: topi baseball neon dengan bintang di depan.
+      add(new THREE.SphereGeometry(r * 1.02, 16, 10, 0, Math.PI * 2, 0, Math.PI / 2), 0x6a3df0, 0, 0.02);
+      const visor = add(new THREE.BoxGeometry(r * 1.2, 0.04, r * 1.5), 0xff4fa3, r * 1.0, 0.03, 0);
+      visor.rotation.z = -0.15;
+      add(new THREE.OctahedronGeometry(0.06), 0xffd23f, r * 0.7, 0.2, 0);
+    }
+    return g;
+  }
+
   // Ganti badan buatan kode dengan model AI yang dikuliti ke sendi-sendi yang sama.
   private applyAi(ai: AiBody): void {
     if (this.aiSkin) return;
     this.root.traverse((o) => {
-      if (o instanceof THREE.Mesh) o.visible = false;
+      if (o instanceof THREE.Mesh && !o.userData.keep) o.visible = false;
     });
+    if (this.accessory) {
+      ai.geometry.computeBoundingBox();
+      this.accessory.position.set(0, ai.geometry.boundingBox!.max.y - HIP_Y - 0.06, 0);
+    }
     const J = ai.joints;
     this.legL.position.set(0, J.hipY, -J.hipZ);
     this.legR.position.set(0, J.hipY, J.hipZ);
@@ -316,7 +381,7 @@ export class FoodCharacter {
       b.rotation.set(0, 0, 0);
       b.scale.set(1, 1, 1);
     }
-    const mat = toon(0xffffff, { map: ai.map, side: THREE.DoubleSide });
+    const mat = toon(this.skinId === 1 ? (AI_TINT[this.charId] ?? 0xffb0e0) : 0xffffff, { map: ai.map, side: THREE.DoubleSide });
     this.aiSkin = mat;
     const mesh = new THREE.SkinnedMesh(ai.geometry, mat);
     mesh.castShadow = true;

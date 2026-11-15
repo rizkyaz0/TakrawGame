@@ -289,7 +289,7 @@
       #menuBg { position: fixed; inset: 0; z-index: 0; display: none; background: #6fb8ff url(/ui/bg-menu.webp) center bottom / cover no-repeat; }
       body.titlebg #menuBg { display: block; }
       body.titlebg canvas { filter: none; position: relative; z-index: 1; }
-      #titleFg { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; pointer-events: none; z-index: 0; }
+      body.titlebg #hud { z-index: 2; }
       #title { background: radial-gradient(ellipse at 50% 55%, rgba(23, 19, 28, 0), rgba(23, 19, 28, 0.35)); }
       body.titlebg #title .tagline { display: none; }
       body.titlebg #title .logo { top: 1%; }
@@ -727,7 +727,6 @@
 
       <!-- Layar judul -->
       <div id="title" class="screen">
-        <img id="titleFg" src="/ui/fg-leaves.webp" alt="" draggable="false" />
         <div class="logo"><img src="/logo.webp" alt="Takraw Clash" draggable="false" /></div>
         <div class="tagline">jajanan kampung adu sepak di lapangan 17-an</div>
         <div class="menu" id="titleMenu"></div>

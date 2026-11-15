@@ -164,7 +164,7 @@ export class Renderer {
           new THREE.MeshBasicMaterial({ color: 0x17131c, transparent: true, opacity: 0.28, depthWrite: false }),
         );
         sh.rotation.x = -Math.PI / 2;
-        sh.position.set(sx * 3.6, 0.02, 0);
+        sh.position.set(sx * 2.0, 0.02, 0);
         sh.scale.set(1.2, 0.55, 1);
         sc.add(sh);
       }
@@ -176,8 +176,8 @@ export class Renderer {
       }
       this.stageChars = [a, b].map((id, i) => {
         const c = new FoodCharacter(id, false, 0);
-        c.root.position.set(i === 0 ? -3.7 : 3.7, 0, 0);
-        c.root.scale.setScalar(1.18);
+        c.root.position.set(i === 0 ? -2.0 : 2.0, 0, 0);
+        c.root.scale.setScalar(1.32);
         this.stageScene!.add(c.root);
         return c;
       });
@@ -185,23 +185,42 @@ export class Renderer {
     }
   }
 
+  stageClock: number | null = null; // pengujian: mengunci waktu panggung (detik)
   private drawStage(now: number): void {
     const sc = this.stageScene;
     if (!sc) return;
-    const t = now / 1000;
-    this.stageChars.forEach((c, i) => c.poseKick(t, i * 0.5, i === 0 ? -0.45 : Math.PI + 0.45));
+    const t = this.stageClock ?? now / 1000;
+    // Satu putaran 4,8 detik: kiri salto menendang (kontak di 0,95 dtk), kanan tendangan samping
+    // (kontak di 3,3 dtk); bola melayang bolak-balik di antara titik kontak.
+    const PERIOD = 4.8;
+    const loop = ((t % PERIOD) + PERIOD) % PERIOD;
+    const aL = ((loop - 0.0) % PERIOD + PERIOD) % PERIOD;
+    const aR = (((loop - 2.4) % PERIOD) + PERIOD) % PERIOD;
+    this.stageChars[0]?.poseStage(0, aL, t, -0.45);
+    this.stageChars[1]?.poseStage(1, aR, t, Math.PI + 0.45);
     if (this.stageBall) {
-      // Bola melayang bolak-balik di antara keduanya.
-      const k = (Math.sin(t * 1.2) + 1) / 2;
-      this.stageBall.position.set(-1.6 + k * 3.2, 1.4 + Math.abs(Math.sin(t * 2.4)) * 0.9, 0.3);
-      this.stageBall.rotation.z -= 0.08;
+      const hold = (x: number, y: number) => this.stageBall!.position.set(x, y, 0.3);
+      const cL = { x: -1.35, y: 2.1 }; // titik kontak kiri
+      const cR = { x: 1.35, y: 2.0 }; // titik kontak kanan
+      const t1 = 0.95;
+      const t2 = 3.35;
+      let u: number;
+      if (loop >= t1 && loop < t2) {
+        u = (loop - t1) / (t2 - t1);
+        hold(cL.x + (cR.x - cL.x) * u, cL.y + (cR.y - cL.y) * u + 1.5 * 4 * u * (1 - u));
+      } else {
+        const since = loop >= t2 ? loop - t2 : loop + PERIOD - t2; // detik sejak kontak kanan
+        u = since / (PERIOD - (t2 - t1));
+        hold(cR.x + (cL.x - cR.x) * u, cR.y + (cL.y - cR.y) * u + 1.5 * 4 * u * (1 - u));
+      }
+      this.stageBall.rotation.z -= 0.09;
     }
     const aspect = window.innerWidth / window.innerHeight;
     this.stageCam.aspect = aspect;
     // Jarak kamera menjaga kedua karakter di dalam layar pada rasio berapa pun.
-    const need = 5.3 / Math.tan(THREE.MathUtils.degToRad(this.stageCam.fov / 2)) / Math.min(aspect, 1.9) * 1.25;
+    const need = 4.4 / Math.tan(THREE.MathUtils.degToRad(this.stageCam.fov / 2)) / Math.min(aspect, 1.9) * 1.25;
     this.stageCam.position.set(0, 1.5, Math.max(9, need));
-    this.stageCam.lookAt(0, 1.45, 0);
+    this.stageCam.lookAt(0, 1.7, 0);
     this.stageCam.updateProjectionMatrix();
     styleUniforms.uBoil.value = Math.floor(now * 0.008) % 16;
     this.renderer.render(sc, this.stageCam);
@@ -569,11 +588,11 @@ export class Renderer {
   }
 
   private playAnim(i: number, kind: AnimKind, f: number, roll = false): void {
-    this.players[i].char?.play(kind, f, roll);
+    this.players[i]?.char?.play(kind, f, roll);
   }
 
   private strikeAnim(i: number, kind: AnimKind, s: GameState, x: number, y: number): void {
-    this.players[i].char?.strike(kind, s.frame, s.players[i], x, y);
+    this.players[i]?.char?.strike(kind, s.frame, s.players[i], x, y);
   }
 
   // Efek visual untuk event simulasi (suara dan HUD ditangani di main).

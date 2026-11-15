@@ -943,28 +943,86 @@ export class FoodCharacter {
     this.legR.rotation.z = 0.12;
   }
 
-  // Pose menendang yang berulang untuk panggung layar judul: t = detik, phase = geseran 0..1,
-  // yaw = putaran badan ke arah kamera.
-  poseKick(t: number, phase: number, yaw: number): void {
-    const u = (((t / 2.6 + phase) % 1) + 1) % 1;
-    const kick = Math.sin(Math.PI * Math.min(1, u / 0.55)) * (u < 0.55 ? 1 : 0); // ayunan cepat lalu istirahat
-    const rest = u >= 0.55 ? Math.sin(((u - 0.55) / 0.45) * Math.PI) : 0;
+  // Pose untuk panggung layar judul. kind 0 = salto menendang (tendangan atas dari posisi
+  // terbalik), kind 1 = tendangan samping dengan badan condong ke belakang. a = detik sejak aksi
+  // dimulai (aksi berlangsung STAGE_ACTION detik, sisanya siaga); t = waktu nyata; yaw = putaran badan.
+  poseStage(kind: 0 | 1, a: number, t: number, yaw: number): void {
+    const sm = (x: number) => {
+      const c = Math.min(1, Math.max(0, x));
+      return c * c * (3 - 2 * c);
+    };
+    // Nilai antar-kunci dengan peralihan halus (ancang-ancang, tolakan, kontak, mendarat).
+    const tr = (keys: ReadonlyArray<readonly [number, number]>): number => {
+      if (a <= keys[0][0]) return keys[0][1];
+      for (let i = 1; i < keys.length; i++) {
+        if (a <= keys[i][0]) return keys[i - 1][1] + (keys[i][1] - keys[i - 1][1]) * sm((a - keys[i - 1][0]) / (keys[i][0] - keys[i - 1][0]));
+      }
+      return keys[keys.length - 1][1];
+    };
+    const idle = a < 0 || a > 1.8;
+    let hipR = -0.2, kneeR = -0.5, hipL = 0.2, kneeL = -0.4, shL = 0.9, shR = 0.5, lift = 0, flip = 0, lean = 0.05, twist = 0, squash = 0, stretch = 1, wig = 0;
+    if (idle) {
+      const b = Math.sin(t * 4.2 + yaw * 2);
+      lift = 0.015 + b * 0.02;
+      kneeL = -0.4 - b * 0.06;
+      kneeR = -0.5 - b * 0.06;
+      shL = 0.9 + b * 0.12;
+      shR = 0.5 - b * 0.12;
+    } else if (kind === 0) {
+      hipR = tr([[0, -0.2], [0.3, 0.7], [0.5, 1.6], [0.8, 1.2], [0.95, 2.35], [1.15, 0.6], [1.45, -0.3], [1.8, -0.2]]);
+      kneeR = tr([[0, -0.5], [0.3, -1.4], [0.5, -2.0], [0.8, -1.8], [0.95, -0.05], [1.15, -1.0], [1.45, -0.8], [1.8, -0.5]]);
+      hipL = tr([[0, 0.2], [0.3, 0.8], [0.6, 1.5], [1.0, 1.0], [1.4, 0.4], [1.8, 0.2]]);
+      kneeL = tr([[0, -0.4], [0.3, -1.2], [0.6, -1.9], [1.0, -1.2], [1.4, -0.9], [1.8, -0.4]]);
+      shL = tr([[0, 0.9], [0.3, -0.9], [0.55, 1.8], [1.0, 0.6], [1.8, 0.9]]);
+      shR = tr([[0, 0.5], [0.3, -1.0], [0.55, -1.4], [1.0, -0.6], [1.8, 0.5]]);
+      lift = tr([[0, 0], [0.25, -0.14], [0.35, 0], [0.7, 0.95], [1.0, 1.3], [1.3, 0.55], [1.45, -0.08], [1.6, 0], [1.8, 0]]);
+      flip = Math.PI * 2 * sm((a - 0.35) / 1.0); // salto ke belakang; kontak saat terbalik
+      squash = a > 1.3 ? Math.sin(((Math.min(a, 1.7) - 1.3) / 0.4) * Math.PI) * 0.1 : a < 0.3 ? Math.sin((a / 0.3) * Math.PI) * 0.1 : 0;
+      stretch = 1 + 0.35 * Math.max(0, 1 - Math.abs(a - 0.95) / 0.15);
+      // Badan ikut melengkung: melengkung ke belakang saat tolakan, meringkuk di udara,
+      // lalu melecut melengkung saat kontak; pinggang meliuk bergelombang sepanjang aksi.
+      lean = tr([[0, 0.05], [0.25, 0.45], [0.5, -0.9], [0.8, -0.6], [0.95, 0.75], [1.15, 0.2], [1.45, -0.25], [1.8, 0.05]]);
+      twist = tr([[0, 0], [0.5, 0.5], [0.95, -0.55], [1.4, 0.2], [1.8, 0]]);
+      wig = 0.12;
+    } else {
+      hipR = tr([[0, -0.2], [0.3, 0.3], [0.55, 1.5], [0.85, 2.4], [1.1, 2.2], [1.4, 0.3], [1.8, -0.2]]);
+      kneeR = tr([[0, -0.5], [0.3, -1.1], [0.55, -1.2], [0.85, -0.05], [1.1, -0.1], [1.4, -0.9], [1.8, -0.5]]);
+      hipL = tr([[0, 0.2], [0.4, -0.2], [0.85, -0.5], [1.4, 0.1], [1.8, 0.2]]);
+      kneeL = tr([[0, -0.4], [0.4, -0.9], [0.85, -0.3], [1.4, -0.8], [1.8, -0.4]]);
+      shL = tr([[0, 0.9], [0.5, 1.9], [0.9, 2.4], [1.5, 1.0], [1.8, 0.9]]);
+      shR = tr([[0, 0.5], [0.5, -1.3], [0.9, -1.7], [1.5, -0.5], [1.8, 0.5]]);
+      lift = tr([[0, 0], [0.35, 0], [0.55, 0.55], [0.85, 0.8], [1.15, 0.4], [1.4, 0], [1.8, 0]]);
+      lean = tr([[0, 0.05], [0.4, 0.1], [0.85, 0.55], [1.2, 0.3], [1.6, 0.06], [1.8, 0.05]]);
+      twist = tr([[0, 0], [0.85, -0.5], [1.8, 0]]);
+      squash = a > 1.2 && a < 1.6 ? Math.sin(((a - 1.2) / 0.4) * Math.PI) * 0.08 : 0;
+      stretch = 1 + 0.3 * Math.max(0, 1 - Math.abs(a - 0.9) / 0.2);
+      lean = tr([[0, 0.05], [0.4, -0.35], [0.85, 0.95], [1.2, 0.4], [1.6, -0.1], [1.8, 0.05]]);
+      twist = tr([[0, 0], [0.4, 0.4], [0.85, -0.8], [1.3, 0.2], [1.8, 0]]);
+      wig = 0.1;
+    }
+    if (!idle) {
+      // Gelombang meliuk di badan (pinggang dan pundak bergantian) supaya tidak kaku.
+      const env = Math.sin((Math.min(Math.max(a, 0), 1.8) / 1.8) * Math.PI);
+      lean += Math.sin(a * 13) * wig * env;
+      twist += Math.cos(a * 11) * wig * 0.8 * env;
+      this.body.rotation.x = Math.sin(a * 9) * 0.1 * env;
+    } else this.body.rotation.x = 0;
     this.model.rotation.y = yaw;
-    this.flip.rotation.z = 0;
-    this.body.position.y = -FLIP_Y + 0.1 + kick * 0.22 + Math.sin(t * 5 + phase * 6) * 0.025;
-    this.body.scale.set(1, 1, 1);
-    this.spine.rotation.z = 0.06 + kick * 0.22 - rest * 0.04;
-    this.spine.rotation.y = 0;
-    this.legR.rotation.z = -0.35 + kick * 2.35;
-    this.kneeR.rotation.z = -0.9 + kick * 0.8;
-    this.legR.scale.y = 1 + kick * 0.45;
-    if (this.footR) this.footR.scale.y = 1 / (1 + kick * 0.45);
-    this.legL.rotation.z = -0.1 - kick * 0.35;
-    this.kneeL.rotation.z = -0.45;
-    this.armL.rotation.z = 1.1 + kick * 0.6;
-    this.armR.rotation.z = -0.9 - kick * 0.5;
-    this.elbowL.rotation.z = 0.5;
-    this.elbowR.rotation.z = 0.5;
+    this.flip.rotation.z = flip;
+    this.body.position.y = -FLIP_Y + lift;
+    this.body.scale.set(1 + squash * 0.4, 1 - squash, 1 + squash * 0.4);
+    this.spine.rotation.z = lean;
+    this.spine.rotation.y = twist;
+    this.legR.rotation.z = hipR;
+    this.kneeR.rotation.z = kneeR;
+    this.legR.scale.y = stretch;
+    if (this.footR) this.footR.scale.y = 1 / stretch;
+    this.legL.rotation.z = hipL;
+    this.kneeL.rotation.z = kneeL;
+    this.armL.rotation.z = shL;
+    this.armR.rotation.z = shR;
+    this.elbowL.rotation.z = 0.45;
+    this.elbowR.rotation.z = 0.45;
   }
 
   play(kind: AnimKind, frame: number, roll = false): void {

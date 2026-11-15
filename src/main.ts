@@ -3321,9 +3321,14 @@ function update(now: number): void {
 }
 
 function frame(now: number): void {
-  pollPads();
-  if (!debug.manual) update(now);
+  // Jadwalkan frame berikutnya lebih dulu: satu error di satu frame tidak boleh mematikan game.
   requestAnimationFrame(frame);
+  try {
+    pollPads();
+    if (!debug.manual) update(now);
+  } catch (err) {
+    console.error(err);
+  }
 }
 goTitle();
 document.getElementById("boot")?.remove();

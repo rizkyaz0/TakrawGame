@@ -311,6 +311,13 @@
       body.titlebg #title .menu .item:not([data-ic]) { padding-left: 22px; justify-content: center; }
       body.titlebg #title .menu .item.on { animation: none; transform: scale(1.07); filter: drop-shadow(0 0 12px #ffd23f) drop-shadow(0 4px 0 rgba(23, 19, 28, 0.28)) brightness(1.05); }
       body.titlebg #title .menu .item.new::after, body.titlebg #title .menu .item.soon::after { margin-left: 6px; font-size: 9px; }
+      @keyframes btnPress { 0% { transform: scale(1); } 35% { transform: scale(0.88, 0.8) translateY(3px); } 70% { transform: scale(1.1, 1.08) translateY(-2px); } 100% { transform: scale(1); } }
+      @keyframes btnShine { from { opacity: 0.9; } to { opacity: 0; transform: scale(1.5); } }
+      body.titlebg #title .menu .item { transition: transform 0.12s ease, filter 0.12s ease; }
+      body.titlebg #title .menu .item:hover { transform: translateY(-2px) scale(1.03); filter: drop-shadow(0 0 8px #ffd23f) drop-shadow(0 4px 0 rgba(23, 19, 28, 0.28)); }
+      body.titlebg #title .menu .item:active { transform: scale(0.93, 0.88) translateY(2px); transition-duration: 0.05s; }
+      body.titlebg #title .menu .item.press, body.titlebg #title .menu .item.on.press { animation: btnPress 0.16s ease-out; filter: drop-shadow(0 0 14px #ffd23f) brightness(1.15); }
+      .menu .item.press { animation: btnPress 0.16s ease-out; }
       body.titlebg #title .menu .item.mainbtn {
         width: 300px; height: 150px; min-width: 0; margin: -42px 0 -34px; padding: 0; font-size: 0; justify-content: center;
         background-image: url(/ui/btn-main.webp); filter: drop-shadow(0 6px 4px rgba(23, 19, 28, 0.3));

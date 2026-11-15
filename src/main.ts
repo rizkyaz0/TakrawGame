@@ -1597,7 +1597,16 @@ function handleTap(v: string): void {
 }
 document.addEventListener("click", (e) => {
   const el = (e.target as HTMLElement | null)?.closest<HTMLElement>("[data-tap]");
-  if (el?.dataset.tap) handleTap(el.dataset.tap);
+  if (!el?.dataset.tap) return;
+  const tap = el.dataset.tap;
+  // Tombol menu: mengempis dan memantul dulu, baru aksinya jalan (jeda singkat, cukup untuk terlihat).
+  if (el.classList.contains("item") && !el.classList.contains("press")) {
+    el.classList.add("press");
+    window.setTimeout(() => handleTap(tap), 140);
+    return;
+  }
+  if (el.classList.contains("press")) return;
+  handleTap(tap);
 });
 
 // ===== Pengaturan =====

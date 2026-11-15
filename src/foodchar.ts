@@ -100,6 +100,8 @@ export class FoodCharacter {
   private flip = new THREE.Group(); // titik putar salto, di tengah badan
   private body = new THREE.Group();
   readonly spine = new THREE.Group();
+  private mid = new THREE.Group(); // ruas tengah badan (hanya dipasang untuk badan model AI)
+  private top = new THREE.Group(); // ruas dada dan kepala
   private legL = new THREE.Group();
   private legR = new THREE.Group();
   private kneeL = new THREE.Group();
@@ -359,8 +361,19 @@ export class FoodCharacter {
     this.footR.position.y = -J.footDy;
     this.kneeL.add(this.footL);
     this.kneeR.add(this.footR);
-    this.armL.position.set(0, J.shoulderY, -J.shoulderZ);
-    this.armR.position.set(0, J.shoulderY, J.shoulderZ);
+    // Rangka badan bertingkat: spine → mid → top; lengan dan hiasan kepala menempel di top.
+    this.mid.position.set(0, J.midDy, 0);
+    this.top.position.set(0, J.topDy, 0);
+    this.spine.add(this.mid);
+    this.mid.add(this.top);
+    const up = J.midDy + J.topDy;
+    this.top.add(this.armL, this.armR);
+    this.armL.position.set(0, J.shoulderY - up, -J.shoulderZ);
+    this.armR.position.set(0, J.shoulderY - up, J.shoulderZ);
+    if (this.accessory) {
+      this.top.add(this.accessory);
+      this.accessory.position.y -= up;
+    }
     this.elbowL.position.set(0, J.elbowDy, -J.elbowDz);
     this.elbowR.position.set(0, J.elbowDy, J.elbowDz);
 
@@ -376,6 +389,8 @@ export class FoodCharacter {
       this.elbowL,
       this.armR,
       this.elbowR,
+      this.mid,
+      this.top,
     ];
     // Rangka dipasang dalam pose diam, apa pun pose saat ini.
     const saved = bones.map((b) => [b.rotation.clone(), b.scale.clone()] as const);
@@ -1011,8 +1026,7 @@ export class FoodCharacter {
     this.flip.rotation.z = flip;
     this.body.position.y = -FLIP_Y + lift;
     this.body.scale.set(1 + squash * 0.4, 1 - squash, 1 + squash * 0.4);
-    this.spine.rotation.z = lean;
-    this.spine.rotation.y = twist;
+    this.bend(lean, twist);
     this.legR.rotation.z = hipR;
     this.kneeR.rotation.z = kneeR;
     this.legR.scale.y = stretch;
@@ -1023,6 +1037,21 @@ export class FoodCharacter {
     this.armR.rotation.z = shR;
     this.elbowL.rotation.z = 0.45;
     this.elbowR.rotation.z = 0.45;
+  }
+
+  // Melentur badan: sudut total dibagi ke tiga ruas (pinggang, perut, dada) supaya lengkungnya halus.
+  private bend(z: number, yaw: number): void {
+    if (!this.aiSkin) {
+      this.spine.rotation.z = z;
+      this.spine.rotation.y = yaw;
+      return;
+    }
+    this.spine.rotation.z = z * 0.4;
+    this.spine.rotation.y = yaw * 0.4;
+    this.mid.rotation.z = z * 0.32;
+    this.mid.rotation.y = yaw * 0.3;
+    this.top.rotation.z = z * 0.28;
+    this.top.rotation.y = yaw * 0.3;
   }
 
   play(kind: AnimKind, frame: number, roll = false): void {
@@ -1156,8 +1185,7 @@ export class FoodCharacter {
     const sq = a.squash * 1.5;
     this.body.scale.set(1 - sq * 0.6, 1 + sq, 1 - sq * 0.6);
     // Wajah ada di badan, jadi seluruh badan ikut mendongak mengikuti bola.
-    this.spine.rotation.z = o.lean * 0.7 + a.look * 0.22 + a.nod * 0.5;
-    this.spine.rotation.y = o.twist * 0.6;
+    this.bend(o.lean * 0.7 + a.look * 0.22 + a.nod * 0.5, o.twist * 0.6);
     for (const pupil of this.pupils) pupil.position.y = this.pupilY + clamp(a.look, -0.5, 0.8) * 0.06;
 
     this.legL.rotation.z = o.hipL;

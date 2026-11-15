@@ -19,8 +19,10 @@ export const BONE = {
   elbowL: 8,
   armR: 9,
   elbowR: 10,
+  mid: 11, // ruas tengah badan (anak spine)
+  top: 12, // ruas dada dan kepala (anak mid)
 } as const;
-const BONES = 11;
+const BONES = 13;
 
 export interface AiBody {
   geometry: THREE.BufferGeometry;
@@ -34,6 +36,9 @@ export interface AiBody {
     shoulderZ: number;
     elbowDy: number; // siku di bawah bahu
     elbowDz: number;
+    midDy: number; // sendi ruas tengah di atas spine
+    topDy: number; // sendi ruas dada di atas ruas tengah
+    topMaxY: number; // puncak badan dari titik putar spine
   };
 }
 
@@ -115,6 +120,12 @@ function build(scene: THREE.Object3D, rig: Rig): AiBody | null {
   const dx = HAND.x - SHOULDER.x;
   const dy = HAND.y - SHOULDER.y;
   const len2 = dx * dx + dy * dy;
+  let topY = 0;
+  for (let i = 0; i < n; i++) {
+    v.fromBufferAttribute(pos, i).applyMatrix4(src.matrixWorld);
+    topY = Math.max(topY, remapY(v.y, rig.stubHi, hip) * K + GROUND);
+  }
+  const span = Math.max(0.3, topY - SPINE_PIVOT);
 
   for (let i = 0; i < n; i++) {
     v.fromBufferAttribute(pos, i).applyMatrix4(src.matrixWorld);
@@ -150,7 +161,14 @@ function build(scene: THREE.Object3D, rig: Rig): AiBody | null {
     w[BONE.legR] += mLeg * (1 - sideL) * (1 - foot) * hipW;
     let used = 0;
     for (let b = 1; b < BONES; b++) used += w[b];
-    w[BONE.spine] = Math.max(0, 1 - used);
+    // Sisa bobot dibagi sepanjang tinggi badan ke tiga ruas, supaya badan bisa melentur.
+    const rest = Math.max(0, 1 - used);
+    const hh = ((y * K + GROUND - SPINE_PIVOT) / span);
+    const wTop = ss(0.3, 0.7, hh);
+    const wMid = ss(0.0, 0.3, hh) * (1 - wTop);
+    w[BONE.top] = rest * wTop;
+    w[BONE.mid] = rest * wMid;
+    w[BONE.spine] = rest * (1 - wTop - wMid);
 
     // Empat bobot terbesar.
     let sum = 0;
@@ -199,6 +217,9 @@ function build(scene: THREE.Object3D, rig: Rig): AiBody | null {
       shoulderZ: SHOULDER.x * K,
       elbowDy: (elMidY - SHOULDER.y) * K,
       elbowDz: (elMidX - SHOULDER.x) * K,
+      midDy: span * 0.3,
+      topDy: span * 0.35,
+      topMaxY: span,
     },
   };
 }

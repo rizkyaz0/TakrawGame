@@ -164,8 +164,8 @@ export class Renderer {
           new THREE.MeshBasicMaterial({ color: 0x17131c, transparent: true, opacity: 0.28, depthWrite: false }),
         );
         sh.rotation.x = -Math.PI / 2;
-        sh.position.set(sx * 2.0, 0.02, 0);
-        sh.scale.set(1.2, 0.55, 1);
+        sh.position.set(sx * 4.2, 0.02, 0);
+        sh.scale.set(1.5, 0.7, 1);
         sc.add(sh);
       }
     }
@@ -176,8 +176,8 @@ export class Renderer {
       }
       this.stageChars = [a, b].map((id, i) => {
         const c = new FoodCharacter(id, false, 0);
-        c.root.position.set(i === 0 ? -2.0 : 2.0, 0, 0);
-        c.root.scale.setScalar(1.32);
+        c.root.position.set(i === 0 ? -4.2 : 4.2, 0, 0);
+        c.root.scale.setScalar(1.7);
         this.stageScene!.add(c.root);
         return c;
       });
@@ -200,8 +200,8 @@ export class Renderer {
     this.stageChars[1]?.poseStage(1, aR, t, Math.PI + 0.45);
     if (this.stageBall) {
       const hold = (x: number, y: number) => this.stageBall!.position.set(x, y, 0.3);
-      const cL = { x: -1.35, y: 2.1 }; // titik kontak kiri
-      const cR = { x: 1.35, y: 2.0 }; // titik kontak kanan
+      const cL = { x: -2.6, y: 2.6 }; // titik kontak kiri
+      const cR = { x: 2.6, y: 2.5 }; // titik kontak kanan
       const t1 = 0.95;
       const t2 = 3.35;
       let u: number;
@@ -218,9 +218,9 @@ export class Renderer {
     const aspect = window.innerWidth / window.innerHeight;
     this.stageCam.aspect = aspect;
     // Jarak kamera menjaga kedua karakter di dalam layar pada rasio berapa pun.
-    const need = 4.4 / Math.tan(THREE.MathUtils.degToRad(this.stageCam.fov / 2)) / Math.min(aspect, 1.9) * 1.25;
-    this.stageCam.position.set(0, 1.5, Math.max(9, need));
-    this.stageCam.lookAt(0, 1.7, 0);
+    const need = 6.9 / Math.tan(THREE.MathUtils.degToRad(this.stageCam.fov / 2)) / Math.min(aspect, 1.9) * 1.25;
+    this.stageCam.position.set(0, 2.2, Math.max(9, need));
+    this.stageCam.lookAt(0, 2.7, 0);
     this.stageCam.updateProjectionMatrix();
     styleUniforms.uBoil.value = Math.floor(now * 0.008) % 16;
     this.renderer.render(sc, this.stageCam);

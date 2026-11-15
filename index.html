@@ -454,7 +454,7 @@
 
       /* Panel mode latihan di kiri atas. */
       #train {
-        position: absolute; top: 14px; left: 14px; width: 318px; padding: 8px 12px 10px; display: none;
+        position: absolute; top: 140px; left: 14px; width: 318px; padding: 8px 12px 10px; display: none;
         background: rgba(23, 19, 28, 0.9); border: 4px solid var(--sun); box-shadow: 6px 6px 0 rgba(23, 19, 28, 0.5);
         transform: rotate(-1deg); font-size: 12px; font-weight: 700;
       }
@@ -671,7 +671,7 @@
       body.touch #help { display: none !important; }
       body.touch .plate { bottom: auto; top: 12px; }
       body.touch .plate .psub, body.touch .plate .pips { display: none; }
-      body.touch #train { top: 96px; width: 280px; }
+      body.touch #train { top: 140px; width: 280px; }
       body.touch #train .tkeys { display: none; }
       body.touch #title .hint, body.touch #pause .hint { display: none; }
       /* Tombol layar penuh: pojok kanan atas di komputer, di samping tombol jeda di HP. */
@@ -743,6 +743,22 @@
       #c2 .pips { justify-content: flex-end; }
       .pips b { width: 15px; height: 15px; border: 3px solid var(--ink); background: var(--paper); transform: rotate(45deg); }
       .pips b.used { background: var(--ink); }
+
+
+      /* ===== HUD pemain: pindah ke pojok atas dan diperkecil supaya tidak menutupi pemain ===== */
+      .plate { top: 12px; bottom: auto; width: 236px; }
+      #c1 { left: 14px; transform: none; }
+      #c2 { right: 112px; transform: none; }
+      .pname { font-size: 20px; padding: 0 10px 1px; border-width: 3px; box-shadow: 4px 4px 0 var(--ink); -webkit-text-stroke: 4px var(--ink); max-width: 100%; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; }
+      .psub { margin-top: 5px; padding: 1px 9px; font-size: 11px; border-width: 2px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .meter { height: 13px; margin-top: 6px; border-width: 2px; box-shadow: 3px 3px 0 rgba(23, 19, 28, 0.5); }
+      .tag { top: -15px; font-size: 11px; }
+      .pips { margin-top: 5px; gap: 4px; }
+      .pips b { width: 11px; height: 11px; border-width: 2px; }
+      .mates { top: 138px; bottom: auto; width: 170px; }
+      #mates1 { left: 18px; }
+      #mates2 { right: 116px; }
+      body.touch .mates { top: 138px; }
 
       /* Callout: pita miring yang menyapu layar. */
       #callout {
@@ -830,6 +846,32 @@
         display: block; width: fit-content; margin: 22px auto 0; padding: 3px 14px; font-weight: 800; font-size: 16px;
         background: var(--paper); color: var(--ink); border: 3px solid var(--ink);
       }
+
+
+      /* ===== Halaman kemenangan ===== */
+      #banner.win { top: 0; bottom: 0; z-index: 7; display: flex; align-items: center; justify-content: center;
+        background: radial-gradient(ellipse at 50% 55%, rgba(8, 14, 44, 0.55), rgba(6, 10, 30, 0.92)), url(/ui/bg-lobby.webp) center / cover no-repeat; }
+      #banner .vic { position: relative; z-index: 1; display: flex; flex-direction: column; align-items: center; gap: 6px; padding-top: 4px; }
+      #banner .vsign { position: relative; top: auto; left: auto; transform: none; min-width: 460px; font-size: 34px; padding: 18px 70px 30px; animation: vpop 0.5s cubic-bezier(0.2, 1.4, 0.3, 1) both; }
+      #banner .vchars { display: flex; justify-content: center; align-items: flex-end; gap: 6px; margin-top: -4px; }
+      #banner .vch { display: flex; flex-direction: column; align-items: center; animation: vrise 0.6s cubic-bezier(0.2, 1.3, 0.3, 1) both; }
+      #banner .vch:nth-child(2) { animation-delay: 0.12s; }
+      #banner .vch:nth-child(3) { animation-delay: 0.24s; }
+      #banner .vch img { width: min(300px, 36vh); height: min(300px, 36vh); object-fit: contain; filter: drop-shadow(0 10px 8px rgba(0, 0, 0, 0.5)) drop-shadow(0 0 18px color-mix(in srgb, var(--pc) 70%, transparent)); }
+      #banner .vchars.v3 .vch img { width: min(230px, 29vh); height: min(230px, 29vh); }
+      #banner .vch b { margin-top: -10px; font-size: 18px; color: #fff6e0; text-shadow: 0 3px 0 var(--ink), 0 0 8px rgba(23, 19, 28, 0.8); }
+      #banner .vwin { margin-top: 2px; font-size: 38px; color: #ffd23f; -webkit-text-stroke: 8px var(--ink); paint-order: stroke fill; text-align: center; animation: vpop 0.5s 0.3s cubic-bezier(0.2, 1.4, 0.3, 1) both; }
+      #banner .vscore { margin-top: 0; font-size: 46px; color: var(--paper); -webkit-text-stroke: 8px var(--ink); paint-order: stroke fill; }
+      #banner.win small { margin-top: 4px; }
+      #banner.win .bbtns { margin-top: 12px; display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 10px; }
+      #banner.win .bbtns .tapbtn.go { background: url(/ui/btn-gold.webp) center / 100% 100% no-repeat; color: #4a2a00; text-shadow: 0 1px 0 rgba(255, 255, 255, 0.5); min-width: 300px; padding: 18px 62px 20px 36px; font-size: 18px; filter: drop-shadow(0 4px 0 rgba(23, 19, 28, 0.35)); }
+      #banner.win .bbtns .tapbtn.back { background: url(/ui/btn-back.webp) center / 100% 100% no-repeat; color: #2b2f3a; text-shadow: 0 1px 0 rgba(255, 255, 255, 0.6); padding: 16px 30px 18px 50px; font-size: 14px; }
+      #banner.win .bbtns .tapbtn kbd { display: none; }
+      #banner .vconf { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
+      #banner .vconf i { position: absolute; top: -20px; left: var(--x); width: 9px; height: 15px; background: var(--c); animation: vfall var(--s) linear var(--d) infinite; }
+      @keyframes vfall { 0% { transform: translateY(0) rotate(0deg); } 100% { transform: translateY(110vh) rotate(720deg); } }
+      @keyframes vpop { from { transform: scale(0.4); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+      @keyframes vrise { from { transform: translateY(40px) scale(0.7); opacity: 0; } to { transform: none; opacity: 1; } }
 
       #help {
         position: absolute; bottom: 6px; left: 50%; transform: translateX(-50%); white-space: nowrap;

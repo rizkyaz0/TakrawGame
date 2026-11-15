@@ -281,7 +281,7 @@ function resetShown(): void {
   shown.over = false;
   shown.mp = -1;
   shown.phase = "";
-  elBanner.classList.remove("on");
+  elBanner.classList.remove("on", "win");
   elHud.dataset.over = "0"; // kalau tertinggal "1", tombol layar HP tetap tersembunyi
 }
 
@@ -3083,23 +3083,44 @@ function updateHud(): void {
   if (shown.over !== over) {
     shown.over = over;
     elBanner.classList.toggle("on", over);
+    if (!over) elBanner.classList.remove("win");
     elHud.dataset.over = over ? "1" : "0";
     if (over) {
       const w = state.score[0] > state.score[1] ? 0 : 1;
       elBanner.style.setProperty("--cc", hex(charOf(w).color));
       const decided = matchDecided();
-      elBanner.innerHTML =
-        `<div class="big display">${decided ? overTitle(w) : `SET ${app.setNo} UNTUK ${charOf(w).name.toUpperCase()}`}</div>` +
-        `<div class="bscore display">${state.score[0]} – ${state.score[1]}</div>` +
-        (app.setsActive > 1 ? `<small>Set: ${app.setWins[0]} – ${app.setWins[1]} · terbaik dari ${app.setsActive}</small>` : "") +
-        (app.online === "client"
-          ? `<small>Menunggu host memilih: main lagi atau ganti jagoan…</small>` +
-            `<div class="bbtns">${tapBtn("back", "KeyM", "KELUAR ROOM", "M")}</div>`
+      // Pertandingan selesai: halaman kemenangan penuh layar. Selesai satu set saja: pita kecil seperti biasa.
+      elBanner.classList.toggle("win", decided);
+      const btns =
+        app.online === "client"
+          ? `<small>Menunggu host memilih: main lagi atau ganti jagoan…</small><div class="bbtns">${tapBtn("back", "KeyM", "KELUAR ROOM", "M")}</div>`
           : `<div class="bbtns">${tapBtn("go", "KeyF", decided ? againLabel(w) : "SET BERIKUTNYA ▸", "F")}` +
-            `${tapBtn("back", "KeyC", "GANTI JAGOAN", "C")}${tapBtn("back", "KeyM", "MENU UTAMA", "M")}</div>`) +
-        `<small style="display:none"><span data-tap="KeyF"><kbd>F</kbd> main lagi</span> &nbsp;·&nbsp; ` +
-        `<span data-tap="KeyC"><kbd>C</kbd> pilih karakter</span> &nbsp;·&nbsp; ` +
-        `<span data-tap="KeyM"><kbd>M</kbd> menu utama</span></small>`;
+            `${tapBtn("back", "KeyC", "GANTI JAGOAN", "C")}${tapBtn("back", "KeyM", "MENU UTAMA", "M")}</div>`;
+      if (decided) {
+        const team = state.players.length > 2;
+        const winners = state.chars.map((k, i) => ({ k, i })).filter((x) => (x.i & 1) === w);
+        const youWon = app.online === "client" ? app.seat >= 0 && (app.seat & 1) === w : w === 0;
+        const confetti = Array.from({ length: 28 }, (_, i) => `<i style="--x:${(i * 37) % 100}%;--d:${(i % 7) * 0.35}s;--s:${2.6 + (i % 5) * 0.5}s;--c:${["#ffd23f", "#ff5a3c", "#4a7de0", "#fff6e0", "#4ee07a"][i % 5]}"></i>`).join("");
+        elBanner.innerHTML =
+          `<div class="vconf">${confetti}</div>` +
+          `<div class="vic">` +
+          `<div class="heading display vsign">${youWon || app.online !== "off" || state.players.length > 2 ? "KEMENANGAN" : "PERTANDINGAN SELESAI"}</div>` +
+          `<div class="vchars${winners.length > 2 ? " v3" : ""}">${winners
+            .map((x) => `<div class="vch" style="--pc:${hex(CHARS[x.k].color)}"><img src="${bigPortrait(x.k)}" alt="" draggable="false" /><b class="display">${CHARS[x.k].name}</b></div>`)
+            .join("")}</div>` +
+          `<div class="vwin display">${overTitle(w)}</div>` +
+          `<div class="vscore display">${state.score[0]} – ${state.score[1]}</div>` +
+          (app.setsActive > 1 ? `<small>Set: ${app.setWins[0]} – ${app.setWins[1]} · terbaik dari ${app.setsActive}</small>` : "") +
+          (team ? `<small>Tim ${w === 0 ? "Merah" : "Biru"} menang</small>` : "") +
+          btns +
+          `</div>`;
+      } else {
+        elBanner.innerHTML =
+          `<div class="big display">SET ${app.setNo} UNTUK ${charOf(w).name.toUpperCase()}</div>` +
+          `<div class="bscore display">${state.score[0]} – ${state.score[1]}</div>` +
+          `<small>Set: ${app.setWins[0]} – ${app.setWins[1]} · terbaik dari ${app.setsActive}</small>` +
+          btns;
+      }
     }
   }
 }

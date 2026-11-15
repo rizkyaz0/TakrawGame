@@ -845,7 +845,9 @@ function renderRoom(): void {
     else if (kind === "bot" && seatConvertible(i)) acts += btn("JADI PEMAIN", `rs:${i}`);
     return (
       `<div class="seat${room.focus === `s${i}` ? " on" : ""}" style="--pc:${hex(c.color)}" data-tap="rf:s${i}">` +
-      `<img class="pic" src="${portraits[room.chars[i]]}" alt="" draggable="false" />` +
+      (kind === "p2" && dev && guestGone(dev)
+        ? `<img class="pic empty" src="/ui/card-empty.webp" alt="" draggable="false" />`
+        : `<img class="pic" src="${portraits[room.chars[i]]}" alt="" draggable="false" />`) +
       `<div class="sb"><div class="who">${who}</div><div class="nm display">${c.name}</div><div class="acts">${acts}</div></div></div>`
     );
   };
@@ -868,11 +870,10 @@ function renderRoom(): void {
   const codePanel =
     app.online !== "host"
       ? ""
-      : `<div class="room rcodep"><span class="rlabel display">KODE ROOM</span>` +
-        (net.ready
-          ? `<b class="rcode display">${net.code}</b><span class="tapbtn go" data-tap="copylink">${linkCopied ? "TERSALIN ✓" : "SALIN LINK"}</span>`
-          : `<b class="rcode display">· · · ·</b>`) +
-        `<div class="rsub">${roomError || (net.ready ? `Teman buka situs ini, pilih MABAR ONLINE, MASUKKAN KODE. Tamu terhubung: ${net.guests.size}.` : "Membuat room…")}</div></div>`;
+      : `<div class="rcodep">` +
+        jpanel("KODE ROOM", `<b class="rcode display">${net.ready ? net.code : "· · · ·"}</b>`, "sm") +
+        `<div class="rsub">${net.ready ? `<span class="tapbtn go" data-tap="copylink">${linkCopied ? "TERSALIN ✓" : "SALIN LINK"}</span> ` : ""}` +
+        `${roomError || (net.ready ? `Teman buka situs ini, pilih MABAR ONLINE, MASUKKAN KODE. Tamu terhubung: ${net.guests.size}.` : "Membuat room…")}</div></div>`;
   $("roomBody").innerHTML = codePanel + team(0) + team(1) + `<div class="ropts">${opts}</div>`;
   const bad = roomConflict();
   const focusSeat = room.focus.startsWith("s") ? Number(room.focus.slice(1)) : -1;
@@ -1098,8 +1099,7 @@ function renderRoomClient(): void {
   };
   const team = (t: 0 | 1) =>
     `<div class="rteam" style="--tc:${t === 0 ? "#ff5a3c" : "#4a7de0"}"><div class="rhead display">TIM ${t === 0 ? "MERAH" : "BIRU"}</div>${seat(t)}</div>`;
-  const code = `<div class="room rcodep"><span class="rlabel display">KODE ROOM</span><b class="rcode display">${net.code || "····"}</b>` +
-    `<div class="rsub">Tersambung ke host.</div></div>`;
+  const code = `<div class="rcodep">${jpanel("KODE ROOM", `<b class="rcode display">${net.code || "····"}</b>`, "sm")}<div class="rsub">Tersambung ke host.</div></div>`;
   $("roomBody").innerHTML = code + team(0) + team(1);
   $("roomNote").innerHTML =
     mine < 0
@@ -3095,13 +3095,19 @@ function goJoin(code: string): void {
   }, 500);
 }
 
+// Panel merah dengan dua slot (aset buatan Gemini): judul di slot atas, isi di slot bawah.
+const jpanel = (top: string, bottom: string, cls = "") =>
+  `<div class="jpanel ${cls}"><div class="jtop display">${top}</div><div class="jbot">${bottom}</div></div>`;
+
 const SEAT_NAMES = ["PEMAIN 1", "PEMAIN 2", "PENONTON USIL"];
 function renderJoin(): void {
   const back = backBtn();
   if (join.status === "input" || join.status === "error") {
     $("joinBox").innerHTML =
-      `Ketik kode room dari host` +
-      `<input id="roomInput" maxlength="4" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="ABCD" />` +
+      jpanel(
+        "KETIK KODE ROOM DARI HOST",
+        `<input id="roomInput" maxlength="4" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="ABCD" />`,
+      ) +
       `<span class="tapbtn go" data-tap="join">GABUNG ▸</span>` +
       (join.status === "error" ? `<br /><span class="bad">${join.text}</span>` : "");
     $("joinHint").innerHTML = back;
@@ -3109,14 +3115,13 @@ function renderJoin(): void {
     return;
   }
   if (join.status === "connecting") {
-    $("joinBox").innerHTML = `<div class="jbig display">ROOM ${join.text}</div>Menyambung ke host…`;
+    $("joinBox").innerHTML = jpanel(`ROOM ${join.text}`, "Menyambung ke host…");
   } else {
     const seat =
       app.seat >= 0
-        ? `Kursimu: <b class="jbig display">${SEAT_NAMES[app.seat]}</b>`
-        : `Kamu belum dapat kursi, jadi menonton dulu. Host bisa memberimu kursi.`;
-    $("joinBox").innerHTML =
-      `<div class="jbig display">TERHUBUNG · ROOM ${net.code}</div>${seat}<br />Menunggu host memulai…`;
+        ? `Kursimu: <b>${SEAT_NAMES[app.seat]}</b><br />Menunggu host memulai…`
+        : `Kamu belum dapat kursi, jadi menonton dulu.<br />Menunggu host memulai…`;
+    $("joinBox").innerHTML = jpanel(`TERHUBUNG · ROOM ${net.code}`, seat);
   }
   $("joinHint").innerHTML = back;
 }

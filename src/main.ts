@@ -649,7 +649,7 @@ function goSelect(): void {
 // Satu layar untuk mengatur pertandingan 1v1/2v2/3v3: kartu tiap kursi (jagoan, alat, bot),
 // lalu arena, waktu, poin, tingkat CPU, penonton, dan MULAI. Kursi genap = Tim Merah (kiri),
 // ganjil = Tim Biru (kanan). Baru dua kursi yang bisa diisi orang (P1 dan satu orang lagi).
-const room = { active: false, chars: [0, 1, 2, 3, 4, 5] as number[], skins: [0, 0, 0, 0, 0, 0] as number[], focus: "start" };
+const room = { active: false, chars: [0, 1, 2, 3, 4, 5] as number[], skins: [0, 0, 0, 0, 0, 0] as number[], focus: "start", grid: false, edit: 0 };
 
 const roomSize = () => app.teamSize * 2;
 const p2Seat = () => (app.humans === 2 ? slotOf(1) : -1);
@@ -657,11 +657,8 @@ const seatKind = (i: number): "p1" | "p2" | "bot" => (i === 0 ? "p1" : i === p2S
 // Kursi yang bisa diubah jadi pemain kedua: lawan di kursi 1, atau teman setim di kursi 2.
 const seatConvertible = (i: number) => i === 1 || (i === 2 && app.teamSize > 1);
 
-function roomFocusList(): string[] {
-  const seats = Array.from({ length: roomSize() }, (_, i) => `s${i}`);
-  // Urutan mengikuti tata letak layar dari atas ke bawah: kursi, pengaturan, lalu tombol mulai.
-  return [...seats, "arena", "time", "win", "sets", "cpu", "spec", "start"];
-}
+const ROOM_CHIPS = ["arena", "time", "win", "sets", "cpu", "spec"];
+const ROOM_COLS = 7;
 
 function roomPreview(): void {
   renderer.skins = room.skins.slice(0, roomSize());
@@ -695,6 +692,8 @@ function goRoom(): void {
   // Skin: pilihan terakhir untuk P1 dan P2; bot memakai skin acak (semua terbuka bagi bot).
   for (let i = 0; i < n; i++) room.skins[i] = seatKind(i) === "bot" ? Math.floor(Math.random() * SKINS.length) : savedSkin(room.chars[i]);
   room.focus = "start";
+  room.grid = false;
+  room.edit = 0;
   applyArena();
   roomPreview();
   renderRoom();
@@ -821,43 +820,82 @@ const hostGuestDevice = (): Device => {
   return { kind: "net", id: id ?? -1 };
 };
 
+const rerenderRoom = (): void => (app.online === "client" ? renderRoomClient() : renderRoom());
+// Fokus kursi berbentuk s0, s1, ...; "start" dan "spec" juga berawalan s, jadi diperiksa dengan pola.
+const seatOf = (f: string): number => (/^s\d+$/.test(f) ? Number(f.slice(1)) : -1);
+const roomActive = (): number => (seatOf(room.focus) >= 0 ? seatOf(room.focus) : room.edit);
+
+// Grid jagoan di tengah lobi: kursi yang sedang dipilih memakai kursor di sini.
+function lobbyGrid(active: number, n: number, tagOf: (i: number) => string, allowed: (k: number) => boolean): string {
+  const cur = room.chars[active];
+  const badge = new Map<number, string>();
+  for (let i = 0; i < n; i++) badge.set(room.chars[i], tagOf(i));
+  return CHARS.map((c, k) => {
+    const ok = allowed(k);
+    const tg = badge.get(k);
+    return (
+      `<div class="gcell${k === cur ? " cur" : ""}${k === cur && room.grid ? " gon" : ""}${ok ? "" : " shut"}" data-tap="rg:${k}" style="--pc:${hex(c.color)}">` +
+      (tg ? `<i class="gtag">${tg}</i>` : "") +
+      `<img src="${portraits[k]}" alt="" draggable="false" /><b>${ok ? c.name : `Menang ${unlockWins(k)}×`}</b></div>`
+    );
+  }).join("");
+}
+
+function lobbyStats(k: number): string {
+  const c = CHARS[k];
+  const bar = (label: string, v: number) => `<div class="lsb">${label}<div class="bar"><i style="width:${Math.round(v * 100)}%"></i></div></div>`;
+  return (
+    `<div class="lstat" style="--pc:${hex(c.color)}"><div class="lsn display">${c.name}</div><div class="lsr">${ROLES[k % ROLES.length]}</div>` +
+    `<div class="lsbars">${bar("Cepat", statBar("moveSpeed", c.moveSpeed))}${bar("Lompat", statBar("jumpV", c.jumpV))}${bar("Tenaga", statBar("smashSpeed", c.smashSpeed))}</div>` +
+    `<div class="lssp"><b>${c.specialName}</b> ${SPECIAL_DESC[c.special]}</div></div>`
+  );
+}
+
+const lobbyShell = (cols: [string, string], grid: string, extra: string, stats: string, opts: string, n = 2): string =>
+  `<div class="lob${n > 4 ? " t3" : ""}">` +
+  `<div class="lcol" style="--tc:#ff5a3c"><div class="lhead display">TIM MERAH</div>${cols[0]}</div>` +
+  `<div class="lmid">${extra}<div class="lgrid">${grid}</div>${stats}<div class="lopts">${opts}</div></div>` +
+  `<div class="lcol" style="--tc:#4a7de0"><div class="lhead display">TIM BIRU</div>${cols[1]}</div>` +
+  `</div>`;
+
 function renderRoom(): void {
+  // Tamu online punya tampilan sendiri; renderRoom sering dipanggil dari tempat umum (lampu, stick baru).
+  if (app.online === "client") return renderRoomClient();
   const n = roomSize();
   $("roomTitle").textContent = `ROOM · ${app.teamSize} LAWAN ${app.teamSize}`;
-  const seat = (i: number): string => {
+  const online = app.online === "host";
+  const slot = (i: number): string => {
     const kind = seatKind(i);
     const c = CHARS[room.chars[i]];
     const dev = kind === "p1" ? devices[0] : kind === "p2" ? devices[1] : null;
-    const online = app.online === "host";
-    const who =
-      kind === "bot"
-        ? `BOT · ${CPU_NAMES[app.cpuLevel].toUpperCase()}`
-        : kind === "p2" && online
-          ? guestGone(devices[1])
-            ? "PEMAIN 2 · MENUNGGU TAMU…"
-            : "PEMAIN 2 · TAMU"
-          : `PEMAIN ${kind === "p1" ? 1 : 2}`;
+    const waiting = kind === "p2" && online && !!dev && guestGone(dev);
+    const dn = kind === "p1" ? 0 : 1;
+    const tag = waiting ? "TAMU" : kind === "bot" ? `CPU ${i + 1}` : kind === "p1" ? "P1" : online ? "TAMU" : "P2";
+    const bar =
+      dev && !waiting
+        ? `<span class="sbar" data-tap="rd:${dn}:1"><i class="lamp" id="rlamp${dn}"></i>${devName(dev)} ⟳</span>`
+        : waiting
+          ? `<span class="sbar wait">MENUNGGU TAMU…</span>`
+          : `<span class="sbar bot">BOT · ${CPU_NAMES[app.cpuLevel].toUpperCase()}</span>`;
     const btn = (label: string, tap: string) => `<span class="rb" data-tap="${tap}">${label}</span>`;
-    let acts = btn("GANTI JAGOAN ⟳", `rp:${i}`);
-    if (dev) acts += btn(`${devName(dev)} ▸`, `rd:${kind === "p1" ? 0 : 1}:1`) + `<i class="lamp" id="rlamp${kind === "p1" ? 0 : 1}"></i>`;
-    acts += btn(`SKIN: ${SKINS[room.skins[i]].name(room.chars[i])} ▸`, `rk:${i}`);
-    if (kind === "p2") acts += btn("JADI BOT", `rs:${i}`);
+    let acts = waiting ? "" : btn(`SKIN: ${SKINS[room.skins[i]].name(room.chars[i])} ▸`, `rk:${i}`);
+    if (kind === "p2") acts += btn("JADIKAN BOT", `rs:${i}`);
     else if (kind === "bot" && seatConvertible(i)) acts += btn("JADI PEMAIN", `rs:${i}`);
+    const on = room.focus === `s${i}`;
     return (
-      `<div class="seat${room.focus === `s${i}` ? " on" : ""}" style="--pc:${hex(c.color)}" data-tap="rf:s${i}">` +
-      (kind === "p2" && dev && guestGone(dev)
-        ? `<img class="pic empty" src="/ui/card-empty.webp" alt="" draggable="false" />`
-        : `<img class="pic" src="${portraits[room.chars[i]]}" alt="" draggable="false" />`) +
-      `<div class="sb"><div class="who">${who}</div><div class="nm display">${c.name}</div><div class="acts">${acts}</div></div></div>`
+      `<div class="slot${on ? " on" : ""}${on && room.grid ? " edit" : ""}${waiting ? " empty" : ""}" style="--pc:${hex(c.color)}" data-tap="rf:s${i}">` +
+      `<div class="stag display">${tag}</div>` +
+      (waiting
+        ? `<img class="spic" src="/ui/card-empty.webp" alt="" draggable="false" />`
+        : `<img class="spic" src="${portraits[room.chars[i]]}" alt="" draggable="false" />`) +
+      `<div class="sinfo"><div class="splate display">${waiting ? "KOSONG" : c.name}</div>${bar}<div class="sacts">${acts}</div></div></div>`
     );
   };
-  const team = (t: 0 | 1) =>
-    `<div class="rteam" style="--tc:${t === 0 ? "#ff5a3c" : "#4a7de0"}"><div class="rhead display">TIM ${t === 0 ? "MERAH" : "BIRU"}</div>` +
+  const col = (t: 0 | 1) =>
     Array.from({ length: n }, (_, i) => i)
       .filter((i) => (i & 1) === t)
-      .map(seat)
-      .join("") +
-    `</div>`;
+      .map(slot)
+      .join("");
   const chip = (id: string, label: string, value: string) =>
     `<span class="chip${room.focus === id ? " foc" : ""}" data-tap="ro:${id}">${label}: <b>${value}</b></span>`;
   const opts =
@@ -867,55 +905,129 @@ function renderRoom(): void {
     chip("sets", "SET", app.sets === 1 ? "1" : `${app.sets} (BEST OF)`) +
     chip("cpu", "BOT", CPU_NAMES[app.cpuLevel]) +
     chip("spec", "PENONTON", deviceLabel(spectator.device));
-  const codePanel =
-    app.online !== "host"
-      ? ""
-      : `<div class="rcodep">` +
-        jpanel("KODE ROOM", `<b class="rcode display">${net.ready ? net.code : "· · · ·"}</b>`, "sm") +
+  const extra =
+    online
+      ? `<div class="rcodep">` +
+        jpanel("KODE ROOM", `<b class="rcode display">${net.ready ? net.code : "· · · ·"}</b>`, "xs") +
         `<div class="rsub">${net.ready ? `<span class="tapbtn go" data-tap="copylink">${linkCopied ? "TERSALIN ✓" : "SALIN LINK"}</span> ` : ""}` +
-        `${roomError || (net.ready ? `Teman buka situs ini, pilih MABAR ONLINE, MASUKKAN KODE. Tamu terhubung: ${net.guests.size}.` : "Membuat room…")}</div></div>`;
-  $("roomBody").innerHTML = codePanel + team(0) + team(1) + `<div class="ropts">${opts}</div>`;
+        `${roomError || (net.ready ? `Tamu terhubung: ${net.guests.size}. Teman buka situs ini, pilih MABAR ONLINE, MASUKKAN KODE.` : "Membuat room…")}</div></div>`
+      : "";
+  const active = roomActive();
+  const humanActive = seatKind(active) !== "bot";
+  const tagOf = (i: number) => (seatKind(i) === "bot" ? "CPU" : seatKind(i) === "p1" ? "P1" : "P2");
+  $("roomBody").innerHTML = lobbyShell(
+    [col(0), col(1)],
+    lobbyGrid(active, n, tagOf, (k) => !humanActive || canPick(k)),
+    extra,
+    lobbyStats(room.chars[active]),
+    opts,
+    n,
+  );
   const bad = roomConflict();
-  const focusSeat = room.focus.startsWith("s") ? Number(room.focus.slice(1)) : -1;
+  const focusSeat = seatOf(room.focus);
   const focusDev = focusSeat >= 0 ? (seatKind(focusSeat) === "p1" ? devices[0] : seatKind(focusSeat) === "p2" ? devices[1] : null) : null;
   const hint = focusSeat >= 0 && seatKind(focusSeat) !== "bot" ? skinHint(room.chars[focusSeat]) : "";
+  const pad = menuPad !== null;
   $("roomNote").innerHTML = bad
     ? `<b class="bad">${bad}</b>`
-    : focusDev
-      ? `${devHelp(focusDev)}${hint ? `<br />${hint}` : ""}`
-      : menuPad !== null
-        ? `Sisa kursi diisi bot. D-pad pindah dan ganti &nbsp;·&nbsp; ✕ pilih &nbsp;·&nbsp; □ skin &nbsp;·&nbsp; △ alat &nbsp;·&nbsp; L1 bot/pemain &nbsp;·&nbsp; Options MULAI`
-        : `Sisa kursi diisi bot. <kbd>W</kbd><kbd>S</kbd> pindah &nbsp;·&nbsp; <kbd>A</kbd><kbd>D</kbd> jagoan &nbsp;·&nbsp; <kbd>Enter</kbd> pilih jagoan &nbsp;·&nbsp; <kbd>V</kbd> alat &nbsp;·&nbsp; <kbd>X</kbd> skin`;
+    : room.grid
+      ? pad
+        ? `Pilih jagoan: D-pad geser &nbsp;·&nbsp; ✕ atau ○ selesai`
+        : `Pilih jagoan: <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> geser &nbsp;·&nbsp; <kbd>Enter</kbd> atau <kbd>Esc</kbd> selesai`
+      : focusDev
+        ? `${devHelp(focusDev)}${hint ? `<br />${hint}` : ""}`
+        : pad
+          ? `D-pad pindah &nbsp;·&nbsp; ✕ pilih jagoan &nbsp;·&nbsp; □ skin &nbsp;·&nbsp; △ alat &nbsp;·&nbsp; L1 bot/pemain &nbsp;·&nbsp; Options MULAI`
+          : `<kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> pindah &nbsp;·&nbsp; <kbd>Enter</kbd> pilih jagoan &nbsp;·&nbsp; <kbd>V</kbd> alat &nbsp;·&nbsp; <kbd>X</kbd> skin &nbsp;·&nbsp; <kbd>T</kbd> bot/pemain`;
   $("roomHint").innerHTML =
     backBtn() + tapBtn(`go${bad ? " off" : ""}${room.focus === "start" ? " foc" : ""}`, "rstart", "MULAI PERTANDINGAN ▸", "Enter");
 }
 
+// Memilih jagoan untuk satu kursi dari grid (kursi bot bebas; kursi manusia hanya yang terbuka).
+function roomSetChar(seat: number, k: number): void {
+  room.chars[seat] = k;
+  if (app.online === "client") sendToHost({ t: "cmd", c: "char", k });
+  else {
+    room.skins[seat] = seatKind(seat) === "bot" ? room.skins[seat] : savedSkin(k);
+    roomPreview();
+  }
+  sfx.swing();
+  rerenderRoom();
+}
+
+function gridMove(seat: number, d: number): void {
+  const N = CHARS.length;
+  const human = app.online === "client" || seatKind(seat) !== "bot";
+  let k = room.chars[seat];
+  for (let t = 0; t < N; t++) {
+    k = (((k + d) % N) + N) % N;
+    if (!human || canPick(k)) break;
+  }
+  roomSetChar(seat, k);
+}
+
+function gridDir(code: string): number {
+  return LEFT.has(code) ? -1 : RIGHT.has(code) ? 1 : UP.has(code) ? -ROOM_COLS : DOWN.has(code) ? ROOM_COLS : 0;
+}
+
 function roomKey(code: string): void {
+  const n = roomSize();
+  if (room.grid) {
+    const a = room.edit;
+    if (code === "Escape" || code === "Backspace" || code === "Enter" || code === "NumpadEnter") {
+      room.grid = false;
+      room.focus = `s${a}`;
+      sfx.receivePerfect();
+      return renderRoom();
+    }
+    const d = gridDir(code);
+    if (d) gridMove(a, d);
+    else if (code === "KeyX") roomSkin(a, 1);
+    return;
+  }
   if (code === "Escape" || code === "Backspace") return backToMenu();
-  const list = roomFocusList();
-  const at = Math.max(0, list.indexOf(room.focus));
-  if (UP.has(code) || DOWN.has(code)) {
-    room.focus = list[(at + (DOWN.has(code) ? 1 : list.length - 1)) % list.length];
-    sfx.swing();
-    renderRoom();
-  } else if (LEFT.has(code) || RIGHT.has(code)) {
-    const dir = RIGHT.has(code) ? 1 : -1;
-    if (room.focus.startsWith("s")) roomChar(Number(room.focus.slice(1)), dir);
-    else if (room.focus !== "start") roomCycle(room.focus, dir);
-  } else if (code === "Enter" || code === "NumpadEnter") {
+  const f = room.focus;
+  const si = seatOf(f);
+  const nav = UP.has(code) || DOWN.has(code) || LEFT.has(code) || RIGHT.has(code);
+  if (nav) {
+    let next = f;
+    if (si >= 0) {
+      if (LEFT.has(code) || RIGHT.has(code)) {
+        if ((si ^ 1) < n) next = `s${si ^ 1}`;
+      } else if (UP.has(code)) {
+        if (si - 2 >= 0) next = `s${si - 2}`;
+      } else next = si + 2 < n ? `s${si + 2}` : ROOM_CHIPS[0];
+    } else if (ROOM_CHIPS.includes(f)) {
+      const at = ROOM_CHIPS.indexOf(f);
+      if (LEFT.has(code) || RIGHT.has(code)) {
+        roomCycle(f, RIGHT.has(code) ? 1 : -1);
+        return;
+      }
+      next = UP.has(code) ? (at > 0 ? ROOM_CHIPS[at - 1] : `s${n - 2}`) : at < ROOM_CHIPS.length - 1 ? ROOM_CHIPS[at + 1] : "start";
+    } else if (UP.has(code)) next = ROOM_CHIPS[ROOM_CHIPS.length - 1];
+    if (next !== f) {
+      room.focus = next;
+      if (seatOf(next) >= 0) room.edit = seatOf(next);
+      sfx.swing();
+    }
+    return renderRoom();
+  }
+  if (code === "Enter" || code === "NumpadEnter") {
     // Hanya Enter yang memilih: tombol aksi lain dibiarkan bebas untuk mengetes lampu alat.
-    if (room.focus === "start") roomStart();
-    else if (room.focus.startsWith("s")) {
-      goPickChar(Number(room.focus.slice(1)));
-    } else roomCycle(room.focus, 1);
-  } else if (code === "KeyV" && room.focus.startsWith("s")) {
-    const k = seatKind(Number(room.focus.slice(1)));
+    if (f === "start") roomStart();
+    else if (si >= 0) {
+      room.edit = si;
+      room.grid = true;
+      sfx.swing();
+      renderRoom();
+    } else roomCycle(f, 1);
+  } else if (code === "KeyV" && si >= 0) {
+    const k = seatKind(si);
     if (k !== "bot") roomDevice(k === "p1" ? 0 : 1, 1);
-  } else if (code === "KeyX" && room.focus.startsWith("s")) {
-    roomSkin(Number(room.focus.slice(1)), 1);
-  } else if (code === "KeyT" && room.focus.startsWith("s")) {
-    const i = Number(room.focus.slice(1));
-    if (seatKind(i) !== "p1") roomSeat(i);
+  } else if (code === "KeyX" && si >= 0) {
+    roomSkin(si, 1);
+  } else if (code === "KeyT" && si >= 0) {
+    if (seatKind(si) !== "p1") roomSeat(si);
   }
 }
 
@@ -1086,28 +1198,64 @@ function pickMove(dir: number): void {
 function renderRoomClient(): void {
   $("roomTitle").textContent = "ROOM · 1 LAWAN 1";
   const mine = app.seat;
-  const seat = (i: number): string => {
+  const slot = (i: number): string => {
     const c = CHARS[room.chars[i]];
     const you = i === mine;
-    const who = you ? `KAMU · PEMAIN ${i + 1}` : i === 0 ? "PEMAIN 1 · HOST" : "PEMAIN 2";
-    const acts = you ? `<span class="rb" data-tap="rp:${i}">GANTI JAGOAN ⟳</span>` : "";
+    const tag = you ? `P${i + 1} · KAMU` : i === 0 ? "P1 · HOST" : "P2";
+    const on = you;
     return (
-      `<div class="seat${you ? " on" : ""}" style="--pc:${hex(c.color)}">` +
-      `<img class="pic" src="${portraits[room.chars[i]]}" alt="" draggable="false" />` +
-      `<div class="sb"><div class="who">${who}</div><div class="nm display">${c.name}</div><div class="acts">${acts}</div></div></div>`
+      `<div class="slot${on ? " on" : ""}${on && room.grid ? " edit" : ""}" style="--pc:${hex(c.color)}"${you ? ` data-tap="rf:s${i}"` : ""}>` +
+      `<div class="stag display">${tag}</div>` +
+      `<img class="spic" src="${portraits[room.chars[i]]}" alt="" draggable="false" />` +
+      `<div class="sinfo"><div class="splate display">${c.name}</div><span class="sbar${you ? "" : " bot"}">${you ? "KAMU" : i === 0 ? "HOST" : "PEMAIN"}</span></div></div>`
     );
   };
-  const team = (t: 0 | 1) =>
-    `<div class="rteam" style="--tc:${t === 0 ? "#ff5a3c" : "#4a7de0"}"><div class="rhead display">TIM ${t === 0 ? "MERAH" : "BIRU"}</div>${seat(t)}</div>`;
-  const code = `<div class="rcodep">${jpanel("KODE ROOM", `<b class="rcode display">${net.code || "····"}</b>`, "sm")}<div class="rsub">Tersambung ke host.</div></div>`;
-  $("roomBody").innerHTML = code + team(0) + team(1);
+  const active = mine === 0 || mine === 1 ? mine : 0;
+  room.edit = active;
+  const extra =
+    `<div class="rcodep">${jpanel("KODE ROOM", `<b class="rcode display">${net.code || "····"}</b>`, "xs")}<div class="rsub">Tersambung ke host.</div></div>`;
+  $("roomBody").innerHTML = lobbyShell(
+    [slot(0), slot(1)],
+    lobbyGrid(active, 2, (i) => `P${i + 1}`, () => true),
+    extra,
+    lobbyStats(room.chars[active]),
+    `<span class="chip">Host yang mengatur arena, waktu, dan poin.</span>`,
+  );
   $("roomNote").innerHTML =
     mine < 0
       ? "Kamu belum dapat kursi, jadi menonton dulu. Host bisa memberimu kursi."
       : mine === 2
         ? "Kamu penonton usil. Host yang mengatur pertandingannya."
-        : "Pilih jagoanmu lewat GANTI JAGOAN, lalu tunggu host menekan MULAI.";
+        : room.grid
+          ? "Pilih jagoanmu dari grid, lalu <kbd>Enter</kbd> kalau sudah. Tunggu host menekan MULAI."
+          : "Tekan <kbd>Enter</kbd> untuk memilih jagoan, lalu tunggu host menekan MULAI.";
   $("roomHint").innerHTML = backBtn() + `<span class="tapbtn go off">MENUNGGU HOST…</span>`;
+}
+
+function roomClientKey(code: string): void {
+  const seat = app.seat;
+  if (code === "Escape" || code === "Backspace") {
+    if (room.grid) {
+      room.grid = false;
+      return renderRoomClient();
+    }
+    return goTitle();
+  }
+  if (seat !== 0 && seat !== 1) return;
+  if (room.grid) {
+    if (code === "Enter" || code === "NumpadEnter") {
+      room.grid = false;
+      sfx.receivePerfect();
+      return renderRoomClient();
+    }
+    const d = gridDir(code);
+    if (d) gridMove(seat, d);
+  } else if (code === "Enter" || code === "NumpadEnter") {
+    room.edit = seat;
+    room.grid = true;
+    sfx.swing();
+    renderRoomClient();
+  }
 }
 
 const ARCADE_LEVELS = [0, 0, 1, 1, 2];
@@ -1522,7 +1670,18 @@ function handleTap(v: string): void {
     menuKey("Enter");
   } else if (cmd === "rf") {
     room.focus = arg;
-    renderRoom();
+    if (seatOf(arg) >= 0) room.edit = seatOf(arg);
+    rerenderRoom();
+  } else if (cmd === "rg") {
+    // Ketuk jagoan di grid: dipasang ke kursi yang sedang dipilih.
+    const k = Number(arg);
+    const seat = app.online === "client" ? (app.seat === 1 ? 1 : 0) : room.edit;
+    if (app.online === "client" && app.seat !== 0 && app.seat !== 1) return;
+    if ((app.online === "client" || seatKind(seat) !== "bot") && !canPick(k)) return sfx.fault();
+    room.edit = seat;
+    room.grid = true;
+    if (app.online !== "client") room.focus = `s${seat}`;
+    roomSetChar(seat, k);
   } else if (cmd === "rc") {
     const [, i, dir] = v.split(":");
     room.focus = `s${i}`;
@@ -2208,11 +2367,7 @@ function menuKey(code: string): void {
   }
 
   if (app.mode === "pickchar") return pickKey(code);
-  if (app.online === "client" && app.mode === "room") {
-    if (code === "Escape" || code === "Backspace") return goTitle();
-    if ((code === "Enter" || code === "NumpadEnter") && (app.seat === 0 || app.seat === 1)) goPickChar(app.seat);
-    return;
-  }
+  if (app.online === "client" && app.mode === "room") return roomClientKey(code);
   if (app.online === "client") {
     // Tamu: pilihannya dikirim ke host; menu jeda hanya berisi "keluar room".
     if (app.paused) {
@@ -2448,14 +2603,18 @@ function pollPads(): void {
       if (hit & 64) menuKey("KeyV");
       if (hit & 512) menuKey("KeyT");
       if (hit & 128) {
-        room.focus = "start";
-        menuKey("Enter");
+        room.grid = false;
+        roomStart();
       } else if (hit & 32) menuKey("Escape");
       continue;
     }
     if (app.mode === "room") {
-      // Tamu online: silang membuka Pilih Jagoan, lingkaran keluar.
-      if (hit & 16 || hit & 128) menuKey("Enter");
+      // Tamu online: D-pad menggeser, silang memilih, lingkaran kembali.
+      if (hit & 1) menuKey("KeyW");
+      if (hit & 2) menuKey("KeyS");
+      if (hit & 4) menuKey("KeyA");
+      if (hit & 8) menuKey("KeyD");
+      if (hit & 16) menuKey("Enter");
       else if (hit & 32) menuKey("Escape");
       continue;
     }
@@ -2986,8 +3145,12 @@ const hostHandlers = {
     sfx.receivePerfect();
     setNetNote(`TAMU ${id} MASUK`, 2.5);
     if (app.mode === "room" && !autoPicked && devices[1].kind === "net") {
+      // Tamu masuk: kursi host langsung dibuka untuk memilih jagoan.
       autoPicked = true;
-      goPickChar(0);
+      room.focus = "s0";
+      room.edit = 0;
+      room.grid = true;
+      renderRoom();
       return;
     }
     if (app.mode === "room") renderRoom();
@@ -3203,22 +3366,24 @@ function applyFrame(m: FrameMsg): void {
       callout(app.seat === 2 ? "KAMU PENONTON USIL!" : app.seat >= 0 ? `KAMU P${app.seat + 1}!` : "MULAI!", "#ffd23f", true);
     } else if (want === "select") renderSelect();
     else if (want === "room") {
-      renderRoomClient();
       if (!autoPicked && (app.seat === 0 || app.seat === 1)) {
         autoPicked = true;
-        goPickChar(app.seat);
+        room.edit = app.seat;
+        room.grid = true;
       }
+      renderRoomClient();
     } else {
       join.status = "waiting";
       renderJoin();
     }
   } else if (want === "room" && (roomChanged || seatChanged)) {
     if (app.mode === "room") {
-      renderRoomClient();
       if (!autoPicked && (app.seat === 0 || app.seat === 1)) {
         autoPicked = true;
-        goPickChar(app.seat);
+        room.edit = app.seat;
+        room.grid = true;
       }
+      renderRoomClient();
     }
   } else if (want === "match" && (restarted || seatChanged)) {
     if (restarted) resetShown();

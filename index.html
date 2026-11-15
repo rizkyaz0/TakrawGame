@@ -88,7 +88,7 @@
 
       /* ===== Layar menu ===== */
       .screen { position: absolute; inset: 0; display: none; }
-      #hud[data-mode="title"] #title, #hud[data-mode="settings"] #settings, #hud[data-mode="profile"] #profile, #hud[data-mode="join"] #join, #hud[data-mode="controls"] #controls, #hud[data-mode="room"] #room, #hud[data-mode="howto"] #howto, #hud[data-mode="keys"] #keys, #hud[data-mode="select"] #select, #hud[data-paused="1"] #pause { display: block; }
+      #hud[data-mode="title"] #title, #hud[data-mode="settings"] #settings, #hud[data-mode="profile"] #profile, #hud[data-mode="join"] #join, #hud[data-mode="controls"] #controls, #hud[data-mode="room"] #room, #hud[data-mode="howto"] #howto, #hud[data-mode="pickchar"] #pickchar, #hud[data-mode="keys"] #keys, #hud[data-mode="select"] #select, #hud[data-paused="1"] #pause { display: block; }
       /* Elemen pertandingan disembunyikan di luar pertandingan. */
       #hud:not([data-mode="match"]) > :is(#top, #c1, #c2, #help, #banner, #callout, #pop, #cutin, #dim, #lines, #flash, #tension) { display: none !important; }
       #title, #pause, #controls, #room, #howto, #keys { background: radial-gradient(ellipse at 50% 40%, rgba(23, 19, 28, 0.25), rgba(23, 19, 28, 0.78)); }
@@ -279,6 +279,41 @@
       #keysNote { position: absolute; left: 50%; bottom: 76px; transform: translateX(-50%); width: min(720px, 92%); text-align: center; font-size: 13px; font-weight: 700; text-shadow: 0 2px 0 var(--ink); }
       #keysHint { background: none; border: none; bottom: 18px; }
       body.soft #keysBody .kcol { border-radius: 16px; }
+
+
+      /* Pilih jagoan: panggung studio dengan karakter besar */
+      #pickchar { background: radial-gradient(ellipse at 50% 38%, rgba(30, 90, 190, 0.92), rgba(8, 16, 52, 0.97) 70%); }
+      #pickStage { position: absolute; top: 62px; left: 50%; transform: translateX(-50%); width: 380px; height: 290px; }
+      #pickDisc { position: absolute; left: 50%; bottom: 0; transform: translateX(-50%); width: 340px; height: 56px; border-radius: 50%; background: radial-gradient(ellipse, rgba(120, 220, 255, 0.55), rgba(40, 120, 220, 0.25) 60%, transparent 72%); box-shadow: 0 0 40px 10px rgba(80, 200, 255, 0.35); }
+      #pickBig { position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); height: 290px; width: auto; max-width: 380px; object-fit: contain; filter: drop-shadow(0 12px 14px rgba(0, 0, 0, 0.5)); transition: filter 0.2s; }
+      #pickBig.shut { filter: grayscale(1) brightness(0.55); }
+      #pickDetail { position: absolute; left: 18px; top: 108px; bottom: auto; right: auto; height: auto; width: 215px; }
+      /* Carousel satu baris: kartu terpilih di tengah, tetangganya mengecil dan kabur ke kiri-kanan. */
+      #pickCards {
+        position: absolute; left: 0; right: 0; bottom: 78px; height: 138px; overflow: hidden; touch-action: pan-y; pointer-events: auto;
+        -webkit-mask-image: linear-gradient(to right, transparent 0, #000 20%, #000 80%, transparent 100%);
+        mask-image: linear-gradient(to right, transparent 0, #000 20%, #000 80%, transparent 100%);
+      }
+      #pickCards .pc {
+        position: absolute; left: 50%; bottom: 8px; width: 98px; padding: 4px 2px 5px; background: var(--paper); color: var(--ink);
+        border: 4px solid var(--ink); text-align: center; cursor: pointer;
+        transition: transform 0.28s cubic-bezier(0.2, 0.8, 0.2, 1), filter 0.28s, opacity 0.28s; will-change: transform, filter;
+      }
+      #pickCards .pc img { display: block; width: 58px; height: 58px; margin: -2px auto -4px; pointer-events: none; }
+      #pickCards .pc .nm { font-size: 11px; font-weight: 800; line-height: 1.1; }
+      #pickCards .pc.on { border-color: var(--sun); box-shadow: 0 0 0 3px rgba(255, 210, 63, 0.35), 0 10px 18px rgba(0, 0, 0, 0.45); }
+      #pickCards .pc.shut img, #pickCards .pc.shut .nm { filter: grayscale(1) brightness(0.8); }
+      #pickCards .pc.shut::after { content: "🔒"; position: absolute; right: 4px; top: 2px; font-size: 14px; }
+      .pickarr { position: absolute; bottom: 118px; width: 40px; height: 40px; border-radius: 50%; background: rgba(255, 246, 224, 0.92); color: var(--ink); border: 4px solid var(--ink); font-size: 20px; line-height: 30px; text-align: center; cursor: pointer; z-index: 30; pointer-events: auto; }
+      #pickPrev { left: calc(50% - 440px); }
+      #pickNext { right: calc(50% - 440px); }
+      #pickBig.swap { animation: pickSwap 0.32s cubic-bezier(0.2, 0.9, 0.3, 1); }
+      @keyframes pickSwap { from { opacity: 0; transform: translateX(-50%) scale(0.88) translateY(10px); } to { opacity: 1; transform: translateX(-50%) scale(1) translateY(0); } }
+      #pickHint { background: none; border: none; bottom: 18px; }
+      #pickHint .tapbtn.go.off { opacity: 0.5; }
+      body.soft #pickCards .pc { border-radius: 12px; }
+      body.soft .pickarr { box-shadow: 0 6px 12px rgba(0, 0, 0, 0.4); }
+      .rcodep { grid-column: 1 / -1; }
 
       /* Cara main */
       #howBody { position: absolute; top: 74px; left: 50%; transform: translateX(-50%); width: min(840px, 96%); display: grid; grid-template-columns: 1fr 1.25fr; gap: 12px; align-items: start; font-size: 12.5px; line-height: 1.4; }
@@ -698,6 +733,17 @@
         <div id="keysBody"></div>
         <div id="keysNote"></div>
         <div class="hint" id="keysHint"></div>
+      </div>
+
+      <!-- Pilih jagoan untuk satu kursi (halaman terpisah dari Room) -->
+      <div id="pickchar" class="screen">
+        <div class="heading display">PILIH JAGOAN</div>
+        <div id="pickStage"><div id="pickDisc"></div><img id="pickBig" alt="" draggable="false" /></div>
+        <div class="detail" id="pickDetail"></div>
+        <div id="pickCards"></div>
+        <div class="pickarr" id="pickPrev" data-tap="pkmove:-1">◂</div>
+        <div class="pickarr" id="pickNext" data-tap="pkmove:1">▸</div>
+        <div class="hint" id="pickHint"></div>
       </div>
 
       <!-- Cara main: kontrol, aturan singkat, dan jurus tiap jagoan -->

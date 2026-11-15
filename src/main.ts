@@ -1,4 +1,4 @@
-import { loadAiBody } from "./aibody";
+import { aiBodyIfReady, loadAiBody } from "./aibody";
 import { SKINS, nextSkin, savedSkin, skinHint, winsWith } from "./skins";
 import { crowdSfx, getVolume, music, setBusLevel, setVolume, sfx, sillySfx, voice, VOLUME_STEPS } from "./audio";
 import { loadSettings, saveSettings, settings } from "./settings";
@@ -110,7 +110,7 @@ const shown = { score: [-1, -1], char: [-1, -1], rally: -1, heat: -1, over: fals
 const elMates = [$("mates1"), $("mates2")];
 
 // ===== Alur aplikasi: judul -> pilih karakter -> pertandingan =====
-type Mode = "title" | "settings" | "profile" | "join" | "howto" | "keys" | "controls" | "room" | "select" | "match";
+type Mode = "title" | "settings" | "profile" | "join" | "howto" | "keys" | "pickchar" | "controls" | "room" | "select" | "match";
 const app = {
   mode: "title" as Mode,
   paused: false,
@@ -605,6 +605,11 @@ function updateControlsLive(): void {
       padCountShown = count;
       renderRoom();
     }
+    const roomNow = `${net.ready}:${net.code}:${net.guests.size}:${roomError}`;
+    if (app.online === "host" && roomNow !== roomShown) {
+      roomShown = roomNow;
+      renderRoom();
+    }
     document.getElementById("rlamp0")?.classList.toggle("on", deviceActive(devices[0]));
     document.getElementById("rlamp1")?.classList.toggle("on", deviceActive(devices[1]));
     return;
@@ -664,6 +669,7 @@ function goRoom(): void {
   room.active = true;
   setMode("room");
   defaultDevices(menuPad);
+  if (app.online === "host") devices[1] = hostGuestDevice(); // kursi 2 untuk tamu
   // Kapten memakai jagoan terakhir; kursi lain diundi tanpa kembar.
   const n = roomSize();
   const used = new Set<number>();
@@ -748,6 +754,7 @@ function roomSeat(i: number): void {
   } else if (kind === "bot" && seatConvertible(i)) {
     app.humans = 2;
     app.mate = i === 2;
+    if (app.online === "host") devices[1] = hostGuestDevice();
     if (!canPick(room.chars[i])) room.chars[i] = firstOpen(room.chars[i]);
     if (sameDevice(devices[0], devices[1])) {
       const other = deviceOptions().find((o) => !sameDevice(o, devices[0]));
@@ -773,6 +780,9 @@ function roomCycle(what: string, dir: number): void {
 }
 
 function roomConflict(): string {
+  if (app.online === "host" && app.humans === 2 && devices[1].kind === "net" && guestGone(devices[1])) {
+    return "Menunggu tamu masuk. Bagikan kode room, atau jadikan kursi ini bot.";
+  }
   if (guestGone(devices[0]) || (app.humans === 2 && guestGone(devices[1])) || guestGone(spectator.device)) {
     return "Ada tamu yang sudah putus. Ganti kursinya dulu.";
   }
@@ -793,6 +803,12 @@ function roomStart(): void {
   startMatch();
 }
 
+const devName = (d: Device): string => (d.kind === "net" && guestGone(d) ? "KOSONG" : deviceLabel(d));
+const hostGuestDevice = (): Device => {
+  const id = Array.from(net.guests.keys()).find((g) => !(devices[0].kind === "net" && devices[0].id === g));
+  return { kind: "net", id: id ?? -1 };
+};
+
 function renderRoom(): void {
   const n = roomSize();
   $("roomTitle").textContent = `ROOM · ${app.teamSize} LAWAN ${app.teamSize}`;
@@ -800,10 +816,18 @@ function renderRoom(): void {
     const kind = seatKind(i);
     const c = CHARS[room.chars[i]];
     const dev = kind === "p1" ? devices[0] : kind === "p2" ? devices[1] : null;
-    const who = kind === "bot" ? `BOT · ${CPU_NAMES[app.cpuLevel].toUpperCase()}` : `PEMAIN ${kind === "p1" ? 1 : 2}`;
+    const online = app.online === "host";
+    const who =
+      kind === "bot"
+        ? `BOT · ${CPU_NAMES[app.cpuLevel].toUpperCase()}`
+        : kind === "p2" && online
+          ? guestGone(devices[1])
+            ? "PEMAIN 2 · MENUNGGU TAMU…"
+            : "PEMAIN 2 · TAMU"
+          : `PEMAIN ${kind === "p1" ? 1 : 2}`;
     const btn = (label: string, tap: string) => `<span class="rb" data-tap="${tap}">${label}</span>`;
-    let acts = `${btn("◂", `rc:${i}:-1`)}${btn("▸", `rc:${i}:1`)}`;
-    if (dev) acts += btn(`${deviceLabel(dev)} ▸`, `rd:${kind === "p1" ? 0 : 1}:1`) + `<i class="lamp" id="rlamp${kind === "p1" ? 0 : 1}"></i>`;
+    let acts = btn("GANTI JAGOAN ⟳", `rp:${i}`);
+    if (dev) acts += btn(`${devName(dev)} ▸`, `rd:${kind === "p1" ? 0 : 1}:1`) + `<i class="lamp" id="rlamp${kind === "p1" ? 0 : 1}"></i>`;
     acts += btn(`SKIN: ${SKINS[room.skins[i]].name(room.chars[i])} ▸`, `rk:${i}`);
     if (kind === "p2") acts += btn("JADI BOT", `rs:${i}`);
     else if (kind === "bot" && seatConvertible(i)) acts += btn("JADI PEMAIN", `rs:${i}`);
@@ -829,7 +853,15 @@ function renderRoom(): void {
     chip("sets", "SET", app.sets === 1 ? "1" : `${app.sets} (BEST OF)`) +
     chip("cpu", "BOT", CPU_NAMES[app.cpuLevel]) +
     chip("spec", "PENONTON", deviceLabel(spectator.device));
-  $("roomBody").innerHTML = team(0) + team(1) + `<div class="ropts">${opts}</div>`;
+  const codePanel =
+    app.online !== "host"
+      ? ""
+      : `<div class="room rcodep"><span class="rlabel display">KODE ROOM</span>` +
+        (net.ready
+          ? `<b class="rcode display">${net.code}</b><span class="tapbtn go" data-tap="copylink">${linkCopied ? "TERSALIN ✓" : "SALIN LINK"}</span>`
+          : `<b class="rcode display">· · · ·</b>`) +
+        `<div class="rsub">${roomError || (net.ready ? `Teman buka situs ini, pilih MABAR ONLINE, MASUKKAN KODE. Tamu terhubung: ${net.guests.size}.` : "Membuat room…")}</div></div>`;
+  $("roomBody").innerHTML = codePanel + team(0) + team(1) + `<div class="ropts">${opts}</div>`;
   const bad = roomConflict();
   const focusSeat = room.focus.startsWith("s") ? Number(room.focus.slice(1)) : -1;
   const focusDev = focusSeat >= 0 ? (seatKind(focusSeat) === "p1" ? devices[0] : seatKind(focusSeat) === "p2" ? devices[1] : null) : null;
@@ -838,7 +870,7 @@ function renderRoom(): void {
     ? `<b class="bad">${bad}</b>`
     : focusDev
       ? `${devHelp(focusDev)}${hint ? `<br />${hint}` : ""}`
-      : `Sisa kursi diisi bot. <kbd>W</kbd><kbd>S</kbd> pindah &nbsp;·&nbsp; <kbd>A</kbd><kbd>D</kbd> ganti &nbsp;·&nbsp; <kbd>Enter</kbd> pilih`;
+      : `Sisa kursi diisi bot. <kbd>W</kbd><kbd>S</kbd> pindah &nbsp;·&nbsp; <kbd>A</kbd><kbd>D</kbd> jagoan &nbsp;·&nbsp; <kbd>Enter</kbd> pilih jagoan &nbsp;·&nbsp; <kbd>V</kbd> alat &nbsp;·&nbsp; <kbd>X</kbd> skin`;
   $("roomHint").innerHTML =
     backBtn() + tapBtn(`go${bad ? " off" : ""}${room.focus === "start" ? " foc" : ""}`, "rstart", "MULAI PERTANDINGAN ▸", "Enter");
 }
@@ -859,17 +891,177 @@ function roomKey(code: string): void {
     // Hanya Enter yang memilih: tombol aksi lain dibiarkan bebas untuk mengetes lampu alat.
     if (room.focus === "start") roomStart();
     else if (room.focus.startsWith("s")) {
-      const i = Number(room.focus.slice(1));
-      const k = seatKind(i);
-      if (k === "bot") roomSeat(i);
-      else roomDevice(k === "p1" ? 0 : 1, 1);
+      goPickChar(Number(room.focus.slice(1)));
     } else roomCycle(room.focus, 1);
+  } else if (code === "KeyV" && room.focus.startsWith("s")) {
+    const k = seatKind(Number(room.focus.slice(1)));
+    if (k !== "bot") roomDevice(k === "p1" ? 0 : 1, 1);
   } else if (code === "KeyX" && room.focus.startsWith("s")) {
     roomSkin(Number(room.focus.slice(1)), 1);
   } else if (code === "KeyT" && room.focus.startsWith("s")) {
     const i = Number(room.focus.slice(1));
     if (seatKind(i) !== "p1") roomSeat(i);
   }
+}
+
+// ===== Pilih Jagoan: halaman terpisah dari Room =====
+// Dibuka dari tombol GANTI JAGOAN di kartu kursi. Kursi manusia hanya boleh memilih yang sudah
+// terbuka; kursi bot dan semua kursi online bebas. Tamu online mengirim pilihannya ke host.
+const pickUi = { seat: 0, sel: 0 };
+let pickShown = -1; // jagoan yang sedang tampil besar (untuk animasi pergantian)
+let pickSwipedAt = 0;
+const bigCache = new Map<string, string>();
+function bigPortrait(k: number): string {
+  const key = `${k}:${settings.style}:${aiBodyIfReady(k) ? 1 : 0}`;
+  let u = bigCache.get(key);
+  if (!u) {
+    u = renderer.portrait(k, 280, false, true);
+    bigCache.set(key, u);
+  }
+  return u;
+}
+const pickHuman = () => app.online === "client" || seatKind(pickUi.seat) !== "bot";
+const pickAllowed = (k: number) => !pickHuman() || canPick(k);
+
+function goPickChar(seat: number): void {
+  pickUi.seat = seat;
+  pickUi.sel = room.chars[seat] ?? 0;
+  pickShown = -1;
+  setMode("pickchar");
+  renderPickChar();
+}
+
+function renderPickChar(): void {
+  const k = pickUi.sel;
+  const c = CHARS[k];
+  const ok = pickAllowed(k);
+  const big = $("pickBig") as HTMLImageElement;
+  big.src = bigPortrait(k);
+  big.classList.toggle("shut", !ok);
+  const who =
+    app.online === "client" ? "KAMU" : seatKind(pickUi.seat) === "bot" ? "BOT" : `PEMAIN ${seatKind(pickUi.seat) === "p1" ? 1 : 2}`;
+  const stat = (label: string, v: number) => `<div class="stat">${label}<div class="bar"><i style="width:${Math.round(v * 100)}%"></i></div></div>`;
+  const el = $("pickDetail");
+  el.style.setProperty("--pc", hex(c.color));
+  el.innerHTML =
+    `<div class="who">${who}</div><div class="nm">${c.name}</div><div class="role">${ROLES[k % ROLES.length]}</div>` +
+    stat("Cepat", statBar("moveSpeed", c.moveSpeed)) +
+    stat("Lompat", statBar("jumpV", c.jumpV)) +
+    stat("Tenaga", statBar("smashSpeed", c.smashSpeed)) +
+    `<div class="sp"><b>${c.specialName}</b>${SPECIAL_DESC[c.special]}</div>`;
+  // Carousel: kartu dibangun sekali, lalu hanya gayanya yang diperbarui supaya perpindahannya mulus.
+  const box = $("pickCards");
+  if (box.children.length !== CHARS.length) {
+    box.innerHTML = CHARS.map(
+      (_, i) => `<div class="pc" data-tap="pk:${i}"><img src="${portraits[i]}" alt="" draggable="false" /><div class="nm"></div></div>`,
+    ).join("");
+  }
+  const n = CHARS.length;
+  Array.from(box.children).forEach((node, i) => {
+    const el = node as HTMLElement;
+    let d = (((i - k) % n) + n) % n;
+    if (d > n / 2) d -= n;
+    const a2 = Math.abs(d);
+    const open = pickAllowed(i);
+    el.classList.toggle("on", d === 0);
+    el.classList.toggle("shut", !open);
+    (el.querySelector("img") as HTMLImageElement).src = portraits[i];
+    (el.querySelector(".nm") as HTMLElement).textContent = open ? CHARS[i].name : `Menang ${unlockWins(i)}×`;
+    el.style.transform = `translateX(calc(-50% + ${d * 112}px)) scale(${d === 0 ? 1.2 : Math.max(0.55, 1 - 0.13 * a2)})`;
+    el.style.filter = d === 0 ? "none" : `blur(${Math.min(3.4, a2 * 0.95)}px) brightness(${Math.max(0.6, 1 - 0.09 * a2)})`;
+    el.style.opacity = a2 > 4 ? "0" : String(Math.max(0.15, 1 - a2 * 0.16));
+    el.style.zIndex = String(20 - a2);
+    el.style.pointerEvents = a2 > 4 ? "none" : "auto";
+  });
+  if (pickShown !== k) {
+    pickShown = k;
+    replay(big, "swap");
+  }
+  $("pickHint").innerHTML =
+    backBtn() + tapBtn(`go${ok ? "" : " off"}`, "pklock", ok ? "KUNCI JAGOANMU ✓" : `TERKUNCI · MENANG ${unlockWins(k)}×`, "F");
+}
+
+function pickBack(): void {
+  setMode("room");
+  if (app.online === "client") renderRoomClient();
+  else renderRoom();
+}
+
+function pickLock(): void {
+  const k = pickUi.sel;
+  if (!pickAllowed(k)) return sfx.fault();
+  const seat = pickUi.seat;
+  room.chars[seat] = k;
+  if (app.online === "client") sendToHost({ t: "cmd", c: "char", k });
+  else {
+    if (seatKind(seat) !== "bot") room.skins[seat] = savedSkin(k);
+    roomPreview();
+  }
+  sfx.receivePerfect();
+  pickBack();
+}
+
+function pickKey(code: string): void {
+  const n = CHARS.length;
+  if (code === "Escape" || code === "Backspace") return pickBack();
+  if (LEFT.has(code) || RIGHT.has(code)) pickUi.sel = (pickUi.sel + (RIGHT.has(code) ? 1 : n - 1)) % n;
+  else if (CONFIRM.has(code)) return pickLock();
+  else return;
+  sfx.swing();
+  renderPickChar();
+}
+
+function pickMove(dir: number): void {
+  const n = CHARS.length;
+  pickUi.sel = (pickUi.sel + dir + n) % n;
+  sfx.swing();
+  renderPickChar();
+}
+{
+  // Geser jari atau roda mouse di carousel memindahkan pilihan.
+  const box = $("pickCards");
+  let x0: number | null = null;
+  box.addEventListener("pointerdown", (e) => (x0 = e.clientX));
+  box.addEventListener("pointerup", (e) => {
+    if (x0 !== null && Math.abs(e.clientX - x0) > 36) {
+      pickSwipedAt = performance.now();
+      pickMove(e.clientX < x0 ? 1 : -1);
+    }
+    x0 = null;
+  });
+  box.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    pickMove(e.deltaY + e.deltaX > 0 ? 1 : -1);
+  }, { passive: false });
+}
+
+// Tampilan Room untuk tamu online: kursi dari host, hanya kursinya sendiri yang bisa diganti jagoannya.
+function renderRoomClient(): void {
+  $("roomTitle").textContent = "ROOM · 1 LAWAN 1";
+  const mine = app.seat;
+  const seat = (i: number): string => {
+    const c = CHARS[room.chars[i]];
+    const you = i === mine;
+    const who = you ? `KAMU · PEMAIN ${i + 1}` : i === 0 ? "PEMAIN 1 · HOST" : "PEMAIN 2";
+    const acts = you ? `<span class="rb" data-tap="rp:${i}">GANTI JAGOAN ⟳</span>` : "";
+    return (
+      `<div class="seat${you ? " on" : ""}" style="--pc:${hex(c.color)}">` +
+      `<img class="pic" src="${portraits[room.chars[i]]}" alt="" draggable="false" />` +
+      `<div class="sb"><div class="who">${who}</div><div class="nm display">${c.name}</div><div class="acts">${acts}</div></div></div>`
+    );
+  };
+  const team = (t: 0 | 1) =>
+    `<div class="rteam" style="--tc:${t === 0 ? "#ff5a3c" : "#4a7de0"}"><div class="rhead display">TIM ${t === 0 ? "MERAH" : "BIRU"}</div>${seat(t)}</div>`;
+  const code = `<div class="room rcodep"><span class="rlabel display">KODE ROOM</span><b class="rcode display">${net.code || "····"}</b>` +
+    `<div class="rsub">Tersambung ke host.</div></div>`;
+  $("roomBody").innerHTML = code + team(0) + team(1);
+  $("roomNote").innerHTML =
+    mine < 0
+      ? "Kamu belum dapat kursi, jadi menonton dulu. Host bisa memberimu kursi."
+      : mine === 2
+        ? "Kamu penonton usil. Host yang mengatur pertandingannya."
+        : "Pilih jagoanmu lewat GANTI JAGOAN, lalu tunggu host menekan MULAI.";
+  $("roomHint").innerHTML = backBtn() + `<span class="tapbtn go off">MENUNGGU HOST…</span>`;
 }
 
 const ARCADE_LEVELS = [0, 0, 1, 1, 2];
@@ -1057,7 +1249,7 @@ function titleItems(): TitleItem[] {
           roomError = "";
           sfx.receivePerfect();
           void hostRoom(hostHandlers);
-          goControls(menuPad);
+          goRoom();
         },
       },
       { label: "MASUKKAN KODE", row: 1, big: true, run: () => (sfx.receivePerfect(), goJoin("")) },
@@ -1273,6 +1465,23 @@ function handleTap(v: string): void {
     keysUi.row = Number(row);
     keysUi.waiting = true;
     renderKeys();
+  } else if (cmd === "rp") {
+    if (app.online === "client" && Number(arg) !== app.seat) return;
+    if (app.online !== "client") room.focus = `s${arg}`;
+    goPickChar(Number(arg));
+  } else if (cmd === "pkmove") {
+    pickMove(Number(arg));
+  } else if (cmd === "pk") {
+    if (performance.now() - pickSwipedAt < 250) return; // ketukan setelah geseran diabaikan
+    const k = Number(arg);
+    if (pickUi.sel === k) pickLock();
+    else {
+      pickUi.sel = k;
+      sfx.swing();
+      renderPickChar();
+    }
+  } else if (cmd === "pklock") {
+    pickLock();
   } else if (cmd === "rk") {
     room.focus = `s${arg}`;
     roomSkin(Number(arg), 1);
@@ -1307,10 +1516,12 @@ function handleTap(v: string): void {
   } else if (cmd === "copylink") {
     const done = () => {
       linkCopied = true;
-      renderControls();
+      if (app.mode === "room") renderRoom();
+      else renderControls();
       window.setTimeout(() => {
         linkCopied = false;
         if (app.mode === "controls") renderControls();
+        else if (app.mode === "room") renderRoom();
       }, 1500);
     };
     try {
@@ -1910,6 +2121,12 @@ function menuKey(code: string): void {
     return;
   }
 
+  if (app.mode === "pickchar") return pickKey(code);
+  if (app.online === "client" && app.mode === "room") {
+    if (code === "Escape" || code === "Backspace") return goTitle();
+    if ((code === "Enter" || code === "NumpadEnter") && (app.seat === 0 || app.seat === 1)) goPickChar(app.seat);
+    return;
+  }
   if (app.online === "client") {
     // Tamu: pilihannya dikirim ke host; menu jeda hanya berisi "keluar room".
     if (app.paused) {
@@ -2629,14 +2846,15 @@ function hostBroadcast(events: GameEvent[]): void {
   const seatOf = (d: SpecDevice) => (d.kind === "net" ? d.id : 0);
   broadcast({
     t: "f",
-    m: app.mode === "select" || app.mode === "match" ? app.mode : "lobby",
+    m: app.mode === "pickchar" ? "room" : app.mode === "select" || app.mode === "match" || app.mode === "room" ? app.mode : "lobby",
+    rc: room.chars.slice(0, 2),
     p: app.paused,
     seats: [seatOf(devices[0]), seatOf(devices[1]), seatOf(spectator.device)],
     chars: app.chars,
     locked: app.locked,
     ar: [renderer.arena, renderer.time],
     sk: renderer.skins,
-    s: app.mode === "select" || app.mode === "match" ? { ...state, events: [] } : undefined,
+    s: app.mode === "select" || app.mode === "match" || app.mode === "room" || app.mode === "pickchar" ? { ...state, events: [] } : undefined,
     ev: events,
   });
 }
@@ -2651,20 +2869,22 @@ const hostHandlers = {
     if (guestGone(devices[0])) devices[0] = dev;
     else if (guestGone(devices[1])) devices[1] = dev;
     else if (guestGone(spectator.device)) spectator.device = dev;
-    else if (app.mode === "controls") {
-      if (devices[1].kind !== "net") devices[1] = dev;
+    else if (app.mode === "controls" || app.mode === "room") {
+      if (app.humans === 2 && devices[1].kind !== "net") devices[1] = dev;
       else if (spectator.device.kind === "none" || spectator.device.kind === "auto") spectator.device = dev;
     }
     sfx.receivePerfect();
     setNetNote(`TAMU ${id} MASUK`, 2.5);
-    if (app.mode === "controls") renderControls();
+    if (app.mode === "room") renderRoom();
+    else if (app.mode === "controls") renderControls();
     else if (app.mode === "select") renderSelect();
   },
   onLeave(id: number): void {
     const seat = seatByGuest(id);
     setNetNote(`TAMU ${id} PUTUS`, 4);
     sfx.fault();
-    if (app.mode === "controls") renderControls();
+    if (app.mode === "room") renderRoom();
+    else if (app.mode === "controls") renderControls();
     else if (app.mode === "match" && seat >= 0 && state.phase !== "over" && !app.paused) {
       // Pemainnya hilang: jeda dulu. Kalau ia masuk lagi, kursinya otomatis kembali.
       app.paused = true;
@@ -2675,6 +2895,16 @@ const hostHandlers = {
   },
   onCommand(id: number, cmd: GuestCommand): void {
     const seat = seatByGuest(id);
+    // Di Room: tamu memilih jagoan untuk kursinya sendiri dari halaman Pilih Jagoan.
+    if ((app.mode === "room" || app.mode === "pickchar") && seat >= 0 && seat <= 1 && cmd.c === "char") {
+      if (cmd.k >= 0 && cmd.k < CHARS.length && seatKind(seat) !== "bot") {
+        room.chars[seat] = cmd.k;
+        room.skins[seat] = 0;
+        roomPreview();
+        if (app.mode === "room") renderRoom();
+      }
+      return;
+    }
     if (app.mode !== "select" || seat < 0) return;
     const who = seat as 0 | 1;
     if (cmd.c === "char") {
@@ -2777,7 +3007,8 @@ function renderJoin(): void {
 
 interface FrameMsg {
   t: "f";
-  m: "lobby" | "select" | "match";
+  m: "lobby" | "select" | "match" | "room";
+  rc?: number[]; // jagoan di Room (kursi 1 dan 2)
   p: boolean;
   seats: number[];
   ar?: [ArenaId, TimeId];
@@ -2824,8 +3055,21 @@ function applyFrame(m: FrameMsg): void {
     Object.assign(state, m.s);
     state.events = [];
   }
-  const want: Mode = m.m === "match" || m.m === "select" ? m.m : "join";
-  if (want !== app.mode) {
+  const want: Mode = m.m === "match" || m.m === "select" || m.m === "room" ? m.m : "join";
+  // Jagoan di Room dari host (kursi 1 dan 2).
+  let roomChanged = false;
+  if (Array.isArray(m.rc) && m.rc.length >= 2) {
+    for (let i = 0; i < 2; i++) {
+      const k = Math.max(0, Math.min(CHARS.length - 1, Number(m.rc[i]) | 0));
+      if (room.chars[i] !== k) {
+        room.chars[i] = k;
+        roomChanged = true;
+      }
+    }
+  }
+  if (want === "room" && app.mode === "pickchar") {
+    // Tamu sedang di halaman Pilih Jagoan: biarkan, kembali ke Room setelah memilih.
+  } else if (want !== app.mode) {
     const wasPaused = app.paused;
     setMode(want);
     if (wasPaused && want !== "join") {
@@ -2837,10 +3081,13 @@ function applyFrame(m: FrameMsg): void {
       clientHelp();
       callout(app.seat === 2 ? "KAMU PENONTON USIL!" : app.seat >= 0 ? `KAMU P${app.seat + 1}!` : "MULAI!", "#ffd23f", true);
     } else if (want === "select") renderSelect();
+    else if (want === "room") renderRoomClient();
     else {
       join.status = "waiting";
       renderJoin();
     }
+  } else if (want === "room" && (roomChanged || seatChanged)) {
+    if (app.mode === "room") renderRoomClient();
   } else if (want === "match" && (restarted || seatChanged)) {
     if (restarted) resetShown();
     clientHelp();

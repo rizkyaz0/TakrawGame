@@ -307,6 +307,7 @@ menghadapinya (`cpuInput`), efek di `src/render.ts` dan `src/fx.ts`, deskripsi d
 
 ## Tahap F — Room online untuk tim
 
+> **Status (15 Nov 2026): Room online 1 lawan 1 selesai; tim 2v2/3v3 online belum.** Host: BUAT ROOM membuka Room yang sama dengan offline (panel kode room, kursi 2 untuk tamu, MULAI mati sampai tamu masuk atau kursi dijadikan bot). Tamu: Room dari kiriman host (`m: "room"`, `rc`), hanya kursinya sendiri yang bisa diganti lewat GANTI JAGOAN, perintah `char` dikirim ke host. Halaman Pilih Jagoan terpisah (`pickchar`) dipakai offline dan online. Diuji dengan dua tab (host dan tamu) sampai pertandingan jalan; belum diuji lintas jaringan.
 Sekarang online hanya 1v1 plus penonton (`src/net.ts`, kursi P1, P2, penonton).
 
 - Setelah model kursi di tahap B ada, kursi `net` bisa di kursi mana pun.

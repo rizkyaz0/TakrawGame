@@ -659,7 +659,8 @@ const seatConvertible = (i: number) => i === 1 || (i === 2 && app.teamSize > 1);
 
 function roomFocusList(): string[] {
   const seats = Array.from({ length: roomSize() }, (_, i) => `s${i}`);
-  return ["start", ...seats, "arena", "time", "win", "sets", "cpu", "spec"];
+  // Urutan mengikuti tata letak layar dari atas ke bawah: kursi, pengaturan, lalu tombol mulai.
+  return [...seats, "arena", "time", "win", "sets", "cpu", "spec", "start"];
 }
 
 function roomPreview(): void {
@@ -707,7 +708,8 @@ function goPick(): void {
     applyArena();
     roomPreview();
     renderRoom();
-  } else goSelect();
+  } else if (app.arcade.on || app.training) goSolo();
+  else goSelect();
 }
 
 function roomChar(i: number, dir: number): void {
@@ -880,7 +882,9 @@ function renderRoom(): void {
     ? `<b class="bad">${bad}</b>`
     : focusDev
       ? `${devHelp(focusDev)}${hint ? `<br />${hint}` : ""}`
-      : `Sisa kursi diisi bot. <kbd>W</kbd><kbd>S</kbd> pindah &nbsp;·&nbsp; <kbd>A</kbd><kbd>D</kbd> jagoan &nbsp;·&nbsp; <kbd>Enter</kbd> pilih jagoan &nbsp;·&nbsp; <kbd>V</kbd> alat &nbsp;·&nbsp; <kbd>X</kbd> skin`;
+      : menuPad !== null
+        ? `Sisa kursi diisi bot. D-pad pindah dan ganti &nbsp;·&nbsp; ✕ pilih &nbsp;·&nbsp; □ skin &nbsp;·&nbsp; △ alat &nbsp;·&nbsp; L1 bot/pemain &nbsp;·&nbsp; Options MULAI`
+        : `Sisa kursi diisi bot. <kbd>W</kbd><kbd>S</kbd> pindah &nbsp;·&nbsp; <kbd>A</kbd><kbd>D</kbd> jagoan &nbsp;·&nbsp; <kbd>Enter</kbd> pilih jagoan &nbsp;·&nbsp; <kbd>V</kbd> alat &nbsp;·&nbsp; <kbd>X</kbd> skin`;
   $("roomHint").innerHTML =
     backBtn() + tapBtn(`go${bad ? " off" : ""}${room.focus === "start" ? " foc" : ""}`, "rstart", "MULAI PERTANDINGAN ▸", "Enter");
 }
@@ -917,7 +921,9 @@ function roomKey(code: string): void {
 // ===== Pilih Jagoan: halaman terpisah dari Room =====
 // Dibuka dari tombol GANTI JAGOAN di kartu kursi. Kursi manusia hanya boleh memilih yang sudah
 // terbuka; kursi bot dan semua kursi online bebas. Tamu online mengirim pilihannya ke host.
-const pickUi = { seat: 0, sel: 0 };
+// Online: begitu orang lain masuk, kedua pihak langsung dibawa ke Pilih Jagoan (sekali per room).
+let autoPicked = false;
+const pickUi = { seat: 0, sel: 0, solo: false, first: false };
 let pickShown = -1; // jagoan yang sedang tampil besar (untuk animasi pergantian)
 let pickSwipedAt = 0;
 const bigCache = new Map<string, string>();
@@ -933,7 +939,18 @@ function bigPortrait(k: number): string {
 const pickHuman = () => app.online === "client" || seatKind(pickUi.seat) !== "bot";
 const pickAllowed = (k: number) => !pickHuman() || canPick(k);
 
-function goPickChar(seat: number): void {
+// Arcade dan Latihan: langsung ke Pilih Jagoan, setelah dikunci pertandingan langsung mulai.
+function goSolo(): void {
+  room.active = false;
+  defaultDevices(menuPad);
+  room.chars[0] = canPick(app.chars[0]) ? app.chars[0] : firstOpen(0);
+  pickUi.solo = true;
+  pickUi.first = false;
+  goPickChar(0, true);
+}
+
+function goPickChar(seat: number, solo = false): void {
+  pickUi.solo = solo;
   pickUi.seat = seat;
   pickUi.sel = room.chars[seat] ?? 0;
   pickShown = -1;
@@ -992,6 +1009,10 @@ function renderPickChar(): void {
 }
 
 function pickBack(): void {
+  if (pickUi.solo) {
+    pickUi.solo = false;
+    return goTitle();
+  }
   setMode("room");
   if (app.online === "client") renderRoomClient();
   else renderRoom();
@@ -1002,6 +1023,21 @@ function pickLock(): void {
   if (!pickAllowed(k)) return sfx.fault();
   const seat = pickUi.seat;
   room.chars[seat] = k;
+  if (pickUi.solo) {
+    pickUi.solo = false;
+    app.chars[0] = k;
+    const pool = CHARS.map((_, i) => i).filter((i) => i !== k);
+    if (app.arcade.on) {
+      // Arcade: lima lawan acak yang berbeda dari jagoanmu.
+      app.arcade.foes = ARCADE_LEVELS.map(() => pool.splice(Math.floor(Math.random() * pool.length), 1)[0]);
+      app.arcade.stage = 0;
+      app.chars[1] = app.arcade.foes[0];
+    } else app.chars[1] = pool[Math.floor(Math.random() * pool.length)];
+    app.locked = [true, true];
+    sfx.receivePerfect();
+    startMatch();
+    return;
+  }
   if (app.online === "client") sendToHost({ t: "cmd", c: "char", k });
   else {
     if (seatKind(seat) !== "bot") room.skins[seat] = savedSkin(k);
@@ -1257,6 +1293,7 @@ function titleItems(): TitleItem[] {
           app.training = false;
           app.arcade.on = false;
           app.online = "host";
+          autoPicked = false;
           roomError = "";
           sfx.receivePerfect();
           void hostRoom(hostHandlers);
@@ -1289,7 +1326,7 @@ function titleItems(): TitleItem[] {
         app.arcade.on = true;
         app.arcade.stage = 0;
         sfx.receivePerfect();
-        goControls(menuPad);
+        goSolo();
       },
     },
     {
@@ -1308,7 +1345,7 @@ function titleItems(): TitleItem[] {
         app.teamSize = 1;
         app.arcade.on = false;
         sfx.receivePerfect();
-        goControls(menuPad);
+        goSolo();
       },
     },
     { label: "CARA MAIN", row: 3, run: () => (sfx.receivePerfect(), goHowto()) },
@@ -2354,7 +2391,9 @@ function pollPads(): void {
       (b(0) ? 16 : 0) |
       (b(1) ? 32 : 0) |
       (b(3) ? 64 : 0) |
-      (b(9) ? 128 : 0);
+      (b(9) ? 128 : 0) |
+      (b(2) ? 256 : 0) |
+      (b(4) ? 512 : 0);
     const hit = now & ~(padPrev.get(pad.index) ?? 0);
     padPrev.set(pad.index, now);
     if (hit === 0) continue;
@@ -2379,13 +2418,35 @@ function pollPads(): void {
       continue;
     }
 
-    if (app.mode === "room") {
-      // Di Room: D-pad memindah dan mengganti, Options memulai, lingkaran kembali.
+    if (app.mode === "match" && app.paused) {
+      // Menu jeda: D-pad memilih, silang memastikan, lingkaran dan Options melanjutkan.
+      if (hit & 1) menuKey("KeyW");
+      if (hit & 2) menuKey("KeyS");
+      if (hit & 16) menuKey("KeyF");
+      else if (hit & (32 | 128)) menuKey("Escape");
+      continue;
+    }
+
+    if (app.mode === "room" && app.online !== "client") {
+      // Di Room: D-pad memindah dan mengganti, silang memilih, Options langsung memulai,
+      // kotak ganti skin, segitiga ganti alat, L1 jadikan bot atau pemain, lingkaran kembali.
       if (hit & 1) menuKey("KeyW");
       if (hit & 2) menuKey("KeyS");
       if (hit & 4) menuKey("KeyA");
       if (hit & 8) menuKey("KeyD");
-      if (hit & 128) menuKey("Enter");
+      if (hit & 16) menuKey("Enter");
+      if (hit & 256) menuKey("KeyX");
+      if (hit & 64) menuKey("KeyV");
+      if (hit & 512) menuKey("KeyT");
+      if (hit & 128) {
+        room.focus = "start";
+        menuKey("Enter");
+      } else if (hit & 32) menuKey("Escape");
+      continue;
+    }
+    if (app.mode === "room") {
+      // Tamu online: silang membuka Pilih Jagoan, lingkaran keluar.
+      if (hit & 16 || hit & 128) menuKey("Enter");
       else if (hit & 32) menuKey("Escape");
       continue;
     }
@@ -2915,6 +2976,11 @@ const hostHandlers = {
     }
     sfx.receivePerfect();
     setNetNote(`TAMU ${id} MASUK`, 2.5);
+    if (app.mode === "room" && !autoPicked && devices[1].kind === "net") {
+      autoPicked = true;
+      goPickChar(0);
+      return;
+    }
     if (app.mode === "room") renderRoom();
     else if (app.mode === "controls") renderControls();
     else if (app.mode === "select") renderSelect();
@@ -2971,6 +3037,7 @@ function goJoin(code: string): void {
     return;
   }
   app.online = "client";
+  autoPicked = false;
   app.seat = -1;
   app.teamSize = 1;
   app.mate = false;
@@ -3121,13 +3188,24 @@ function applyFrame(m: FrameMsg): void {
       clientHelp();
       callout(app.seat === 2 ? "KAMU PENONTON USIL!" : app.seat >= 0 ? `KAMU P${app.seat + 1}!` : "MULAI!", "#ffd23f", true);
     } else if (want === "select") renderSelect();
-    else if (want === "room") renderRoomClient();
-    else {
+    else if (want === "room") {
+      renderRoomClient();
+      if (!autoPicked && (app.seat === 0 || app.seat === 1)) {
+        autoPicked = true;
+        goPickChar(app.seat);
+      }
+    } else {
       join.status = "waiting";
       renderJoin();
     }
   } else if (want === "room" && (roomChanged || seatChanged)) {
-    if (app.mode === "room") renderRoomClient();
+    if (app.mode === "room") {
+      renderRoomClient();
+      if (!autoPicked && (app.seat === 0 || app.seat === 1)) {
+        autoPicked = true;
+        goPickChar(app.seat);
+      }
+    }
   } else if (want === "match" && (restarted || seatChanged)) {
     if (restarted) resetShown();
     clientHelp();

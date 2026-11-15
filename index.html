@@ -92,7 +92,9 @@
       /* Elemen pertandingan disembunyikan di luar pertandingan. */
       #hud:not([data-mode="match"]) > :is(#top, #c1, #c2, #help, #banner, #callout, #pop, #cutin, #dim, #lines, #flash, #tension) { display: none !important; }
       #title, #pause, #controls, #room, #howto, #keys { background: radial-gradient(ellipse at 50% 40%, rgba(23, 19, 28, 0.25), rgba(23, 19, 28, 0.78)); }
-      .logo { position: absolute; top: 13%; left: 0; right: 0; text-align: center; line-height: 0.92; transform: rotate(-4deg); }
+      .logo { position: absolute; top: 2%; left: 0; right: 0; text-align: center; line-height: 0; }
+      .logo img { width: min(520px, 62vw, 62vh * 1.41); height: auto; filter: drop-shadow(0 10px 16px rgba(0, 0, 0, 0.45)); animation: logoBob 3.2s ease-in-out infinite alternate; }
+      @keyframes logoBob { from { transform: translateY(0) rotate(-1deg); } to { transform: translateY(-6px) rotate(1deg); } }
       .logo span, .logo b {
         display: inline-block; padding: 0 22px 6px; border: 8px solid var(--ink); box-shadow: 12px 12px 0 var(--ink);
         color: var(--paper); -webkit-text-stroke: 10px var(--ink); paint-order: stroke fill; font-weight: 400;
@@ -150,7 +152,7 @@
       #privLink { position: absolute; left: 12px; bottom: 8px; font-size: 11px; font-weight: 700; color: var(--paper); pointer-events: auto; text-shadow: 0 1px 0 var(--ink); }
       /* Layar muat awal */
       #boot { position: fixed; inset: 0; z-index: 100; display: grid; place-content: center; gap: 10px; text-align: center; background: #ffd23f; color: #17131c; font-family: "Bungee", "Impact", sans-serif; }
-      #boot b { font-size: 46px; line-height: 1; }
+      #boot img { width: min(420px, 78vw); height: auto; margin: 0 auto; filter: drop-shadow(0 8px 12px rgba(23, 19, 28, 0.35)); }
       #boot span { font-size: 14px; animation: bootBlink 0.6s steps(2) infinite; }
       @keyframes bootBlink { 50% { opacity: 0.3; } }
       /* Layar pengaturan */
@@ -688,7 +690,7 @@
 
       <!-- Layar judul -->
       <div id="title" class="screen">
-        <div class="logo display"><span>TAKRAW</span><b>CLASH</b></div>
+        <div class="logo"><img src="/logo.webp" alt="Takraw Clash" draggable="false" /></div>
         <div class="tagline">jajanan kampung adu sepak di lapangan 17-an</div>
         <div class="menu" id="titleMenu"></div>
         <a id="privLink" href="/privasi.html" target="_blank" rel="noopener">Privasi</a>
@@ -794,7 +796,7 @@
       </svg>
     </button>
     <div id="rotate">Putar HP ke posisi mendatar<br />untuk bermain ↻</div>
-    <div id="boot"><b>TAKRAW<br />CLASH</b><span>menyiapkan lapangan…</span></div>
+    <div id="boot"><img src="/logo.webp" alt="Takraw Clash" draggable="false" /><span>menyiapkan lapangan…</span></div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>

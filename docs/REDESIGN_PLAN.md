@@ -227,7 +227,7 @@ Yang berubah di kode bila desain ini dipakai (urut dari yang termurah):
 2. Badan lebih detail (tekstur, topi, hiasan): dari kode atau dari model AI (lihat di bawah).
 3. Ganti badan dengan model AI hanya kalau hasilnya jelas lebih bagus dari langkah 1 dan 2.
 
-> **Status (15 Nov 2026): 8 dari 13 karakter sudah memakai model AI** (Sosis, Lontong, Bakso, Tahu, Pisang, Lilin, Jagung, dan Pak Ote-Ote yang ditambah sebagai karakter ke-13). Belum: Om Sate, Mbok Klepon, Cak Kerupuk, Pakde Tempe, Neng Cendol (masih buatan kode). Titik sendi tiap model ada di `RIGS` di `src/aibody.ts`.
+> **Status (15 Nov 2026): semua 13 karakter sudah memakai model AI** (Pak Ote-Ote ditambah sebagai karakter ke-13). Badan buatan kode tetap ada sebagai cadangan kalau model gagal dimuat. Logo baru (`public/logo.webp`) dipakai di layar judul dan pemuatan. Titik sendi tiap model ada di `RIGS` di `src/aibody.ts`.
 
 ### Badan karakter dari model 3D hasil AI (uji coba)
 

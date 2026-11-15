@@ -42,7 +42,7 @@ const KINDS: readonly BodyKind[] = [
 
 const HIP_Y = 0.42;
 // Skin "warna lain" untuk badan model AI: pewarna yang dikalikan ke teksturnya.
-const AI_TINT: Record<number, number> = { 0: 0x9ab4ff, 1: 0xffc8a0, 2: 0xa0c8ff, 3: 0xd0a0ff, 4: 0xff9ad0, 5: 0xffc2a0, 6: 0xa0ffd0, 12: 0xa0ffc8 };
+const AI_TINT: Record<number, number> = { 0: 0x9ab4ff, 1: 0xffc8a0, 2: 0xa0c8ff, 3: 0xd0a0ff, 4: 0xff9ad0, 5: 0xffc2a0, 6: 0xa0ffd0, 7: 0xa0d0ff, 8: 0xffa0c8, 9: 0xa0ffc0, 10: 0xffb0a0, 11: 0xd0b0ff, 12: 0xa0ffc8 };
 const THIGH = 0.2;
 const SHIN = 0.2;
 const UPPER_ARM = 0.2;

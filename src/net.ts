@@ -52,6 +52,7 @@ export interface RoomInfo {
   code: string;
   name: string;
   guests: number;
+  locked?: boolean;
 }
 
 // Opsi host: room terbuka tampil di daftar room dengan nama pemilik.
@@ -165,6 +166,9 @@ export interface LobbyView {
   host: number; // nomor pemain yang jadi host
   seats: (LobbySeat | null)[]; // 6 kursi: genap Tim Merah, ganjil Tim Biru
   spec: LobbySeat[]; // pemain tanpa kursi
+  vis: "private" | "open" | "locked"; // Pribadi (hanya lewat kode), Terbuka (tampil di daftar), Terkunci (daftar + PIN)
+  pin?: string; // PIN room terkunci; hanya dikirim ke host
+  vote: { can: boolean; need: number; votes: number[] }; // voting ganti host
 }
 export const lobby = {
   want: false, // sudah ikut lobi: ikut lagi otomatis setiap sambungan (ulang)
@@ -324,6 +328,8 @@ const ERRORS: Record<string, string> = {
   "browser-incompatible": "Browser ini tidak mendukung sambungan langsung (WebRTC).",
   webrtc: "Sambungan langsung antar-perangkat gagal.",
   "ws-failed": "Tidak bisa menghubungi server. Cek internetmu.",
+  pin: "Room ini terkunci. Masukkan PIN 4 angka dari host.",
+  pinlock: "Terlalu banyak salah PIN. Tunggu sebentar lalu coba lagi.",
   outdated: "Versi game kamu sudah lama. Perbarui dulu supaya cocok dengan server.",
   banned: "Kamu dikeluarkan dari room ini oleh host.",
   replaced: "Akunmu masuk dari tab atau perangkat lain, jadi sambungan ini ditutup.",
@@ -537,7 +543,7 @@ function connectHost(h: HostHandlers, mine: number, attempt: number, resumeSince
 }
 
 // ===== Tamu lewat server perantara (WebSocket) =====
-function joinRoomWs(code: string, h: ClientHandlers): void {
+function joinRoomWs(code: string, h: ClientHandlers, pin = ""): void {
   const mine = session;
   net.role = "client";
   net.code = code;
@@ -548,7 +554,7 @@ function joinRoomWs(code: string, h: ClientHandlers): void {
     closeNet();
     h.onClose(text);
   };
-  const ws = new WebSocket(`${SERVER}/ws/${code}?pv=${PV}&role=guest&tok=${playerToken()}`);
+  const ws = new WebSocket(`${SERVER}/ws/${code}?pv=${PV}&role=guest&tok=${playerToken()}${pin ? `&pin=${encodeURIComponent(pin)}` : ""}`);
   hostWs = ws;
   hostConn = {
     get open() {
@@ -691,10 +697,10 @@ export const guestBits = (id: number) => net.guests.get(id)?.bits ?? 0;
 export const guestAim = (id: number) => net.guests.get(id)?.aim ?? null;
 
 // ===== Tamu =====
-export async function joinRoom(code: string, h: ClientHandlers): Promise<void> {
+export async function joinRoom(code: string, h: ClientHandlers, pin = ""): Promise<void> {
   closeNet();
   lobby.want = !!SERVER;
-  if (SERVER) return joinRoomWs(code, h);
+  if (SERVER) return joinRoomWs(code, h, pin);
   const mine = session;
   net.role = "client";
   net.code = code;
@@ -754,6 +760,8 @@ export function sendToHost(msg: unknown): void {
 
 // Host menutup room dengan sopan supaya tamu langsung tahu, tidak menunggu batas waktu.
 export function leaveRoom(): void {
-  if (net.role === "host") broadcast({ t: "bye" });
+  // Dengan lobi server: keluar sengaja dikabarkan ke server (kursi langsung bebas; host menyerahkan room ke pemain lain).
+  if (lobby.want && lobby.view && (hostWs?.readyState ?? 0) === 1) lobbyAct({ a: "leave" });
+  else if (net.role === "host") broadcast({ t: "bye" });
   closeNet();
 }

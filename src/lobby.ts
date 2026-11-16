@@ -3,10 +3,11 @@
 // memilih jagoannya sendiri secara serentak.
 import { sfx } from "./audio";
 import { devices, spectator } from "./input";
-import { becomeHost, lobby, lobbyAct, net, roomListEnabled, setRoleHandlers, setRoomVisibility, type LobbySeat } from "./net";
+import { becomeHost, lobby, lobbyAct, net, roomListEnabled, setRoleHandlers, type LobbySeat } from "./net";
 import { CHARS } from "./sim";
 import { $, app, arenaName, backBtn, cycleOption, defaultDevices, goTitle, hex, lobbyPlan, portraits, setMode, startMatch, timeName, ui } from "./main";
 import { goJoin, hostHandlers } from "./online";
+import { localKey, localOn, localTap, localTick, renderLocal } from "./locallobby";
 
 const WHY: Record<string, string> = {
   taken: "Jagoan itu sudah dipakai teman setimmu.",
@@ -20,6 +21,8 @@ const WHY: Record<string, string> = {
   spectator: "Kamu belum dapat kursi. Pilih kursi yang kosong.",
   occupied: "Kursi itu sudah terisi.",
   early: "Tunggu hitungan selesai.",
+  novote: "Belum bisa ganti host sekarang.",
+  badpin: "PIN harus 4 angka.",
 };
 
 const me = (): number => lobby.pid;
@@ -119,6 +122,7 @@ function seatCard(k: number, s: LobbySeat | null): string {
 }
 
 export function renderLobby(): void {
+  if (localOn()) return renderLocal();
   const v = view();
   if (!v) {
     $("lobbyBody").innerHTML = ui.roomError
@@ -160,7 +164,7 @@ export function renderLobby(): void {
     chip("FORMAT", `${v.fmt} LAWAN ${v.fmt}`, "lb:fmt") +
     chip("KURSI KOSONG", v.bots ? "BOT" : "TETAP KOSONG", "lb:bots") +
     chip("CARI LAWAN CEPAT", v.quick ? "BOLEH" : "TIDAK", "lb:quick") +
-    (host && roomListEnabled ? chip("ROOM", ui.roomOpen ? "TERBUKA" : "PRIBADI", "lb:vis") : "") +
+    (host && roomListEnabled ? chip("ROOM", v.vis === "locked" ? `TERKUNCI · PIN ${v.pin ?? ""}` : v.vis === "open" ? "TERBUKA" : "PRIBADI", "lb:vis") : "") +
     (host ? chip("ARENA", arenaName(), "lb:arena") + chip("WAKTU", timeName(), "lb:time") + chip("MENANG DI", `${app.winScore} POIN`, "lb:win") : "");
   const code = `<div class="lbcode"><small>KODE ROOM</small><b class="display">${net.code || "····"}</b>` +
     `<span class="tapbtn go" data-tap="copylink">SALIN LINK</span></div>`;
@@ -169,16 +173,24 @@ export function renderLobby(): void {
   $("lobbyBody").innerHTML =
     `<div class="lbtop">${code}<div class="lbrules">${rules}</div></div>` +
     `<div class="lbteams">${col(0)}${col(1)}</div>${spec}${note}${grid}`;
+  const hostGone = !!v.seats.concat(v.spec).find((x) => x && x.p === v.host && !x.o);
+  const voted = v.vote.votes.includes(me());
+  const voteBtn =
+    !host && v.vote.can
+      ? `<span class="tapbtn${voted ? "" : " go"}" data-tap="lb:vote">${voted ? "BATAL GANTI HOST" : hostGone ? "GANTI HOST (HOST TERPUTUS)" : "GANTI HOST (HOST DIAM)"} ${v.vote.votes.length}/${v.vote.need}</span>`
+      : "";
   const ready = s >= 0 && v.seats[s]!.r;
   const canReady = s >= 0 && mineH >= 0 && v.phase !== "play";
   $("lobbyHint").innerHTML =
     backBtn() +
     `<span class="tapbtn${ready ? "" : " go"}${canReady ? "" : " off"}" data-tap="lb:ready">${ready ? "BATAL SIAP" : "SIAP ▸"} <kbd>Enter</kbd></span>` +
-    (host ? `<span class="tapbtn go${v.phase === "lobby" ? "" : " off"}" data-tap="lb:start">MULAI ▸</span>` : `<span class="tapbtn off">${v.phase === "count" ? "MULAI…" : "MENUNGGU HOST"}</span>`);
+    (host ? `<span class="tapbtn go${v.phase === "lobby" ? "" : " off"}" data-tap="lb:start">MULAI ▸</span>` : `<span class="tapbtn off">${v.phase === "count" ? "MULAI…" : "MENUNGGU HOST"}</span>`) +
+    voteBtn;
 }
 
 // Dipanggil tiap frame dari loop: hitung mundur tampil dan host mengirim "go" lalu memulai pertandingan.
 export function lobbyTick(now: number): void {
+  if (localOn()) return localTick(now);
   const v = view();
   if (!v || app.mode !== "lobby") return;
   if (v.phase !== "count") {
@@ -231,6 +243,7 @@ export function lobbyReturn(): void {
 }
 
 export function lobbyTap(v: string): void {
+  if (localOn()) return localTap(v);
   const [, a, arg] = v.split(":");
   const s = view();
   if (!s) return;
@@ -245,16 +258,15 @@ export function lobbyTap(v: string): void {
   else if (a === "fmt") lobbyAct({ a: "rules", fmt: (s.fmt % 3) + 1 });
   else if (a === "bots") lobbyAct({ a: "rules", bots: !s.bots });
   else if (a === "quick") lobbyAct({ a: "rules", quick: !s.quick });
-  else if (a === "vis") {
-    ui.roomOpen = !ui.roomOpen;
-    setRoomVisibility(ui.roomOpen, lobby.name || "Pemain");
-    renderLobby();
-  } else if (a === "arena" || a === "time" || a === "win") cycleOption(a);
+  else if (a === "vis") lobbyAct({ a: "rules", vis: s.vis === "private" ? "open" : s.vis === "open" ? "locked" : "private" });
+  else if (a === "vote") lobbyAct({ a: "vote" });
+  else if (a === "arena" || a === "time" || a === "win") cycleOption(a);
   lobby.nack = "";
   sfx.swing();
 }
 
 export function lobbyKey(code: string): void {
+  if (localOn()) return localKey(code);
   const v = view();
   if (code === "Escape" || code === "Backspace") return goTitle();
   if (!v) return;

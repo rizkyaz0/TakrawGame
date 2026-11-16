@@ -310,7 +310,7 @@ function padBits(pad: Gamepad): number {
   return out;
 }
 
-function deviceBits(d: Device): number {
+export function deviceBits(d: Device): number {
   if (d.kind === "kbd") {
     let out = 0;
     for (const [code, bits] of KEYMAPS[d.set]) if (keys.has(code)) out |= bits;

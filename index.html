@@ -228,7 +228,7 @@
       }
       #joinBox .jbig { font-size: 28px; color: var(--sun); }
       #joinBox .bad { display: inline-block; margin-top: 8px; padding: 2px 12px; background: #ff4f6d; border: 3px solid var(--paper); }
-      #roomInput {
+      #roomInput, #pinInput {
         display: block; margin: 10px auto 14px; width: 220px; padding: 4px 0 6px 0.3em; text-align: center; text-transform: uppercase;
         font-family: "Bungee", sans-serif; font-size: 44px; letter-spacing: 0.3em; background: var(--paper); color: var(--ink);
         border: 4px solid var(--sun); outline: none; pointer-events: auto; user-select: text; -webkit-user-select: text;
@@ -538,7 +538,7 @@
       .chip.on b { color: #b1281d; }
       .seat, #joinBox, .room, .chips, #roomBody .rteam { border-radius: 16px; }
       #joinBox { background: rgba(23, 19, 28, 0.88); border: 4px solid var(--paper); box-shadow: 0 8px 0 rgba(23, 19, 28, 0.4); }
-      #roomInput { border-radius: 14px; border: 4px solid #ffd23f; }
+      #roomInput, #pinInput { border-radius: 14px; border: 4px solid #ffd23f; }
       .seat { background: rgba(23, 19, 28, 0.88); border-color: rgba(255, 246, 224, 0.35); }
       .seat.on { border-color: #ffd23f; box-shadow: 0 0 14px rgba(255, 210, 63, 0.55); }
       .rhead { border-radius: 10px; transform: none; }
@@ -566,8 +566,8 @@
       .jbot b { color: #ffd23f; }
       .jpanel.sm .jtop { font-size: 12px; }
       .jpanel.sm .rcode { font-size: 38px; letter-spacing: 0.22em; padding-left: 0.22em; color: #fff6e0; }
-      .jbot #roomInput { margin: 0; width: 100%; height: 100%; padding: 0 0 0 0.3em; background: transparent; border: 0; border-radius: 0; color: #fff6e0; font-size: 46px; }
-      .jbot #roomInput::placeholder { color: rgba(255, 246, 224, 0.28); }
+      .jbot #roomInput, #pinInput { margin: 0; width: 100%; height: 100%; padding: 0 0 0 0.3em; background: transparent; border: 0; border-radius: 0; color: #fff6e0; font-size: 46px; }
+      .jbot #roomInput::placeholder, .jbot #pinInput::placeholder { color: rgba(255, 246, 224, 0.28); }
       #joinBox { background: none; border: 0; box-shadow: none; padding: 0; width: min(560px, 92%); top: 24%; color: var(--paper); text-shadow: 0 2px 0 var(--ink); }
       #joinBox .bad { margin-top: 10px; }
       .rcodep { display: flex; flex-direction: column; align-items: center; }
@@ -666,6 +666,9 @@
       .lbcell img { width: 56px; height: 56px; object-fit: cover; object-position: 50% 15%; }
       .lbcell:hover { border-color: var(--pc); }
       .lbcell.cur { border-color: var(--sun); box-shadow: 0 0 12px rgba(255, 210, 63, 0.7); }
+      .lbdots { position: absolute; top: 2px; right: 3px; display: flex; gap: 2px; }
+      .lbdot { width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--ink); display: block; }
+      .lbseat.me[style*="--me"] { border-color: var(--me); box-shadow: 0 0 14px var(--me); }
       .lbcell.shut { opacity: 0.3; cursor: not-allowed; }
       @media (max-width: 640px) { .lbteams { grid-template-columns: 1fr; } #lobbyBody { inset: 74px 10px 80px 10px; } }
       #room { background: linear-gradient(rgba(6, 10, 30, 0.2), rgba(6, 10, 30, 0.5)), url(/ui/bg-lobby.webp) center / cover no-repeat; }

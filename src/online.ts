@@ -273,9 +273,10 @@ export function goQuickMatch(): void {
   });
 }
 
+let pinWrong = false;
 let quickTries = 0;
 let quickRetries = 0; // berapa kali cari cepat mengulang karena room pilihannya tak bisa dimasuki
-export function goJoin(code: string, quick = false): void {
+export function goJoin(code: string, quick = false, pin = ""): void {
   setMode("join");
   if (code.length !== 4) {
     join.status = "input";
@@ -298,6 +299,17 @@ export function goJoin(code: string, quick = false): void {
   const wasPlaying = () => net.myId >= 0;
   void joinRoom(code, {
     onClose(text) {
+      // Room terkunci: minta PIN-nya (kode room disimpan di join.text).
+      if (text.startsWith("Room ini terkunci") || (pin && text.startsWith("Terlalu banyak"))) {
+        app.online = "off";
+        setMode("join");
+        startDemo();
+        pinWrong = !!pin && text.startsWith("Room ini terkunci");
+        join.status = text.startsWith("Room ini terkunci") ? "pin" : "error";
+        join.text = text.startsWith("Room ini terkunci") ? code : text;
+        renderJoin();
+        return;
+      }
       // Baru dipasangkan: host mungkin belum selesai membuka room, jadi coba lagi sebentar.
       if (quick && text.startsWith("Room tidak ditemukan") && quickTries < 8) {
         quickTries++;
@@ -341,7 +353,7 @@ export function goJoin(code: string, quick = false): void {
       join.text = text;
       renderJoin();
     },
-  });
+  }, pin);
   // Dicatat lewat pemeriksaan berkala: begitu host memberi nomor, sambungan ini dianggap pernah hidup.
   let hadSeat = false;
   const watch = window.setInterval(() => {
@@ -371,7 +383,7 @@ export function refreshRoomList(): void {
     const refresh = `<span class="tapbtn" data-tap="rooms">SEGARKAN</span>`;
     el.innerHTML = rooms.length
       ? `<small>ROOM TERBUKA</small>` +
-        rooms.map((r) => `<span class="tapbtn go" data-tap="joinroom:${r.code}">${escapeText(r.name)} · ${r.code} · ${r.guests} tamu ▸</span>`).join("") +
+        rooms.map((r) => `<span class="tapbtn go" data-tap="joinroom:${r.code}">${r.locked ? "🔒 " : ""}${escapeText(r.name)} · ${r.code} · ${r.guests} tamu ▸</span>`).join("") +
         refresh
       : `<small>Belum ada room terbuka. Buat satu lewat BUAT ROOM TERBUKA.</small>${refresh}`;
   });
@@ -392,6 +404,16 @@ function renderJoin(): void {
     if (roomListEnabled) refreshRoomList();
     $("joinHint").innerHTML = back;
     if (!touchState.enabled) (document.getElementById("roomInput") as HTMLInputElement | null)?.focus();
+    return;
+  }
+  if (join.status === "pin") {
+    $("joinBox").innerHTML =
+      jpanel(
+        `ROOM ${join.text} TERKUNCI`,
+        `<input id="pinInput" maxlength="4" inputmode="numeric" autocomplete="off" spellcheck="false" placeholder="PIN 4 ANGKA" />`,
+      ) + `<span class="tapbtn go" data-tap="joinpin">MASUK ▸</span>` + (pinWrong ? `<br /><span class="bad">PIN salah. Coba lagi.</span>` : "");
+    $("joinHint").innerHTML = back;
+    if (!touchState.enabled) (document.getElementById("pinInput") as HTMLInputElement | null)?.focus();
     return;
   }
   if (join.status === "searching") {

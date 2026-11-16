@@ -20,6 +20,9 @@
 //   tamu: kirim {t:"lb",a,...}, terima {t:"lb",...} / {t:"lbnack",why} / {t:"demoted"}. Aksi: join{n}, hero{k}, ready{v}, seat{s},
 //   rules{fmt,bots,quick} (host), kick{p} (host), start/cancel/go/end (host). Setelah (re)connect kirim join lagi (idempoten).
 //   Host tidak kembali dalam masa tunggu dan belum bertanding: pemain tertua yang terhubung dijadikan host.
+//   Tahap 5-6: rules{vis:"private"|"open"|"locked", pin?} (host); tamu masuk room terkunci dengan `&pin=1234` (salah 5x diblokir,
+//   {t:"err",type:"pin"|"pinlock"}); vote (non-host, bila host terputus atau diam ~90 dtk padahal semua Siap; mayoritas = ganti host);
+//   leave: keluar sengaja (kursi langsung bebas; host yang keluar menyerahkan room ke pemain tertua, bila bukan sedang bertanding).
 //   Versi protokol: `&pv=3` wajib di /ws dan /queue; lebih lama dijawab {t:"err",type:"outdated"}.
 //   /queue: {t:"match", role:"guest", code} (masuk room terbuka yang ada), {t:"match", role:"host", code, open:true} (buka room terbuka).
 //   klien  -> server "ping"               dijawab "pong" tanpa membangunkan server
@@ -32,6 +35,7 @@ export interface Env {
   ALLOWED_ORIGINS: string;
   GUEST_GRACE_MS?: string; // hanya untuk uji: persingkat masa tunggu kursi
   HOST_GRACE_MS?: string;
+  VOTE_AFK_MS?: string; // uji: persingkat 90 detik host diam sebelum boleh voting
 }
 
 const MAX_GUESTS = 6; // 3v3 penuh: lima pemain tamu + satu penonton
@@ -40,7 +44,7 @@ const MAX_HOST_MSG = 64 * 1024;
 
 const LOBBY_TTL = 75_000; // ms: room terbuka tanpa denyut selama ini dianggap sudah mati
 
-export type RoomInfo = { code: string; name: string; guests: number; free: number; phase: string };
+export type RoomInfo = { code: string; name: string; guests: number; free: number; phase: string; locked: boolean };
 const PV_MIN = 3; // versi protokol terendah yang dilayani (klien lama diminta memperbarui)
 const pvOk = (url: URL) => Number(url.searchParams.get("pv")) >= PV_MIN;
 
@@ -50,7 +54,7 @@ export class Lobby extends DurableObject<Env> {
     super(ctx, env);
     ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS rooms (code TEXT PRIMARY KEY, name TEXT NOT NULL, guests INTEGER NOT NULL, seen INTEGER NOT NULL)");
     // Kolom tambahan (tahap 4): sisa kursi, fase lobi, boleh cari cepat. Tabel lama diperluas di tempat.
-    for (const col of ["free INTEGER NOT NULL DEFAULT 0", "quick INTEGER NOT NULL DEFAULT 0", "phase TEXT NOT NULL DEFAULT 'lobby'"]) {
+    for (const col of ["free INTEGER NOT NULL DEFAULT 0", "quick INTEGER NOT NULL DEFAULT 0", "phase TEXT NOT NULL DEFAULT 'lobby'", "locked INTEGER NOT NULL DEFAULT 0"]) {
       try {
         ctx.storage.sql.exec(`ALTER TABLE rooms ADD COLUMN ${col}`);
       } catch {
@@ -59,9 +63,9 @@ export class Lobby extends DurableObject<Env> {
     }
   }
 
-  upsert(code: string, name: string, guests: number, free = 0, quick = false, phase = "lobby"): void {
+  upsert(code: string, name: string, guests: number, free = 0, quick = false, phase = "lobby", locked = false): void {
     this.ctx.storage.sql.exec(
-      "INSERT INTO rooms (code, name, guests, seen, free, quick, phase) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(code) DO UPDATE SET name = excluded.name, guests = excluded.guests, seen = excluded.seen, free = excluded.free, quick = excluded.quick, phase = excluded.phase",
+      "INSERT INTO rooms (code, name, guests, seen, free, quick, phase, locked) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(code) DO UPDATE SET name = excluded.name, guests = excluded.guests, seen = excluded.seen, free = excluded.free, quick = excluded.quick, phase = excluded.phase, locked = excluded.locked",
       code,
       name,
       guests,
@@ -69,6 +73,7 @@ export class Lobby extends DurableObject<Env> {
       free,
       quick ? 1 : 0,
       phase,
+      locked ? 1 : 0,
     );
   }
 
@@ -77,7 +82,7 @@ export class Lobby extends DurableObject<Env> {
     const sql = this.ctx.storage.sql;
     sql.exec("DELETE FROM rooms WHERE seen < ?", Date.now() - LOBBY_TTL);
     return sql
-      .exec<{ code: string }>("SELECT code FROM rooms WHERE quick = 1 AND phase = 'lobby' AND free > 0 ORDER BY guests DESC, seen DESC LIMIT 5")
+      .exec<{ code: string }>("SELECT code FROM rooms WHERE quick = 1 AND phase = 'lobby' AND free > 0 AND locked = 0 ORDER BY guests DESC, seen DESC LIMIT 5")
       .toArray()
       .map((r) => r.code);
   }
@@ -89,7 +94,10 @@ export class Lobby extends DurableObject<Env> {
   list(): RoomInfo[] {
     const sql = this.ctx.storage.sql;
     sql.exec("DELETE FROM rooms WHERE seen < ?", Date.now() - LOBBY_TTL);
-    return sql.exec<RoomInfo>("SELECT code, name, guests, free, phase FROM rooms ORDER BY seen DESC LIMIT 30").toArray();
+    return sql
+      .exec<Omit<RoomInfo, "locked"> & { locked: number }>("SELECT code, name, guests, free, phase, locked FROM rooms ORDER BY seen DESC LIMIT 30")
+      .toArray()
+      .map((r) => ({ ...r, locked: r.locked === 1 }));
   }
 }
 
@@ -206,7 +214,14 @@ type Lb = {
   parts: Record<string, Part>;
   host: number;
   seq: number;
+  pin?: string; // PIN 4 angka bila room terkunci
+  idle?: number; // ms: sejak kapan semua pemain selain host sudah Siap tapi host belum mulai (0 = tidak)
+  votes?: number[]; // pemain yang memilih ganti host
 };
+const AFK_MS = 90_000; // host diam selama ini padahal semua Siap: pemain lain boleh voting ganti host
+const PIN_TRIES = 5; // salah PIN per perangkat sebelum diblokir
+const PIN_WINDOW_MAX = 20; // salah PIN total dalam satu masa blokir sebelum semua dikunci sebentar
+const PIN_LOCK_MS = 60_000;
 const COUNT_MS = 3000;
 const MAX_HERO = 63;
 const cleanName = (s: unknown) => (typeof s === "string" ? s.replace(/[^\w ]/g, "").trim().slice(0, 16) : "");
@@ -238,6 +253,31 @@ export class Room extends DurableObject<Env> {
   private drops = () => this.kv.get<Record<string, number>>("drop") ?? {};
   private bans = () => this.kv.get<string[]>("ban") ?? [];
 
+
+  // PIN room terkunci: pemain lama (token sudah dikenal) tidak perlu PIN lagi. Salah PIN dibatasi per perangkat dan total.
+  private pinBlocked = false;
+  private pinOk(tok: string, pin: string, now: number): boolean {
+    this.pinBlocked = false;
+    const lb = this.getLb();
+    if (!lb?.pin) return true;
+    if (tok && (this.tk()[tok] !== undefined || Object.values(lb.parts).some((p) => p.tok === tok))) return true;
+    const st = this.kv.get<{ by: Record<string, number>; n: number; until: number }>("pf") ?? { by: {}, n: 0, until: 0 };
+    if (st.until > now || (tok && (st.by[tok] ?? 0) >= PIN_TRIES)) {
+      this.pinBlocked = true;
+      return false;
+    }
+    if (pin === lb.pin) return true;
+    if (pin === "") return false; // belum mengisi PIN: bukan percobaan salah
+    if (tok) st.by[tok] = (st.by[tok] ?? 0) + 1;
+    st.n++;
+    if (st.n >= PIN_WINDOW_MAX) {
+      st.until = now + PIN_LOCK_MS;
+      st.n = 0;
+    }
+    this.kv.put("pf", st);
+    if (tok && (st.by[tok] ?? 0) >= PIN_TRIES) this.pinBlocked = true;
+    return false;
+  }
 
   // ---- Lobi yang dipegang server ----
   private getLb = () => this.kv.get<Lb>("lb") ?? null;
@@ -286,7 +326,19 @@ export class Room extends DurableObject<Env> {
     this.kv.put("lb", lb);
     this.lbSend();
   }
-  private lbView(lb: Lb) {
+  // Voting ganti host: boleh bila host terputus, atau semua pemain lain sudah Siap tapi host diam sekitar 90 detik.
+  private voteInfo(lb: Lb): { can: boolean; need: number; votes: number[] } {
+    const others = Object.keys(lb.parts)
+      .map(Number)
+      .filter((p) => p !== lb.host && this.lbOnline(lb, p));
+    const hostOnline = this.lbOnline(lb, lb.host);
+    const afk = Number(this.env.VOTE_AFK_MS) || AFK_MS;
+    const can = lb.phase === "lobby" && others.length > 0 && (!hostOnline || (!!lb.idle && Date.now() - lb.idle >= afk));
+    const votes = (lb.votes ?? []).filter((p) => others.includes(p));
+    return { can, need: Math.floor(others.length / 2) + 1, votes };
+  }
+  private lbView(lb: Lb, forHost = false) {
+    const vi = this.voteInfo(lb);
     const info = (pid: number) => {
       const p = lb.parts[pid];
       return { p: pid, h: p.h, r: p.r, n: p.n, o: this.lbOnline(lb, pid) };
@@ -298,6 +350,9 @@ export class Room extends DurableObject<Env> {
       phase: lb.phase,
       left: lb.phase === "count" ? Math.max(0, lb.at - Date.now()) : 0,
       host: lb.host,
+      vis: lb.pin ? "locked" : this.kv.get<boolean>("public") ? "open" : "private",
+      ...(forHost && lb.pin ? { pin: lb.pin } : {}),
+      vote: { can: vi.can, need: vi.need, votes: vi.votes },
       seats: lb.seats.map((pid, k) => (pid === null || k >= lb.fmt * 2 ? null : info(pid))),
       spec: Object.keys(lb.parts)
         .map(Number)
@@ -310,9 +365,18 @@ export class Room extends DurableObject<Env> {
     const lb = this.getLb();
     if (!lb) return;
     this.publish(this.kv.get<string>("code") ?? "");
-    const v = this.lbView(lb);
-    const toHost = JSON.stringify({ s: "lb", ...v });
-    const toGuest = JSON.stringify({ t: "lb", ...v });
+    // Siap-semua tanpa host menekan Mulai: catat sejak kapan (untuk hak voting).
+    const others = Object.keys(lb.parts)
+      .map(Number)
+      .filter((p) => p !== lb.host && lb.seats.includes(p));
+    const allReady = others.length > 0 && others.every((p) => lb.parts[p].r && this.lbOnline(lb, p));
+    const idle = allReady && lb.phase === "lobby" ? lb.idle || Date.now() : 0;
+    if (idle !== (lb.idle ?? 0)) {
+      lb.idle = idle;
+      this.kv.put("lb", lb);
+    }
+    const toHost = JSON.stringify({ s: "lb", ...this.lbView(lb, true) });
+    const toGuest = JSON.stringify({ t: "lb", ...this.lbView(lb) });
     for (const ws of this.ctx.getWebSockets()) {
       const a = attOf(ws);
       if (!a || a.replaced || !a.lb) continue;
@@ -354,6 +418,7 @@ export class Room extends DurableObject<Env> {
       this.lbSend();
       return;
     }
+    if (act === "leave") return this.lbLeave(ws, a, lb, pid);
     if (!me) return this.lbNack(ws, "notjoined");
     const seat = lb.seats.indexOf(pid);
     const inLobby = lb.phase === "lobby";
@@ -396,6 +461,7 @@ export class Room extends DurableObject<Env> {
       if (!inLobby) return this.lbNack(ws, "locked");
       const fmt = Number(m.fmt ?? lb.fmt);
       if (fmt !== 1 && fmt !== 2 && fmt !== 3) return this.lbNack(ws, "bad");
+      if (m.pin !== undefined && !(typeof m.pin === "string" && /^\d{4}$/.test(m.pin))) return this.lbNack(ws, "badpin");
       lb.bots = m.bots === undefined ? lb.bots : m.bots === true;
       lb.quick = m.quick === undefined ? lb.quick : m.quick === true;
       if (fmt !== lb.fmt) {
@@ -417,9 +483,37 @@ export class Room extends DurableObject<Env> {
           }
         }
       }
-      for (const p of Object.values(lb.parts)) p.r = false;
-      this.lbCancel(lb);
+      if (m.vis === "private" || m.vis === "open" || m.vis === "locked") {
+        const code = this.kv.get<string>("code") ?? "";
+        this.kv.put("public", m.vis !== "private");
+        if (m.vis === "locked") {
+          const want = typeof m.pin === "string" && /^\d{4}$/.test(m.pin) ? m.pin : "";
+          lb.pin = want || lb.pin || String(1000 + Math.floor(Math.random() * 9000));
+        } else lb.pin = "";
+        if (m.vis === "private" && code) this.ctx.waitUntil(Promise.resolve(this.env.LOBBY.getByName("main").remove(code)));
+      }
+      if (m.fmt !== undefined || m.bots !== undefined || m.quick !== undefined) {
+        for (const p of Object.values(lb.parts)) p.r = false;
+        this.lbCancel(lb);
+      }
       this.publish(this.kv.get<string>("code") ?? "");
+    } else if (act === "vote") {
+      const vi = this.voteInfo(lb);
+      if (isHost) return this.lbNack(ws, "bad");
+      if (!vi.can) return this.lbNack(ws, "novote");
+      const set = new Set(vi.votes);
+      if (set.has(pid)) set.delete(pid);
+      else set.add(pid);
+      lb.votes = [...set];
+      if (set.size >= vi.need) {
+        // Mayoritas: pemain tertua yang terhubung (selain host lama) jadi host.
+        const others = Object.keys(lb.parts)
+          .map(Number)
+          .filter((p) => p !== lb.host && this.lbOnline(lb, p))
+          .sort((x, y) => lb.parts[x].s - lb.parts[y].s);
+        this.kv.put("lb", lb);
+        if (others[0] !== undefined && this.promote(others[0])) return;
+      }
     } else if (act === "kick") {
       if (!isHost) return this.lbNack(ws, "hostonly");
       const target = Number(m.p);
@@ -455,6 +549,31 @@ export class Room extends DurableObject<Env> {
     this.lbSend();
   }
 
+  // Keluar dengan sengaja: kursi langsung kosong (tidak ditahan). Host yang keluar menyerahkan room ke pemain lain;
+  // kalau tak ada penggantinya (atau sedang bertanding) room ditutup.
+  private lbLeave(ws: WebSocket, a: Att, lb: Lb, pid: number): void {
+    const code = this.kv.get<string>("code") ?? "";
+    ws.serializeAttachment({ ...a, replaced: true });
+    if (a.role === "host") {
+      const ok = this.promote();
+      if (ok) this.lbRemove(pid);
+      else this.endRoom(ws);
+    } else {
+      const map = this.tk();
+      if (a.tok) delete map[a.tok];
+      this.kv.put("tk", map);
+      this.hostSock()?.send(JSON.stringify({ s: "leave", id: a.id }));
+      this.lbRemove(pid);
+      this.publish(code, ws);
+    }
+    try {
+      ws.close(1000, "keluar");
+    } catch {
+      // sudah tertutup
+    }
+    void lb;
+  }
+
   // Keluarkan satu tamu: tokennya dilarang masuk lagi ke room ini, kursinya dikosongkan.
   private kickGuest(id: number): void {
     const map = this.tk();
@@ -488,16 +607,30 @@ export class Room extends DurableObject<Env> {
   }
 
   // Host tidak kembali sampai masa tunggu habis (dan belum bertanding): pemain tertua yang masih terhubung jadi host.
-  private promote(): boolean {
+  private promote(target?: number): boolean {
     const lb = this.getLb();
     if (!lb || lb.phase === "play") return false;
     const cands = this.guestSocks()
-      .filter((s) => attOf(s)?.lb && attOf(s)?.tok)
+      .filter((s) => attOf(s)?.lb && attOf(s)?.tok && (target === undefined || (attOf(s) as { id: number }).id === target))
       .sort((x, y) => lb.parts[(attOf(x) as { id: number }).id]?.s - lb.parts[(attOf(y) as { id: number }).id]?.s);
     const ws = cands[0];
     if (!ws) return false;
     const a = attOf(ws) as { id: number; tok: string };
     const map = this.tk();
+    // Host lama yang masih tersambung (voting): diturunkan jadi tamu dan diminta masuk lagi sebagai tamu.
+    const oldHost = this.hostSock();
+    if (oldHost) {
+      const oa = attOf(oldHost);
+      if (oa && oa.role === "host" && oa.tok) {
+        map[oa.tok] = lb.host;
+        oldHost.serializeAttachment({ role: "guest", id: lb.host, tok: oa.tok, lb: true } satisfies Att);
+        try {
+          oldHost.send(JSON.stringify({ t: "demoted" }));
+        } catch {
+          // sedang menutup
+        }
+      }
+    }
     delete map[a.tok];
     this.kv.put("tk", map);
     const drop = this.drops();
@@ -508,6 +641,8 @@ export class Room extends DurableObject<Env> {
     lb.host = a.id;
     lb.phase = "lobby";
     lb.at = 0;
+    lb.votes = [];
+    lb.idle = 0;
     for (const p of Object.values(lb.parts)) p.r = false;
     this.kv.put("lb", lb);
     ws.serializeAttachment({ role: "host", tok: a.tok, pid: a.id, lb: true } satisfies Att);
@@ -527,14 +662,14 @@ export class Room extends DurableObject<Env> {
     const free = lb ? lb.seats.slice(0, lb.fmt * 2).filter((p) => p === null).length : 0;
     const quick = !!lb?.quick;
     const phase = lb?.phase ?? "lobby";
-    this.ctx.waitUntil(Promise.resolve(this.env.LOBBY.getByName("main").upsert(code, name, guests, free, quick, phase)));
+    this.ctx.waitUntil(Promise.resolve(this.env.LOBBY.getByName("main").upsert(code, name, guests, free, quick, phase, !!lb?.pin)));
   }
 
   // Dipanggil Matcher: apakah room ini masih hidup dan menerima pemain lewat cari lawan cepat?
   probe(): { alive: boolean; free: number; phase: string; quick: boolean } {
     const lb = this.getLb();
     const free = lb ? lb.seats.slice(0, lb.fmt * 2).filter((p) => p === null).length : 0;
-    return { alive: !!this.hostSock(), free, phase: lb?.phase ?? "lobby", quick: !!lb?.quick };
+    return { alive: !!this.hostSock(), free, phase: lb?.phase ?? "lobby", quick: !!lb?.quick && !lb?.pin };
   }
 
   private ensureAlarm(): void {
@@ -643,6 +778,8 @@ export class Room extends DurableObject<Env> {
       reject({ t: "err", type: "peer-unavailable" });
     } else if (tok && this.bans().includes(tok)) {
       reject({ t: "err", type: "banned" });
+    } else if (!this.pinOk(tok, url.searchParams.get("pin") ?? "", now)) {
+      reject({ t: "err", type: this.pinBlocked ? "pinlock" : "pin" });
     } else {
       const map = this.tk();
       const drop = this.drops();
@@ -847,6 +984,7 @@ export class Room extends DurableObject<Env> {
       }
     }
     this.publish(this.kv.get<string>("code") ?? "");
+    if (this.getLb()?.idle) this.lbSend(); // hak voting bisa terbuka karena waktu saja
     if (this.ctx.getWebSockets().length > 0 || Object.keys(drop).length > 0 || (this.kv.get<number>("hdrop") ?? 0) > 0) {
       await this.ctx.storage.setAlarm(Date.now() + ALARM_MS);
     }

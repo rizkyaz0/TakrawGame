@@ -612,7 +612,7 @@
 
       /* ===== Aset Gemini untuk lobi: bingkai slot, sel grid, tombol emas dan abu, latar arena ===== */
       #room { background: linear-gradient(rgba(6, 10, 30, 0.2), rgba(6, 10, 30, 0.5)), url(/ui/bg-lobby.webp) center / cover no-repeat; }
-      .lob { grid-template-columns: clamp(210px, 28vw, 370px) minmax(0, 1fr) clamp(210px, 28vw, 370px); }
+      .lob { --cw: clamp(210px, min(28vw, calc((var(--uh, 640px) - 305px) * 0.923)), 370px); grid-template-columns: var(--cw) minmax(0, 1fr) var(--cw); }
       .lcol { gap: 22px; padding-top: 6px; }
       .slot { display: block; aspect-ratio: 886 / 320; min-height: 0; padding: 0; border: 0; border-radius: 0; box-shadow: none; opacity: 1; animation: none;
         background: url(/ui/slot-red.webp) center / 100% 100% no-repeat; filter: drop-shadow(0 6px 0 rgba(0, 0, 0, 0.3)); }

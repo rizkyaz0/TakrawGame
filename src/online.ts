@@ -5,7 +5,7 @@ import { EMOTE_COUNT, allGuestsBatch, broadcast, findMatch, setEmoteHandler, gue
 import { ARENAS, TIMES, type ArenaId, type TimeId } from "./scenery";
 import { setTouchRole, touchState } from "./touch";
 import { Btn, CHARS, DT, type GameEvent, type GameState } from "./sim";
-import { startHosting, KEY_HELP, $, app, backBtn, callout, elHelp, elHud, elNetNote, excitement, guestGone, handleEvent, join, lockChar, renderControls, renderMenus, renderRoom, renderRoomClient, renderSelect, renderer, resetShown, room, roomPreview, seatKind, selectAct, setMode, setNetNote, startDemo, state, type Mode, ui, updateHud } from "./main";
+import { SPEC_SEAT, ext, isPlayerSeat, startHosting, KEY_HELP, $, app, backBtn, callout, elHelp, elHud, elNetNote, excitement, guestGone, handleEvent, join, lockChar, renderControls, renderMenus, renderRoom, renderRoomClient, renderSelect, renderer, resetShown, room, roomPreview, seatKind, selectAct, setMode, setNetNote, startDemo, state, type Mode, ui, updateHud } from "./main";
 
 // ===== Mabar online =====
 // Host: tombol kursi online diambil dari tamu; keadaan game disiarkan tiap frame.
@@ -33,7 +33,9 @@ function hostBroadcast(events: GameEvent[], stepped: boolean): void {
   pendingFrames.push({
     t: "f",
     m: app.mode === "pickchar" ? "room" : app.mode === "select" || app.mode === "match" || app.mode === "room" ? app.mode : "lobby",
-    rc: room.chars.slice(0, 2),
+    rc: room.chars.slice(0, 6),
+    xs: ext.slice(),
+    hk: Array.from({ length: 6 }, (_, i) => (i === 0 ? "h" : seatKind(i) === "bot" ? "b" : "g")).join(""),
     p: app.paused,
     seats: [seatOf(devices[0]), seatOf(devices[1]), seatOf(spectator.device)],
     chars: app.chars,
@@ -54,20 +56,49 @@ function hostBroadcast(events: GameEvent[], stepped: boolean): void {
   else for (const f of out) broadcast(f);
 }
 
-const seatByGuest = (id: number) => devices.findIndex((d) => d.kind === "net" && d.id === id);
+// Kursi pemain milik tamu `id` (0..5), atau -1 kalau ia bukan pemain.
+const seatByGuest = (id: number): number => {
+  const d = devices.findIndex((x) => x.kind === "net" && x.id === id);
+  return d >= 0 ? d : ext.findIndex((g, i) => i >= 2 && g === id);
+};
+
+// Menempatkan tamu: kursi 1 (lawan), lalu kursi tambahan sesuai format, lalu penonton.
+// Kursi yang ditinggal tamu yang sudah putus dianggap kosong.
+function placeGuest(id: number): void {
+  const dev: Device = { kind: "net", id };
+  if (guestGone(devices[0])) devices[0] = dev;
+  else if (guestGone(devices[1])) devices[1] = dev;
+  else {
+    const lobby = app.mode === "controls" || app.mode === "room" || app.mode === "select";
+    // Di lobi kursi kosong atau bekas tamu putus boleh diisi; di pertandingan hanya kursi bekas tamu yang putus (ia kembali).
+    const free = [2, 3, 4, 5].find((k) => k < app.teamSize * 2 && (lobby ? ext[k] === 0 || !net.guests.has(ext[k]) : ext[k] !== 0 && !net.guests.has(ext[k])));
+    if (free !== undefined) ext[free] = id;
+    else if (guestGone(spectator.device)) spectator.device = dev;
+    else if (app.mode === "controls" || app.mode === "room") {
+      if (spectator.device.kind === "none" || spectator.device.kind === "auto") spectator.device = dev;
+    }
+  }
+}
+
+// Setelah format berubah: tamu yang kehilangan kursi jadi penonton/menonton, yang menonton dapat kursi kosong.
+export function reseatGuests(): void {
+  for (let k = 2; k < 6; k++) if (ext[k] !== 0 && (k >= app.teamSize * 2 || !net.guests.has(ext[k]))) ext[k] = 0;
+  for (const id of net.guests.keys()) {
+    const placed =
+      devices.some((d) => d.kind === "net" && d.id === id) || ext.includes(id) || (spectator.device.kind === "net" && spectator.device.id === id);
+    if (!placed) placeGuest(id);
+  }
+}
 
 export const hostHandlers = {
   onJoin(id: number): void {
-    const dev: Device = { kind: "net", id };
     // Kursi yang ditinggal tamu putus diisi dulu; di lobi, tamu pertama jadi P2 dan
-    // berikutnya penonton. Host tetap bisa menukarnya.
-    if (guestGone(devices[0])) devices[0] = dev;
-    else if (guestGone(devices[1])) devices[1] = dev;
-    else if (guestGone(spectator.device)) spectator.device = dev;
+    // berikutnya mengisi kursi tim (sesuai format), lalu penonton. Host tetap bisa menukarnya.
+    if (guestGone(devices[0]) || guestGone(devices[1])) placeGuest(id);
     else if (app.mode === "controls" || app.mode === "room") {
-      if (app.humans === 2 && devices[1].kind !== "net") devices[1] = dev;
-      else if (spectator.device.kind === "none" || spectator.device.kind === "auto") spectator.device = dev;
-    }
+      if (app.humans === 2 && devices[1].kind !== "net") devices[1] = { kind: "net", id };
+      else placeGuest(id);
+    } else placeGuest(id);
     sfx.receivePerfect();
     setNetNote(`TAMU ${id} MASUK`, 2.5);
     if (app.mode === "room" && !ui.autoPicked && devices[1].kind === "net") {
@@ -85,6 +116,7 @@ export const hostHandlers = {
   },
   onLeave(id: number): void {
     const seat = seatByGuest(id);
+    for (let k = 2; k < 6; k++) if (ext[k] === id && app.mode !== "match") ext[k] = 0; // di pertandingan, kursinya dipegang bot sampai tamu kembali
     setNetNote(`TAMU ${id} PUTUS`, 4);
     sfx.fault();
     if (app.mode === "room") renderRoom();
@@ -99,14 +131,14 @@ export const hostHandlers = {
   },
   onEmote(id: number, k: number): void {
     const seat = seatByGuest(id);
-    if (app.mode !== "match" || seat < 0 || seat > 1) return;
+    if (app.mode !== "match" || !isPlayerSeat(seat)) return;
     showEmote(seat, k);
     broadcast({ t: "emo", s: seat, k });
   },
   onCommand(id: number, cmd: GuestCommand): void {
     const seat = seatByGuest(id);
     // Di Room: tamu memilih jagoan untuk kursinya sendiri dari halaman Pilih Jagoan.
-    if ((app.mode === "room" || app.mode === "pickchar") && seat >= 0 && seat <= 1 && cmd.c === "char") {
+    if ((app.mode === "room" || app.mode === "pickchar") && isPlayerSeat(seat) && cmd.c === "char") {
       if (cmd.k >= 0 && cmd.k < CHARS.length && seatKind(seat) !== "bot") {
         room.chars[seat] = cmd.k;
         room.skins[seat] = 0;
@@ -115,7 +147,7 @@ export const hostHandlers = {
       }
       return;
     }
-    if (app.mode !== "select" || seat < 0) return;
+    if (app.mode !== "select" || seat < 0 || seat > 1) return;
     const who = seat as 0 | 1;
     if (cmd.c === "char") {
       if (app.locked[who] || cmd.k < 0 || cmd.k >= CHARS.length) return;
@@ -270,7 +302,7 @@ export function refreshRoomList(): void {
   });
 }
 
-const SEAT_NAMES = ["PEMAIN 1", "PEMAIN 2", "PENONTON USIL"];
+const seatName = (seat: number) => (seat === SPEC_SEAT ? "PENONTON USIL" : `PEMAIN ${seat + 1}`);
 function renderJoin(): void {
   const back = backBtn();
   if (join.status === "input" || join.status === "error") {
@@ -294,7 +326,7 @@ function renderJoin(): void {
   } else {
     const seat =
       app.seat >= 0
-        ? `Kursimu: <b>${SEAT_NAMES[app.seat]}</b><br />Menunggu host memulai…`
+        ? `Kursimu: <b>${seatName(app.seat)}</b><br />Menunggu host memulai…`
         : `Kamu belum dapat kursi, jadi menonton dulu.<br />Menunggu host memulai…`;
     $("joinBox").innerHTML = jpanel(`TERHUBUNG · ROOM ${net.code}`, seat);
   }
@@ -315,12 +347,14 @@ interface FrameMsg {
   ev: GameEvent[];
   hp?: number; // ping host ke server perantara (ms)
   ts?: 1 | 2 | 3; // pemain per sisi (format 1v1, 2v2, 3v3)
+  xs?: number[]; // nomor tamu pemain di kursi 0..5 (0 = bukan tamu)
+  hk?: string; // jenis tiap kursi: h host, g tamu, b bot
 }
 
 function clientHelp(): void {
-  setTouchRole(app.seat === 2 ? "spec" : app.seat >= 0 ? "player" : "off");
+  setTouchRole(app.seat === SPEC_SEAT ? "spec" : app.seat >= 0 ? "player" : "off");
   const text =
-    app.seat === 2
+    app.seat === SPEC_SEAT
       ? touchState.enabled
         ? "<b>KAMU PENONTON USIL</b> stik geser bidikan · SMASH kulit pisang · LOMPAT sandal"
         : "<b>KAMU PENONTON USIL</b> mouse membidik · klik kiri kulit pisang · klik kanan sandal (atau C B geser, V pisang, Spasi sandal)"
@@ -343,7 +377,13 @@ function applyFrame(m: FrameMsg): void {
   }
   // Skin dari host: hanya angka 0..2, paling banyak 6 kursi.
   if (Array.isArray(m.sk)) renderer.skins = m.sk.slice(0, 6).map((x) => (x === 1 || x === 2 ? x : 0));
-  const seat = Array.isArray(m.seats) ? m.seats.indexOf(net.myId) : -1;
+  let seat = Array.isArray(m.seats) ? m.seats.indexOf(net.myId) : -1;
+  if (seat === 2) seat = SPEC_SEAT;
+  else if (seat < 0 && Array.isArray(m.xs)) {
+    const k = m.xs.indexOf(net.myId);
+    if (k >= 2) seat = k;
+  }
+  if (typeof m.hk === "string") ui.hk = m.hk.slice(0, 6);
   const seatChanged = seat !== app.seat;
   app.seat = seat;
   const pickChanged =
@@ -360,7 +400,7 @@ function applyFrame(m: FrameMsg): void {
   // Jagoan di Room dari host (kursi 1 dan 2).
   let roomChanged = false;
   if (Array.isArray(m.rc) && m.rc.length >= 2) {
-    for (let i = 0; i < 2; i++) {
+    for (let i = 0; i < Math.min(6, m.rc.length); i++) {
       const k = Math.max(0, Math.min(CHARS.length - 1, Number(m.rc[i]) | 0));
       if (room.chars[i] !== k) {
         room.chars[i] = k;
@@ -380,10 +420,10 @@ function applyFrame(m: FrameMsg): void {
     if (want === "match") {
       resetShown();
       clientHelp();
-      callout(app.seat === 2 ? "KAMU PENONTON USIL!" : app.seat >= 0 ? `KAMU P${app.seat + 1}!` : "MULAI!", "#ffd23f", true);
+      callout(app.seat === SPEC_SEAT ? "KAMU PENONTON USIL!" : app.seat >= 0 ? `KAMU P${app.seat + 1}!` : "MULAI!", "#ffd23f", true);
     } else if (want === "select") renderSelect();
     else if (want === "room") {
-      if (!ui.autoPicked && (app.seat === 0 || app.seat === 1)) {
+      if (!ui.autoPicked && isPlayerSeat(app.seat)) {
         ui.autoPicked = true;
         room.edit = app.seat;
         room.grid = true;
@@ -395,7 +435,7 @@ function applyFrame(m: FrameMsg): void {
     }
   } else if (want === "room" && (roomChanged || seatChanged)) {
     if (app.mode === "room") {
-      if (!ui.autoPicked && (app.seat === 0 || app.seat === 1)) {
+      if (!ui.autoPicked && isPlayerSeat(app.seat)) {
         ui.autoPicked = true;
         room.edit = app.seat;
         room.grid = true;
@@ -450,7 +490,7 @@ export function clientUpdate(now: number): void {
   }
 
   // Kirim tombol ke host: tiap ada perubahan, plus kabar berkala supaya tidak dianggap putus.
-  const spec = app.seat === 2;
+  const spec = app.seat === SPEC_SEAT;
   const playing = app.mode === "match" && app.seat >= 0 && !app.paused;
   mouse.capture = spec && playing;
   const bits = playing ? readAll(spec) : 0;
@@ -496,15 +536,17 @@ if (EMOTES.length !== EMOTE_COUNT) throw new Error("EMOTE_COUNT tidak cocok deng
 
 const bubbleTimer = [0, 0];
 function showEmote(seat: number, k: number): void {
-  const el = document.getElementById(`emoteB${seat}`);
+  if (!isPlayerSeat(seat)) return;
+  const side = seat & 1; // bubble muncul di sisi timnya
+  const el = document.getElementById(`emoteB${side}`);
   const em = EMOTES[k];
-  if (!el || !em || seat < 0 || seat > 1) return;
+  if (!el || !em) return;
   el.innerHTML = `${em.e}<b>${em.t}</b>`;
   el.classList.remove("on");
   void el.offsetWidth; // mulai ulang animasinya
   el.classList.add("on");
-  window.clearTimeout(bubbleTimer[seat]);
-  bubbleTimer[seat] = window.setTimeout(() => el.classList.remove("on"), 2300);
+  window.clearTimeout(bubbleTimer[side]);
+  bubbleTimer[side] = window.setTimeout(() => el.classList.remove("on"), 2300);
 }
 setEmoteHandler(showEmote);
 
@@ -513,7 +555,7 @@ export function sendEmote(k: number): void {
   const now = performance.now();
   if (app.mode !== "match" || app.online === "off" || k < 0 || k >= EMOTE_COUNT || now - emoteSentAt < 1500) return;
   if (app.online === "client") {
-    if (app.seat < 0 || app.seat > 1) return;
+    if (!isPlayerSeat(app.seat)) return;
     emoteSentAt = now;
     sendToHost({ t: "emo", k });
     return;
@@ -550,7 +592,7 @@ export function updateOnlineHud(): void {
     tag.textContent = text;
     tag.className = cls + (text ? " on" : "");
   }
-  const canEmote = app.mode === "match" && app.online !== "off" && (app.online === "host" || (app.seat >= 0 && app.seat <= 1));
+  const canEmote = app.mode === "match" && app.online !== "off" && (app.online === "host" || isPlayerSeat(app.seat));
   if (canEmote !== emotesShown) {
     emotesShown = canEmote;
     bar.classList.toggle("on", canEmote);

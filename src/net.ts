@@ -7,7 +7,7 @@ import type { Peer } from "peerjs";
 
 const PREFIX = "takrawclash-v1-";
 const ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ"; // tanpa I dan O supaya tidak tertukar angka
-export const MAX_GUESTS = 4;
+export const MAX_GUESTS = 6; // 3v3 penuh: lima pemain tamu + satu penonton
 export const EMOTE_COUNT = 6;
 const EMOTE_GAP = 1500; // ms: jeda minimum antar-emote dari satu tamu
 const GUEST_TIMEOUT = 6000; // ms tanpa kabar sebelum tamu dianggap putus
@@ -58,6 +58,12 @@ export interface HostOptions {
 let hostOpts: HostOptions = {};
 
 export const roomListEnabled = !!SERVER;
+
+// Host mengganti room jadi terbuka (tampil di daftar) atau pribadi, kapan saja.
+export function setRoomVisibility(open: boolean, name: string): void {
+  hostOpts = { ...hostOpts, open, name };
+  if (hostWs?.readyState === 1 && net.role === "host") hostWs.send(JSON.stringify({ pub: open ? 1 : 0, name }));
+}
 
 // Daftar room terbuka dari server perantara; kosong bila server tidak dipakai atau tak terjangkau.
 export async function listRooms(): Promise<RoomInfo[]> {

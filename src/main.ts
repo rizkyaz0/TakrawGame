@@ -6,12 +6,12 @@ import { loadSettings, settings } from "./settings";
 import { initAuth } from "./auth";
 import { checkAchievements, isUnlocked, loadProgress, progress, saveProgress, unlockWins } from "./progress";
 import { deviceActive, deviceLabel, deviceOptions, devices, mouse, readSpectator, spectator, spectatorOptions, type SpecDevice, listPads, loadDevices, readInput, sameDevice, saveDevices, trackPads, type Device, keyHelp } from "./input";
-import { cleanCode, guestAim, guestBits, hostRoom, leaveRoom, net, roomListEnabled, roomLink, sendToHost, sweepGuests } from "./net";
+import { cleanCode, guestAim, guestBits, hostRoom, leaveRoom, net, roomListEnabled, roomLink, sendToHost, setRoomVisibility, sweepGuests } from "./net";
 import { Renderer } from "./render";
 import { ARENAS, TIMES, type ArenaId, type TimeId } from "./scenery";
 import { initTouch, setSpecialReady, setTouchRole, touchCapable, touchState } from "./touch";
 import { BALL_R, BODY_Y, CHARS, COURT_HALF, SPEC_MAX_AMMO, GUARD_PERFECT, GUARD_R, PERFECT_FROM, PERFECT_TO, SMASH_R, sideOf, cpuInput, createState, DT, HEAT_MAX, heatMul, gameWinner, matchPointMask, MAX_TOUCHES, METER_MAX, SPECIAL_COST, step, type GameEvent, type GameState } from "./sim";
-import { clientUpdate, goJoin, sendEmote, updateOnlineHud, goQuickMatch, stopSearch, refreshRoomList, hostBroadcastMaybe, hostHandlers, jpanel, seatInput } from "./online";
+import { clientUpdate, goJoin, reseatGuests, sendEmote, updateOnlineHud, goQuickMatch, stopSearch, refreshRoomList, hostBroadcastMaybe, hostHandlers, jpanel, seatInput } from "./online";
 import { TUT_STEPS, startTutorial, tut, tutBegin, tutEvent, tutNext, tutPlay, tutTick } from "./tutorial";
 import { buzz, goHowto, goProfile, goSettings, keysKey, keysUi, profileAccountAction, profileRename, renderKeys, renderProfile, renderSettings, settingRows, stepSetting } from "./menus";
 
@@ -80,7 +80,13 @@ export const app = {
   seat: -1, // tamu online: 0/1 pemain, 2 penonton, -1 hanya menonton
 };
 export const join = { status: "input" as "input" | "searching" | "connecting" | "waiting" | "error", text: "" };
-export const ui = { roomError: "", autoPicked: false };
+export const ui = { roomError: "", autoPicked: false, roomOpen: false, hk: "hgbbbb" };
+
+// Kursi pemain di simulasi: 0..5 (genap Tim Merah, ganjil Tim Biru). Penonton usil memakai nomor khusus.
+export const SPEC_SEAT = 9;
+export const isPlayerSeat = (seat: number) => seat >= 0 && seat < 6;
+// Host online: tamu pemain di kursi 2..5 (nomor tamu; 0 = kosong/bot). Kursi 0 dan 1 tetap lewat devices[].
+export const ext: number[] = [0, 0, 0, 0, 0, 0];
 
 // ===== Mode latihan =====
 const DRILLS = [
@@ -318,6 +324,7 @@ export function startDemo(): void {
 // Keluar dari mabar online: tutup sambungan dan kembalikan kursi online ke alat lokal.
 function endOnline(): void {
   stopSearch();
+  ext.fill(0);
   if (app.online === "off") return;
   leaveRoom();
   app.online = "off";
@@ -354,6 +361,8 @@ function backToMenu(): void {
 // Room terbuka tampil di daftar room dengan nama akunmu (atau "Pemain").
 export function startHosting(open: boolean, code?: string, team: 1 | 2 | 3 = 1): void {
   app.teamSize = team;
+  ui.roomOpen = open;
+  ext.fill(0);
   app.mate = false;
   app.humans = 2;
   app.training = false;
@@ -622,11 +631,17 @@ export const room = { active: false, chars: [0, 1, 2, 3, 4, 5] as number[], skin
 
 const roomSize = () => app.teamSize * 2;
 const p2Seat = () => (app.humans === 2 ? slotOf(1) : -1);
-export const seatKind = (i: number): "p1" | "p2" | "bot" => (i === 0 ? "p1" : i === p2Seat() ? "p2" : "bot");
+export const seatKind = (i: number): "p1" | "p2" | "bot" =>
+  i === 0 ? "p1" : i === p2Seat() ? "p2" : app.online === "host" && ext[i] !== 0 ? "p2" : "bot";
+// Perangkat yang memegang kursi i (null untuk bot).
+const seatDev = (i: number): Device | null =>
+  i === 0 ? devices[0] : i === p2Seat() ? devices[1] : app.online === "host" && ext[i] !== 0 ? { kind: "net", id: ext[i] } : null;
 // Kursi yang bisa diubah jadi pemain kedua: lawan di kursi 1, atau teman setim di kursi 2.
 const seatConvertible = (i: number) => i === 1 || (i === 2 && app.teamSize > 1);
 
-const ROOM_CHIPS = ["arena", "time", "win", "sets", "cpu", "spec"];
+const BASE_CHIPS = ["arena", "time", "win", "sets", "cpu", "spec"];
+// Room online (host) punya dua pilihan tambahan: format tim dan terbuka/pribadi.
+const roomChips = () => (app.online === "host" ? [...BASE_CHIPS, "fmt", ...(roomListEnabled ? ["vis"] : [])] : BASE_CHIPS);
 const ROOM_COLS = 7;
 
 export function roomPreview(): void {
@@ -756,7 +771,19 @@ function roomCycle(what: string, dir: number): void {
     sfx.swing();
     renderRoom();
   } else if (what === "spec") roomSpectator(dir);
-  else cycleOption(what as "arena" | "time" | "win");
+  else if (what === "fmt") {
+    app.teamSize = (((app.teamSize - 1 + dir + 3) % 3) + 1) as 1 | 2 | 3;
+    reseatGuests();
+    sfx.swing();
+    roomPreview();
+    renderRoom();
+  } else if (what === "vis") {
+    if (!roomListEnabled) return sfx.fault();
+    ui.roomOpen = !ui.roomOpen;
+    setRoomVisibility(ui.roomOpen, account.profile?.displayName ?? "Pemain");
+    sfx.swing();
+    renderRoom();
+  } else cycleOption(what as "arena" | "time" | "win");
 }
 
 function roomConflict(): string {
@@ -836,19 +863,22 @@ export function renderRoom(): void {
   const slot = (i: number): string => {
     const kind = seatKind(i);
     const c = CHARS[room.chars[i]];
-    const dev = kind === "p1" ? devices[0] : kind === "p2" ? devices[1] : null;
+    const dev = seatDev(i);
     const waiting = kind === "p2" && online && !!dev && guestGone(dev);
+    const guestSeat = i >= 2 && kind === "p2"; // tamu online di kursi tambahan
     const dn = kind === "p1" ? 0 : 1;
     const tag = waiting ? "TAMU" : kind === "bot" ? `CPU ${i + 1}` : kind === "p1" ? "P1" : online ? "TAMU" : "P2";
     const bar =
-      dev && !waiting
+      dev && !waiting && guestSeat
+        ? `<span class="sbar">${devName(dev)}</span>`
+        : dev && !waiting
         ? `<span class="sbar" data-tap="rd:${dn}:1"><i class="lamp" id="rlamp${dn}"></i>${devName(dev)} ⟳</span>`
         : waiting
           ? `<span class="sbar wait">MENUNGGU TAMU…</span>`
           : `<span class="sbar bot">BOT · ${CPU_NAMES[app.cpuLevel].toUpperCase()}</span>`;
     const btn = (label: string, tap: string) => `<span class="rb" data-tap="${tap}">${label}</span>`;
     let acts = waiting ? "" : btn(`SKIN: ${SKINS[room.skins[i]].name(room.chars[i])} ▸`, `rk:${i}`);
-    if (kind === "p2") acts += btn("JADIKAN BOT", `rs:${i}`);
+    if (kind === "p2" && !guestSeat) acts += btn("JADIKAN BOT", `rs:${i}`);
     else if (kind === "bot" && seatConvertible(i)) acts += btn("JADI PEMAIN", `rs:${i}`);
     const on = room.focus === `s${i}`;
     return (
@@ -874,7 +904,10 @@ export function renderRoom(): void {
     chip("win", "POIN", String(app.winScore)) +
     chip("sets", "SET", app.sets === 1 ? "1" : `${app.sets} (BEST OF)`) +
     chip("cpu", "BOT", CPU_NAMES[app.cpuLevel]) +
-    chip("spec", "PENONTON", deviceLabel(spectator.device));
+    chip("spec", "PENONTON", deviceLabel(spectator.device)) +
+    (online
+      ? chip("fmt", "FORMAT", `${app.teamSize} LAWAN ${app.teamSize}`) + (roomListEnabled ? chip("vis", "ROOM", ui.roomOpen ? "TERBUKA" : "PRIBADI") : "")
+      : "");
   const extra =
     online
       ? `<div class="rcodep">` +
@@ -884,7 +917,7 @@ export function renderRoom(): void {
       : "";
   const active = roomActive();
   const humanActive = seatKind(active) !== "bot";
-  const tagOf = (i: number) => (seatKind(i) === "bot" ? "CPU" : seatKind(i) === "p1" ? "P1" : "P2");
+  const tagOf = (i: number) => (seatKind(i) === "bot" ? "CPU" : `P${i + 1}`);
   $("roomBody").innerHTML = lobbyShell(
     [col(0), col(1)],
     lobbyGrid(active, n, tagOf, (k) => !humanActive || canPick(k)),
@@ -895,7 +928,7 @@ export function renderRoom(): void {
   );
   const bad = roomConflict();
   const focusSeat = seatOf(room.focus);
-  const focusDev = focusSeat >= 0 ? (seatKind(focusSeat) === "p1" ? devices[0] : seatKind(focusSeat) === "p2" ? devices[1] : null) : null;
+  const focusDev = focusSeat >= 0 ? seatDev(focusSeat) : null;
   const hint = focusSeat >= 0 && seatKind(focusSeat) !== "bot" ? skinHint(room.chars[focusSeat]) : "";
   const pad = menuPad !== null;
   $("roomNote").innerHTML = bad
@@ -966,15 +999,15 @@ function roomKey(code: string): void {
         if ((si ^ 1) < n) next = `s${si ^ 1}`;
       } else if (UP.has(code)) {
         if (si - 2 >= 0) next = `s${si - 2}`;
-      } else next = si + 2 < n ? `s${si + 2}` : ROOM_CHIPS[0];
-    } else if (ROOM_CHIPS.includes(f)) {
-      const at = ROOM_CHIPS.indexOf(f);
+      } else next = si + 2 < n ? `s${si + 2}` : roomChips()[0];
+    } else if (roomChips().includes(f)) {
+      const at = roomChips().indexOf(f);
       if (LEFT.has(code) || RIGHT.has(code)) {
         roomCycle(f, RIGHT.has(code) ? 1 : -1);
         return;
       }
-      next = UP.has(code) ? (at > 0 ? ROOM_CHIPS[at - 1] : `s${n - 2}`) : at < ROOM_CHIPS.length - 1 ? ROOM_CHIPS[at + 1] : "start";
-    } else if (UP.has(code)) next = ROOM_CHIPS[ROOM_CHIPS.length - 1];
+      next = UP.has(code) ? (at > 0 ? roomChips()[at - 1] : `s${n - 2}`) : at < roomChips().length - 1 ? roomChips()[at + 1] : "start";
+    } else if (UP.has(code)) next = roomChips()[roomChips().length - 1];
     if (next !== f) {
       room.focus = next;
       if (seatOf(next) >= 0) room.edit = seatOf(next);
@@ -1166,34 +1199,42 @@ function pickMove(dir: number): void {
 export function renderRoomClient(): void {
   $("roomTitle").textContent = `ROOM · ${app.teamSize} LAWAN ${app.teamSize}`;
   const mine = app.seat;
+  const n = app.teamSize * 2;
   const slot = (i: number): string => {
     const c = CHARS[room.chars[i]];
     const you = i === mine;
-    const tag = you ? `P${i + 1} · KAMU` : i === 0 ? "P1 · HOST" : "P2";
+    const kind = ui.hk[i] ?? "b"; // h host, g tamu, b bot
+    const tag = you ? `P${i + 1} · KAMU` : kind === "h" ? "P1 · HOST" : kind === "g" ? `P${i + 1}` : `CPU ${i + 1}`;
     const on = you;
     return (
       `<div class="slot ${i & 1 ? "b" : "r"}${on ? " on" : ""}${on && room.grid ? " edit" : ""}" style="--pc:${hex(c.color)}"${you ? ` data-tap="rf:s${i}"` : ""}>` +
       `<div class="stag display">${tag}</div>` +
       `<img class="spic" src="${portraits[room.chars[i]]}" alt="" draggable="false" />` +
       `<div class="splate display">${c.name}</div>` +
-      `<div class="sinfo"><span class="sbar${you ? "" : " bot"}">${you ? "KAMU" : i === 0 ? "HOST" : "PEMAIN"}</span></div></div>`
+      `<div class="sinfo"><span class="sbar${you ? "" : " bot"}">${you ? "KAMU" : kind === "h" ? "HOST" : kind === "g" ? "PEMAIN" : "BOT"}</span></div></div>`
     );
   };
-  const active = mine === 0 || mine === 1 ? mine : 0;
+  const active = isPlayerSeat(mine) ? mine : 0;
   room.edit = active;
   const extra =
     `<div class="rcodep">${jpanel("KODE ROOM", `<b class="rcode display">${net.code || "····"}</b>`, "xs")}<div class="rsub">Tersambung ke host.</div></div>`;
+  const col = (t: 0 | 1) =>
+    Array.from({ length: n }, (_, i) => i)
+      .filter((i) => (i & 1) === t)
+      .map(slot)
+      .join("");
   $("roomBody").innerHTML = lobbyShell(
-    [slot(0), slot(1)],
-    lobbyGrid(active, 2, (i) => `P${i + 1}`, () => true),
+    [col(0), col(1)],
+    lobbyGrid(active, n, (i) => `P${i + 1}`, () => true),
     extra,
     lobbyStats(room.chars[active]),
     `<span class="chip">Host yang mengatur arena, waktu, dan poin.</span>`,
+    n,
   );
   $("roomNote").innerHTML =
     mine < 0
       ? "Kamu belum dapat kursi, jadi menonton dulu. Host bisa memberimu kursi."
-      : mine === 2
+      : mine === SPEC_SEAT
         ? "Kamu penonton usil. Host yang mengatur pertandingannya."
         : room.grid
           ? "Pilih jagoanmu dari grid, lalu <kbd>Enter</kbd> kalau sudah. Tunggu host menekan MULAI."
@@ -1210,7 +1251,7 @@ function roomClientKey(code: string): void {
     }
     return goTitle();
   }
-  if (seat !== 0 && seat !== 1) return;
+  if (!isPlayerSeat(seat)) return;
   if (room.grid) {
     if (code === "Enter" || code === "NumpadEnter") {
       room.grid = false;
@@ -1336,7 +1377,7 @@ interface TitleItem {
   flag?: "new" | "soon";
   run: () => void;
 }
-const menuNav = { id: "root" as MenuId, kind: "cpu" as "cpu" | "local", team: 1 as 1 | 2 | 3, stack: [] as Array<{ id: MenuId; index: number }> };
+const menuNav = { id: "root" as MenuId, kind: "cpu" as "cpu" | "local", stack: [] as Array<{ id: MenuId; index: number }> };
 const TITLE_ICONS: Record<string, string> = { RANKED: "trophy", ARCADE: "arcade", TUTORIAL: "book", "CARA MAIN": "book", PROFIL: "person", PENGATURAN: "gear", LATIHAN: "calendar" };
 const TITLE_HEADINGS: Record<MenuId, string> = {
   root: "",
@@ -1399,10 +1440,8 @@ function titleItems(): TitleItem[] {
   if (menuNav.id === "online") {
     return [
       ...(roomListEnabled ? [{ label: "CARI LAWAN CEPAT", row: 0, big: true, run: () => (sfx.receivePerfect(), goQuickMatch()) }] : []),
-      { label: `FORMAT: ${menuNav.team} LAWAN ${menuNav.team}`, row: roomListEnabled ? 1 : 0, run: () => ((menuNav.team = (menuNav.team % 3 + 1) as 1 | 2 | 3), sfx.swing(), renderMenus()) },
-      { label: "BUAT ROOM", row: roomListEnabled ? 2 : 1, big: true, run: () => startHosting(false, undefined, menuNav.team) },
-      ...(roomListEnabled ? [{ label: "BUAT ROOM TERBUKA", row: 3, big: true, run: () => startHosting(true, undefined, menuNav.team) }] : []),
-      { label: "MASUKKAN KODE", row: roomListEnabled ? 4 : 2, big: true, run: () => (sfx.receivePerfect(), goJoin("")) },
+      { label: "BUAT ROOM", row: roomListEnabled ? 1 : 0, big: true, run: () => startHosting(false) },
+      { label: "MASUKKAN KODE", row: roomListEnabled ? 2 : 1, big: true, run: () => (sfx.receivePerfect(), goJoin("")) },
       back,
     ];
   }
@@ -1578,9 +1617,9 @@ export function renderSelect(): void {
   }
 
   if (app.online === "client") {
-    const mine = app.seat === 0 || app.seat === 1;
+    const mine = app.seat === 0 || app.seat === 1; // layar pilih (ulang) hanya untuk kapten P1/P2
     $("selectHint").innerHTML = !mine
-      ? `<span class="waitnote">Kamu ${app.seat === 2 ? "penonton usil" : "menonton"}. Menunggu pemain memilih jagoan…</span>`
+      ? `<span class="waitnote">Kamu ${app.seat === SPEC_SEAT ? "penonton usil" : "menonton"}. Menunggu pemain memilih jagoan…</span>`
       : touchState.enabled
         ? tapBtn("go", "lock", "KUNCI JAGOANMU ✓")
         : `<span class="waitnote"><b>Kamu P${app.seat + 1}</b> · <kbd>A</kbd><kbd>D</kbd> pilih</span>` +
@@ -1629,8 +1668,8 @@ function handleTap(v: string): void {
   } else if (cmd === "rg") {
     // Ketuk jagoan di grid: dipasang ke kursi yang sedang dipilih.
     const k = Number(arg);
-    const seat = app.online === "client" ? (app.seat === 1 ? 1 : 0) : room.edit;
-    if (app.online === "client" && app.seat !== 0 && app.seat !== 1) return;
+    const seat = app.online === "client" ? app.seat : room.edit;
+    if (app.online === "client" && !isPlayerSeat(app.seat)) return;
     if ((app.online === "client" || seatKind(seat) !== "bot") && !canPick(k)) return sfx.fault();
     room.edit = seat;
     room.grid = true;
@@ -2697,7 +2736,7 @@ export function updateHud(): void {
       if (decided) {
         const team = state.players.length > 2;
         const winners = state.chars.map((k, i) => ({ k, i })).filter((x) => (x.i & 1) === w);
-        const youWon = app.online === "client" ? app.seat >= 0 && (app.seat & 1) === w : w === 0;
+        const youWon = app.online === "client" ? isPlayerSeat(app.seat) && (app.seat & 1) === w : w === 0;
         const confetti = Array.from({ length: 28 }, (_, i) => `<i style="--x:${(i * 37) % 100}%;--d:${(i % 7) * 0.35}s;--s:${2.6 + (i % 5) * 0.5}s;--c:${["#ffd23f", "#ff5a3c", "#4a7de0", "#fff6e0", "#4ee07a"][i % 5]}"></i>`).join("");
         elBanner.innerHTML =
           `<div class="vconf">${confetti}</div>` +
@@ -2805,7 +2844,15 @@ function update(now: number): void {
       }
     } else if (state.phase !== "over" && state.players.length > 2) {
       const second = app.humans === 2 ? slotOf(1) : -1;
-      team = state.players.map((_, i) => (i === 0 ? seatInput(0) : i === second ? seatInput(1) : cpuInput(state, i, app.cpuLevel)));
+      team = state.players.map((_, i) =>
+        i === 0
+          ? seatInput(0)
+          : i === second
+            ? seatInput(1)
+            : app.online === "host" && ext[i] !== 0 && net.guests.has(ext[i])
+              ? guestBits(ext[i])
+              : cpuInput(state, i, app.cpuLevel),
+      );
     } else if (state.phase !== "over") {
       in0 = seatInput(0);
       in1 = app.humans === 2 ? seatInput(1) : cpuInput(state, 1, app.cpuLevel);

@@ -10,6 +10,7 @@
 //   host   -> server {to?: id, m}         m dikirim ke tamu `to`, atau ke semua tamu
 //   host   -> server {kick: id}           keluarkan satu tamu
 //   tamu   -> server pesan apa saja       diteruskan ke host sebagai {s:"msg", id, m}
+//   host   -> server {pub:1|0, name?}     room jadi terbuka (1) atau pribadi (0)
 //   host   -> server {hb:1}               denyut tiap ~20 detik; menyegarkan daftar room terbuka
 //   `/queue` (cari lawan cepat): klien menunggu; saat dua orang menunggu, keduanya menerima
 //   {t:"match", role:"host"|"guest", code} lalu ditutup; host membuka room `code`, tamu masuk ke sana.
@@ -23,7 +24,7 @@ export interface Env {
   ALLOWED_ORIGINS: string;
 }
 
-const MAX_GUESTS = 4;
+const MAX_GUESTS = 6; // 3v3 penuh: lima pemain tamu + satu penonton
 const MAX_GUEST_MSG = 2048; // byte: tamu hanya mengirim tombol dan perintah kecil
 const MAX_HOST_MSG = 64 * 1024;
 
@@ -179,10 +180,20 @@ export class Room extends DurableObject<Env> {
       return;
     }
     if (raw.length > MAX_HOST_MSG) return;
-    let env: { to?: unknown; m?: unknown; kick?: unknown; hb?: unknown };
+    let env: { to?: unknown; m?: unknown; kick?: unknown; hb?: unknown; pub?: unknown; name?: unknown };
     try {
       env = JSON.parse(raw);
     } catch {
+      return;
+    }
+    if (env.pub !== undefined) {
+      // Host mengganti room jadi terbuka/pribadi (dan boleh mengganti nama tampilan).
+      const code = this.ctx.storage.kv.get<string>("code") ?? "";
+      const open = env.pub === 1;
+      this.ctx.storage.kv.put("public", open);
+      if (typeof env.name === "string") this.ctx.storage.kv.put("name", env.name.replace(/[^\w ]/g, "").trim().slice(0, 16) || "Pemain");
+      if (open) this.publish(code);
+      else if (code) this.ctx.waitUntil(Promise.resolve(this.env.LOBBY.getByName("main").remove(code)));
       return;
     }
     if (env.hb) {

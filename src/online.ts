@@ -43,6 +43,7 @@ function hostBroadcast(events: GameEvent[], stepped: boolean): void {
     s: app.mode === "select" || app.mode === "match" || app.mode === "room" || app.mode === "pickchar" ? { ...state, events: [] } : undefined,
     ev: events,
     hp: Math.round(net.ping),
+    ts: app.teamSize,
   });
   if (stepped && pendingFrames.length < BATCH && allGuestsBatch()) return;
   const out = pendingFrames;
@@ -313,6 +314,7 @@ interface FrameMsg {
   s?: GameState;
   ev: GameEvent[];
   hp?: number; // ping host ke server perantara (ms)
+  ts?: 1 | 2 | 3; // pemain per sisi (format 1v1, 2v2, 3v3)
 }
 
 function clientHelp(): void {
@@ -331,6 +333,7 @@ function clientHelp(): void {
 let hostPing = -1;
 function applyFrame(m: FrameMsg): void {
   hostPing = typeof m.hp === "number" ? m.hp : -1;
+  if (m.ts === 1 || m.ts === 2 || m.ts === 3) app.teamSize = m.ts;
   if (
     Array.isArray(m.ar) &&
     ARENAS.some((a) => a.id === m.ar![0]) &&

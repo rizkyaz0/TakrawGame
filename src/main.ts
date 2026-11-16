@@ -350,10 +350,10 @@ function backToMenu(): void {
   renderMenus();
 }
 
-// Host mengatur kursi di layar kontrol. Online baru 1 lawan 1 (tim online menyusul).
+// Host mengatur kursi di layar kontrol. Tamu jadi lawan; kursi sisanya diisi bot.
 // Room terbuka tampil di daftar room dengan nama akunmu (atau "Pemain").
-export function startHosting(open: boolean, code?: string): void {
-  app.teamSize = 1;
+export function startHosting(open: boolean, code?: string, team: 1 | 2 | 3 = 1): void {
+  app.teamSize = team;
   app.mate = false;
   app.humans = 2;
   app.training = false;
@@ -1164,7 +1164,7 @@ function pickMove(dir: number): void {
 
 // Tampilan Room untuk tamu online: kursi dari host, hanya kursinya sendiri yang bisa diganti jagoannya.
 export function renderRoomClient(): void {
-  $("roomTitle").textContent = "ROOM · 1 LAWAN 1";
+  $("roomTitle").textContent = `ROOM · ${app.teamSize} LAWAN ${app.teamSize}`;
   const mine = app.seat;
   const slot = (i: number): string => {
     const c = CHARS[room.chars[i]];
@@ -1336,7 +1336,7 @@ interface TitleItem {
   flag?: "new" | "soon";
   run: () => void;
 }
-const menuNav = { id: "root" as MenuId, kind: "cpu" as "cpu" | "local", stack: [] as Array<{ id: MenuId; index: number }> };
+const menuNav = { id: "root" as MenuId, kind: "cpu" as "cpu" | "local", team: 1 as 1 | 2 | 3, stack: [] as Array<{ id: MenuId; index: number }> };
 const TITLE_ICONS: Record<string, string> = { RANKED: "trophy", ARCADE: "arcade", TUTORIAL: "book", "CARA MAIN": "book", PROFIL: "person", PENGATURAN: "gear", LATIHAN: "calendar" };
 const TITLE_HEADINGS: Record<MenuId, string> = {
   root: "",
@@ -1399,9 +1399,10 @@ function titleItems(): TitleItem[] {
   if (menuNav.id === "online") {
     return [
       ...(roomListEnabled ? [{ label: "CARI LAWAN CEPAT", row: 0, big: true, run: () => (sfx.receivePerfect(), goQuickMatch()) }] : []),
-      { label: "BUAT ROOM", row: roomListEnabled ? 1 : 0, big: true, run: () => startHosting(false) },
-      ...(roomListEnabled ? [{ label: "BUAT ROOM TERBUKA", row: 2, big: true, run: () => startHosting(true) }] : []),
-      { label: "MASUKKAN KODE", row: roomListEnabled ? 3 : 1, big: true, run: () => (sfx.receivePerfect(), goJoin("")) },
+      { label: `FORMAT: ${menuNav.team} LAWAN ${menuNav.team}`, row: roomListEnabled ? 1 : 0, run: () => ((menuNav.team = (menuNav.team % 3 + 1) as 1 | 2 | 3), sfx.swing(), renderMenus()) },
+      { label: "BUAT ROOM", row: roomListEnabled ? 2 : 1, big: true, run: () => startHosting(false, undefined, menuNav.team) },
+      ...(roomListEnabled ? [{ label: "BUAT ROOM TERBUKA", row: 3, big: true, run: () => startHosting(true, undefined, menuNav.team) }] : []),
+      { label: "MASUKKAN KODE", row: roomListEnabled ? 4 : 2, big: true, run: () => (sfx.receivePerfect(), goJoin("")) },
       back,
     ];
   }

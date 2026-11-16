@@ -962,7 +962,9 @@ export class FoodCharacter {
   // Pose untuk panggung layar judul. kind 0 = salto menendang (tendangan atas dari posisi
   // terbalik), kind 1 = tendangan samping dengan badan condong ke belakang. a = detik sejak aksi
   // dimulai (aksi berlangsung STAGE_ACTION detik, sisanya siaga); t = waktu nyata; yaw = putaran badan.
-  poseStage(kind: 0 | 1, a: number, t: number, yaw: number): void {
+  poseStage(kind: 0 | 1, a: number, t: number, yaw: number, hold = false, slow = false): void {
+    // hold: berhenti di gerakan menendang (kontak) dan hanya bergoyang halus di tempat.
+    if (hold) a = 0.9 + Math.sin(t * 2.1 + yaw * 3) * 0.05;
     const sm = (x: number) => {
       const c = Math.min(1, Math.max(0, x));
       return c * c * (3 - 2 * c);
@@ -975,7 +977,7 @@ export class FoodCharacter {
       }
       return keys[keys.length - 1][1];
     };
-    const idle = a < 0 || a > 1.8;
+    const idle = !slow && (a < 0 || a > 1.8);
     let hipR = -0.2, kneeR = -0.5, hipL = 0.2, kneeL = -0.4, shL = 0.9, shR = 0.5, lift = 0, flip = 0, lean = 0.05, twist = 0, squash = 0, stretch = 1, wig = 0;
     if (idle) {
       const b = Math.sin(t * 4.2 + yaw * 2);
@@ -1016,6 +1018,7 @@ export class FoodCharacter {
       twist = tr([[0, 0], [0.4, 0.4], [0.85, -0.8], [1.3, 0.2], [1.8, 0]]);
       wig = 0.1;
     }
+    if (hold) lift += 0.12 + Math.sin(t * 2.6 + yaw * 2) * 0.07; // melayang pelan di tempat
     if (!idle) {
       // Gelombang meliuk di badan (pinggang dan pundak bergantian) supaya tidak kaku.
       const env = Math.sin((Math.min(Math.max(a, 0), 1.8) / 1.8) * Math.PI);

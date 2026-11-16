@@ -2261,9 +2261,14 @@ if (fsRoot.requestFullscreen || fsRoot.webkitRequestFullscreen) {
 
 // Seluruh HUD diperkecil di layar pendek atau sempit, supaya tidak saling tumpuk.
 function fitUi(): void {
-  const base = Math.max(0.42, Math.min(1, window.innerHeight / 640, window.innerWidth / 880));
-  const z = Math.min(1.3, base * (settings.bigText ? 1.18 : 1));
+  const raw = Math.min(window.innerHeight / 640, window.innerWidth / 880);
+  const base = Math.max(0.42, Math.min(1, raw));
+  // Teks besar hanya memperbesar selama tata letak minimum (880x640) masih muat di layar.
+  const z = Math.min(1.3, settings.bigText ? Math.max(base, Math.min(base * 1.18, raw)) : base);
   elHud.style.setProperty("zoom", String(z));
+  // Tinggi dan lebar ruang HUD setelah zoom, supaya ukuran berbasis layar tidak ikut dikali zoom.
+  elHud.style.setProperty("--uh", `${window.innerHeight / z}px`);
+  elHud.style.setProperty("--uw", `${window.innerWidth / z}px`);
 }
 window.addEventListener("resize", fitUi);
 fitUi();
@@ -3018,11 +3023,11 @@ function updateHud(): void {
     let mates = "";
     for (let k = i + 2; k < state.players.length; k += 2) {
       const mc = CHARS[state.chars[k]];
-      const pct = Math.round((state.players[k].meter / METER_MAX) * 20) * 5;
+      const pct = Math.round((state.players[k].meter / METER_MAX) * 100);
       const you = app.online === "off" && app.humans === 2 && k === slotOf(1) ? " · P2" : "";
       mates +=
         `<div class="mate${state.players[k].meter >= SPECIAL_COST ? " ready" : ""}" style="--pc:${hex(mc.color)}">` +
-        `<span>${mc.name}${you}</span><i style="width:${pct}%"></i></div>`;
+        `<span>${mc.name}${you}</span><b><i style="width:${pct}%"></i></b></div>`;
     }
     if (shown.mates[i] !== mates) {
       shown.mates[i] = mates;
@@ -3487,6 +3492,7 @@ function clientUpdate(now: number): void {
 
 // Dipakai dari console untuk membekukan loop saat memeriksa pose.
 const debug = { paused: false, manual: false }; // manual: loop hanya jalan lewat update() dari console
+if (import.meta.env.DEV) (window as unknown as { __t: unknown }).__t = { state, debug }; // hanya untuk uji di mode dev
 
 let last = performance.now();
 let acc = 0;

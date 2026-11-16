@@ -402,6 +402,17 @@
       .mate i { position: absolute; left: 0; bottom: 0; height: 3px; background: var(--pc); }
       .mate.ready { border-color: var(--sun); }
       .mate.ready i { background: var(--sun); height: 100%; opacity: 0.35; }
+      /* Teman setim: nama besar dan bar jurus yang jelas, dengan garis batas isi untuk ulti. */
+      .mate { padding: 3px 10px 5px; font-size: 14px; font-weight: 900; color: var(--paper); background: rgba(23, 19, 28, 0.92); border: 3px solid var(--ink); border-left: 8px solid var(--pc); box-shadow: 3px 3px 0 rgba(23, 19, 28, 0.55); }
+      .mate span { display: block; text-shadow: 0 2px 0 var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .mate b { position: relative; display: block; height: 13px; margin-top: 3px; background: #6a6382; border: 2px solid var(--paper); }
+      .mate b::after { content: ""; position: absolute; top: 0; bottom: 0; left: 50%; width: 3px; margin-left: -1.5px; background: var(--ink); }
+      .mate b i { position: absolute; inset: 0 auto 0 0; height: auto; width: 0; background: var(--pc); opacity: 1; transition: width 0.12s; }
+      .mate.ready { border-color: var(--sun); border-left-color: var(--sun); }
+      .mate.ready b { border-color: var(--sun); }
+      .mate.ready b i { background: var(--sun); height: auto; opacity: 1; animation: matePulse 0.5s infinite alternate; }
+      .mate.ready span::after { content: " · JURUS SIAP"; color: var(--sun); font-size: 11px; }
+      @keyframes matePulse { to { filter: brightness(1.35); } }
       #hud:not([data-mode="match"]) > .mates { display: none; }
       body.touch .mates { bottom: auto; top: 74px; }
       .menu .mrow.big .item { font-size: 21px; }
@@ -755,7 +766,7 @@
       .tag { top: -15px; font-size: 11px; }
       .pips { margin-top: 5px; gap: 4px; }
       .pips b { width: 11px; height: 11px; border-width: 2px; }
-      .mates { top: 138px; bottom: auto; width: 170px; }
+      .mates { top: 138px; bottom: auto; width: 200px; gap: 6px; }
       #mates1 { left: 18px; }
       #mates2 { right: 116px; }
       body.touch .mates { top: 138px; }
@@ -852,20 +863,20 @@
       #banner.win { top: 0; bottom: 0; z-index: 7; display: flex; align-items: center; justify-content: center;
         background: radial-gradient(ellipse at 50% 55%, rgba(8, 14, 44, 0.55), rgba(6, 10, 30, 0.92)), url(/ui/bg-lobby.webp) center / cover no-repeat; }
       #banner .vic { position: relative; z-index: 1; display: flex; flex-direction: column; align-items: center; gap: 6px; padding-top: 4px; }
-      #banner .vsign { position: relative; top: auto; left: auto; transform: none; min-width: 460px; font-size: 34px; padding: 18px 70px 30px; animation: vpop 0.5s cubic-bezier(0.2, 1.4, 0.3, 1) both; }
+      #banner .vsign { position: relative; top: auto; left: auto; transform: none; min-width: min(460px, calc(var(--uw, 880px) * 0.6)); font-size: 30px; padding: 14px 56px 26px; animation: vpop 0.5s cubic-bezier(0.2, 1.4, 0.3, 1) both; }
       #banner .vchars { display: flex; justify-content: center; align-items: flex-end; gap: 6px; margin-top: -4px; }
       #banner .vch { display: flex; flex-direction: column; align-items: center; animation: vrise 0.6s cubic-bezier(0.2, 1.3, 0.3, 1) both; }
       #banner .vch:nth-child(2) { animation-delay: 0.12s; }
       #banner .vch:nth-child(3) { animation-delay: 0.24s; }
-      #banner .vch img { width: min(300px, 36vh); height: min(300px, 36vh); object-fit: contain; filter: drop-shadow(0 10px 8px rgba(0, 0, 0, 0.5)) drop-shadow(0 0 18px color-mix(in srgb, var(--pc) 70%, transparent)); }
-      #banner .vchars.v3 .vch img { width: min(230px, 29vh); height: min(230px, 29vh); }
+      #banner .vch img { width: min(300px, calc(var(--uh, 640px) * 0.34)); height: min(300px, calc(var(--uh, 640px) * 0.34)); object-fit: contain; filter: drop-shadow(0 10px 8px rgba(0, 0, 0, 0.5)) drop-shadow(0 0 18px color-mix(in srgb, var(--pc) 70%, transparent)); }
+      #banner .vchars.v3 .vch img { width: min(230px, calc(var(--uh, 640px) * 0.27)); height: min(230px, calc(var(--uh, 640px) * 0.27)); }
       #banner .vch b { margin-top: -10px; font-size: 18px; color: #fff6e0; text-shadow: 0 3px 0 var(--ink), 0 0 8px rgba(23, 19, 28, 0.8); }
-      #banner .vwin { margin-top: 2px; font-size: 38px; color: #ffd23f; -webkit-text-stroke: 8px var(--ink); paint-order: stroke fill; text-align: center; animation: vpop 0.5s 0.3s cubic-bezier(0.2, 1.4, 0.3, 1) both; }
-      #banner .vscore { margin-top: 0; font-size: 46px; color: var(--paper); -webkit-text-stroke: 8px var(--ink); paint-order: stroke fill; }
+      #banner .vwin { margin-top: 2px; font-size: 32px; color: #ffd23f; -webkit-text-stroke: 8px var(--ink); paint-order: stroke fill; text-align: center; animation: vpop 0.5s 0.3s cubic-bezier(0.2, 1.4, 0.3, 1) both; }
+      #banner .vscore { margin-top: 0; font-size: 38px; color: var(--paper); -webkit-text-stroke: 8px var(--ink); paint-order: stroke fill; }
       #banner.win small { margin-top: 4px; }
       #banner.win .bbtns { margin-top: 12px; display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 10px; }
-      #banner.win .bbtns .tapbtn.go { background: url(/ui/btn-gold.webp) center / 100% 100% no-repeat; color: #4a2a00; text-shadow: 0 1px 0 rgba(255, 255, 255, 0.5); min-width: 300px; padding: 18px 62px 20px 36px; font-size: 18px; filter: drop-shadow(0 4px 0 rgba(23, 19, 28, 0.35)); }
-      #banner.win .bbtns .tapbtn.back { background: url(/ui/btn-back.webp) center / 100% 100% no-repeat; color: #2b2f3a; text-shadow: 0 1px 0 rgba(255, 255, 255, 0.6); padding: 16px 30px 18px 50px; font-size: 14px; }
+      #banner.win .bbtns .tapbtn.go { background: url(/ui/btn-gold.webp) center / 100% 100% no-repeat; color: #4a2a00; text-shadow: 0 1px 0 rgba(255, 255, 255, 0.5); min-width: 0; padding: 14px 46px 16px 30px; font-size: 16px; filter: drop-shadow(0 4px 0 rgba(23, 19, 28, 0.35)); }
+      #banner.win .bbtns .tapbtn.back { background: url(/ui/btn-back.webp) center / 100% 100% no-repeat; color: #2b2f3a; text-shadow: 0 1px 0 rgba(255, 255, 255, 0.6); padding: 12px 24px 14px 40px; font-size: 13px; }
       #banner.win .bbtns .tapbtn kbd { display: none; }
       #banner .vconf { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
       #banner .vconf i { position: absolute; top: -20px; left: var(--x); width: 9px; height: 15px; background: var(--c); animation: vfall var(--s) linear var(--d) infinite; }

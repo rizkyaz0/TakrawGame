@@ -190,30 +190,20 @@ export class Renderer {
     const sc = this.stageScene;
     if (!sc) return;
     const t = this.stageClock ?? now / 1000;
-    // Satu putaran 4,8 detik: kiri salto menendang (kontak di 0,95 dtk), kanan tendangan samping
-    // (kontak di 3,3 dtk); bola melayang bolak-balik di antara titik kontak.
-    const PERIOD = 4.8;
-    const loop = ((t % PERIOD) + PERIOD) % PERIOD;
-    const aL = ((loop - 0.0) % PERIOD + PERIOD) % PERIOD;
-    const aR = (((loop - 2.4) % PERIOD) + PERIOD) % PERIOD;
-    this.stageChars[0]?.poseStage(0, aL, t, -0.45);
-    this.stageChars[1]?.poseStage(1, aR, t, Math.PI + 0.45);
+    // Kedua jagoan menendang berulang; bola mengapung
+    // di tengah sambil bergerak pelan.
+    // Gerakan menendang diputar ulang dalam slow motion (0,18x), kanan tertinggal setengah putaran.
+    const SLOW = 0.18;
+    const ACT = 1.8;
+    const aL = (t * SLOW) % ACT;
+    const aR = (t * SLOW + ACT / 2) % ACT;
+    this.stageChars[0]?.poseStage(1, aL, t, -0.45, false, true);
+    this.stageChars[1]?.poseStage(1, aR, t, Math.PI + 0.45, false, true);
     if (this.stageBall) {
-      const hold = (x: number, y: number) => this.stageBall!.position.set(x, y, 0.3);
-      const cL = { x: -2.6, y: 2.6 }; // titik kontak kiri
-      const cR = { x: 2.6, y: 2.5 }; // titik kontak kanan
-      const t1 = 0.95;
-      const t2 = 3.35;
-      let u: number;
-      if (loop >= t1 && loop < t2) {
-        u = (loop - t1) / (t2 - t1);
-        hold(cL.x + (cR.x - cL.x) * u, cL.y + (cR.y - cL.y) * u + 1.5 * 4 * u * (1 - u));
-      } else {
-        const since = loop >= t2 ? loop - t2 : loop + PERIOD - t2; // detik sejak kontak kanan
-        u = since / (PERIOD - (t2 - t1));
-        hold(cR.x + (cL.x - cR.x) * u, cR.y + (cL.y - cR.y) * u + 1.5 * 4 * u * (1 - u));
-      }
-      this.stageBall.rotation.z -= 0.09;
+      this.stageBall.position.set(-1.9 + Math.sin(t * 0.9) * 0.55, 2.9 + Math.sin(t * 2.0) * 0.35 + Math.sin(t * 3.3) * 0.08, 0.5 + Math.cos(t * 0.9) * 0.3);
+      this.stageBall.scale.setScalar(1.35);
+      this.stageBall.rotation.z -= 0.035;
+      this.stageBall.rotation.x = Math.sin(t * 1.3) * 0.35;
     }
     const aspect = window.innerWidth / window.innerHeight;
     this.stageCam.aspect = aspect;

@@ -1043,6 +1043,85 @@ export class FoodCharacter {
     this.elbowR.rotation.z = 0.45;
   }
 
+  // Kuda-kuda bertarung untuk layar Pilih Jagoan: kaki depan-belakang menekuk, kepalan di depan dada,
+  // badan condong ke depan dan naik-turun bernapas. t = waktu nyata (detik), yaw = arah hadap.
+  poseFight(t: number, yaw: number): void {
+    const b = Math.sin(t * 3.4);
+    const b2 = Math.sin(t * 1.7 + 1);
+    this.model.rotation.y = yaw + Math.sin(t * 0.7) * 0.1;
+    this.flip.rotation.z = 0;
+    this.body.rotation.x = Math.sin(t * 1.3) * 0.03;
+    this.body.scale.set(1 + b * 0.012, 1 - b * 0.018, 1 + b * 0.012);
+    this.bend(-0.22 + b2 * 0.04, Math.sin(t * 1.1) * 0.12);
+    this.legR.rotation.z = 0.85 + b * 0.03;
+    this.kneeR.rotation.z = -1.05 - b * 0.04;
+    this.legR.scale.y = 1;
+    if (this.footR) this.footR.scale.y = 1;
+    this.legL.rotation.z = -0.6 - b * 0.03;
+    this.kneeL.rotation.z = -0.7 - b * 0.05;
+    this.armL.rotation.z = 0.95 + b2 * 0.08;
+    this.armR.rotation.z = 0.7 - b2 * 0.08;
+    this.elbowL.rotation.z = 1.5;
+    this.elbowR.rotation.z = 1.6;
+    this.levelFeet();
+    this.plantFeet(0);
+  }
+
+  // Kaki belakang menyesuaikan tekukan lutut sampai telapaknya sejajar kaki depan (dua-duanya menapak).
+  private levelFeet(): void {
+    if (!this.footL || !this.footR) return;
+    const yOf = (f: THREE.Group): number => {
+      f.getWorldPosition(this.tmpV);
+      this.root.worldToLocal(this.tmpV);
+      return this.tmpV.y;
+    };
+    this.body.position.y = -FLIP_Y;
+    let lo = -1.9;
+    let hi = -0.02; // lo = paling tertekuk (kaki naik), hi = hampir lurus (kaki turun)
+    for (let i = 0; i < 9; i++) {
+      const mid = (lo + hi) / 2;
+      this.kneeL.rotation.z = mid;
+      this.root.updateMatrixWorld(true);
+      if (yOf(this.footL) > yOf(this.footR)) lo = mid; // kaki kiri masih lebih tinggi: luruskan
+      else hi = mid;
+    }
+    this.kneeL.rotation.z = (lo + hi) / 2;
+  }
+
+  private groundY: number | null = null;
+  private readonly tmpV = new THREE.Vector3();
+  // Tinggi telapak terendah (dalam satuan lokal root), dengan badan di tinggi bawaan.
+  private lowestFoot(): number | null {
+    if (!this.footL || !this.footR) return null;
+    this.root.updateMatrixWorld(true);
+    let low = Infinity;
+    for (const f of [this.footL, this.footR]) {
+      f.getWorldPosition(this.tmpV);
+      this.root.worldToLocal(this.tmpV);
+      low = Math.min(low, this.tmpV.y);
+    }
+    return low;
+  }
+
+  // Menurunkan badan sampai kaki yang terendah tepat menapak lantai (tanpa IK), supaya tidak melayang.
+  private plantFeet(bob: number): void {
+    if (!this.footL || !this.footR) {
+      this.body.position.y = -FLIP_Y;
+      return;
+    }
+    if (this.groundY === null) {
+      // Lantai = tinggi telapak saat berdiri tegak pada tinggi badan bawaan.
+      const saved = [this.legL.rotation.z, this.legR.rotation.z, this.kneeL.rotation.z, this.kneeR.rotation.z, this.flip.rotation.z];
+      this.legL.rotation.z = this.legR.rotation.z = this.kneeL.rotation.z = this.kneeR.rotation.z = 0;
+      this.body.position.y = -FLIP_Y;
+      this.groundY = this.lowestFoot() ?? 0;
+      [this.legL.rotation.z, this.legR.rotation.z, this.kneeL.rotation.z, this.kneeR.rotation.z, this.flip.rotation.z] = saved as [number, number, number, number, number];
+    }
+    this.body.position.y = -FLIP_Y;
+    const low = this.lowestFoot();
+    if (low !== null) this.body.position.y = -FLIP_Y + (this.groundY - low) - bob;
+  }
+
   // Melentur badan: sudut total dibagi ke tiga ruas (pinggang, perut, dada) supaya lengkungnya halus.
   private bend(z: number, yaw: number): void {
     if (!this.aiSkin) {

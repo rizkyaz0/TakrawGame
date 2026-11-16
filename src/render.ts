@@ -141,8 +141,12 @@ export class Renderer {
   private stageChars: FoodCharacter[] = [];
   private stageBall: THREE.Mesh | null = null;
   private stageIds: [number, number] = [-1, -1];
-  setStage(on: boolean, a = 0, b = 1): void {
+  private stagePick = false; // true: satu jagoan berkuda-kuda di atas podium (layar Pilih Jagoan)
+  private stageShadows: THREE.Mesh[] = [];
+  private pickShadow: THREE.Mesh | null = null;
+  setStage(on: boolean, a = 0, b = 1, pick = false): void {
     this.stageOn = on;
+    this.stagePick = pick;
     this.renderer.setClearColor(0x000000, on ? 0 : 1);
     if (!on) return;
     if (!this.stageScene) {
@@ -167,20 +171,35 @@ export class Renderer {
         sh.position.set(sx * 4.2, 0.02, 0);
         sh.scale.set(1.5, 0.7, 1);
         sc.add(sh);
+        this.stageShadows.push(sh);
       }
+      const ps = new THREE.Mesh(
+        new THREE.CircleGeometry(1.0, 24),
+        new THREE.MeshBasicMaterial({ color: 0x050a1e, transparent: true, opacity: 0.35, depthWrite: false }),
+      );
+      ps.rotation.x = -Math.PI / 2;
+      ps.position.set(0, 0.02, 0);
+      ps.scale.set(1.5, 0.8, 1);
+      sc.add(ps);
+      this.pickShadow = ps;
     }
+    for (const sh of this.stageShadows) sh.visible = !pick;
+    if (this.pickShadow) this.pickShadow.visible = pick;
+    if (this.stageBall) this.stageBall.visible = !pick;
     if (this.stageIds[0] !== a || this.stageIds[1] !== b) {
       for (const c of this.stageChars) {
         this.stageScene.remove(c.root);
         c.dispose();
       }
-      this.stageChars = [a, b].map((id, i) => {
-        const c = new FoodCharacter(id, false, 0);
-        c.root.position.set(i === 0 ? -4.2 : 4.2, 0, 0);
-        c.root.scale.setScalar(1.7);
-        this.stageScene!.add(c.root);
-        return c;
-      });
+      this.stageChars = [a, b]
+        .filter((id) => id >= 0)
+        .map((id, i) => {
+          const c = new FoodCharacter(id, false, 0);
+          c.root.position.set(pick ? 0 : i === 0 ? -4.2 : 4.2, 0, 0);
+          c.root.scale.setScalar(pick ? 2.1 : 1.7);
+          this.stageScene!.add(c.root);
+          return c;
+        });
       this.stageIds = [a, b];
     }
   }
@@ -190,6 +209,21 @@ export class Renderer {
     const sc = this.stageScene;
     if (!sc) return;
     const t = this.stageClock ?? now / 1000;
+    if (this.stagePick) {
+      this.stageChars[0]?.poseFight(t, -1.45);
+      const aspect = window.innerWidth / window.innerHeight;
+      this.stageCam.aspect = aspect;
+      const D = 18;
+      const tn = Math.tan(THREE.MathUtils.degToRad(this.stageCam.fov / 2));
+      // Kaki jagoan tepat di permukaan podium gambar latar (cover, posisi 40%).
+      const fy = 0.195 * Math.max(1, aspect * 0.5578) + 0.4 - 0.03;
+      this.stageCam.position.set(0, (fy - 0.5) * 2 * D * tn, D);
+      this.stageCam.lookAt(0, this.stageCam.position.y, 0);
+      this.stageCam.updateProjectionMatrix();
+      styleUniforms.uBoil.value = Math.floor(now * 0.008) % 16;
+      this.renderer.render(sc, this.stageCam);
+      return;
+    }
     // Kedua jagoan menendang berulang; bola mengapung
     // di tengah sambil bergerak pelan.
     // Gerakan menendang diputar ulang dalam slow motion (0,18x), kanan tertinggal setengah putaran.

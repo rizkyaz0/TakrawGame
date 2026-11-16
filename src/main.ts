@@ -286,6 +286,7 @@ function resetShown(): void {
 }
 
 let titleStageOn = false;
+let pickStageOn = false;
 function setMode(mode: Mode): void {
   app.mode = mode;
   // Latar 3D dikaburkan sedikit di layar yang isinya teks saja; Room dan Pilih Jagoan tetap tajam karena menampilkan karakter.
@@ -297,6 +298,15 @@ function setMode(mode: Mode): void {
   } else if (titleStageOn) {
     renderer.setStage(false);
     titleStageOn = false;
+  }
+  // Pilih Jagoan: jagoan 3D berkuda-kuda di atas podium, di depan latar studio (CSS).
+  document.body.classList.toggle("pickbg", mode === "pickchar");
+  if (mode === "pickchar") {
+    renderer.setStage(true, pickUi.sel, -2, true);
+    pickStageOn = true;
+  } else if (pickStageOn) {
+    renderer.setStage(false);
+    pickStageOn = false;
   }
   document.body.classList.toggle("menubg", mode === "settings" || mode === "profile" || mode === "join" || mode === "howto" || mode === "keys");
   app.paused = false;
@@ -1076,9 +1086,8 @@ function renderPickChar(): void {
   const k = pickUi.sel;
   const c = CHARS[k];
   const ok = pickAllowed(k);
-  const big = $("pickBig") as HTMLImageElement;
-  big.src = bigPortrait(k);
-  big.classList.toggle("shut", !ok);
+  renderer.setStage(true, k, -2, true);
+  document.body.classList.toggle("pickshut", !ok);
   const who =
     app.online === "client" ? "KAMU" : seatKind(pickUi.seat) === "bot" ? "BOT" : `PEMAIN ${seatKind(pickUi.seat) === "p1" ? 1 : 2}`;
   const stat = (label: string, v: number) => `<div class="stat">${label}<div class="bar"><i style="width:${Math.round(v * 100)}%"></i></div></div>`;
@@ -1116,7 +1125,6 @@ function renderPickChar(): void {
   });
   if (pickShown !== k) {
     pickShown = k;
-    replay(big, "swap");
   }
   $("pickHint").innerHTML =
     backBtn() + tapBtn(`go${ok ? "" : " off"}`, "pklock", ok ? "KUNCI JAGOANMU ✓" : `TERKUNCI · MENANG ${unlockWins(k)}×`, "F");

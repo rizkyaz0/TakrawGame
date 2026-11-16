@@ -292,6 +292,13 @@
       body.titlebg #menuBg { display: block; }
       body.titlebg canvas { filter: none; position: relative; z-index: 1; }
       body.titlebg #hud { z-index: 2; }
+      /* Pilih Jagoan: latar studio di belakang kanvas, jagoan 3D berkuda-kuda di atas podium. */
+      body.pickbg #menuBg { display: block; background: linear-gradient(rgba(6, 14, 46, 0.2), rgba(6, 14, 46, 0.5)), url(/ui/bg-studio.webp) center 40% / cover no-repeat; }
+      body.pickbg canvas { filter: none; position: relative; z-index: 1; }
+      body.pickbg.pickshut canvas { filter: grayscale(1) brightness(0.55); }
+      body.pickbg #hud { z-index: 2; }
+      body.pickbg #pickchar { background: none !important; }
+      body.pickbg #pickStage { display: none; }
       #title { background: radial-gradient(ellipse at 50% 55%, rgba(23, 19, 28, 0), rgba(23, 19, 28, 0.35)); }
       body.titlebg #title .tagline { display: none; }
       body.titlebg #title .logo { top: 1%; }

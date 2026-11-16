@@ -44,12 +44,53 @@ export function loadProgress(): void {
   }
 }
 
+// Dipasang oleh auth.ts: dipanggil tiap progres disimpan, untuk disinkronkan ke akun.
+export let onProgressSaved: (() => void) | null = null;
+export function setProgressSavedHook(fn: (() => void) | null): void {
+  onProgressSaved = fn;
+}
+
 export function saveProgress(): void {
   try {
     localStorage.setItem(KEY, JSON.stringify(progress));
   } catch {
     // tidak apa-apa: berlaku untuk sesi ini saja
   }
+  onProgressSaved?.();
+}
+
+// Menggabungkan dua progres tanpa menghilangkan apa pun: angka diambil yang terbesar,
+// daftar digabung, peta diambil yang terbesar per kunci. Aman karena semua angkanya hanya naik.
+export function mergeProgress(a: unknown, b: unknown): Progress {
+  const out: Progress = {
+    matches: 0, wins: 0, perfectSmash: 0, perfectReceive: 0, specials: 0, bestRally: 0, shutouts: 0,
+    teamWins: 0, arcadeBest: 0, arcadeClears: 0, arenas: [], winsByChar: {}, skins: {}, achievements: [],
+  };
+  const srcs = [a, b].filter((x): x is Record<string, unknown> => !!x && typeof x === "object" && !Array.isArray(x));
+  for (const raw of srcs) {
+    for (const k of Object.keys(out) as Array<keyof Progress>) {
+      const v = raw[k];
+      const cur = out[k];
+      if (typeof cur === "number") {
+        if (typeof v === "number" && Number.isFinite(v) && v >= 0) (out[k] as number) = Math.max(cur, Math.floor(v));
+      } else if (Array.isArray(cur)) {
+        if (Array.isArray(v)) {
+          for (const x of v) if (typeof x === "string" && !cur.includes(x) && cur.length < 64) cur.push(x);
+        }
+      } else if (v && typeof v === "object" && !Array.isArray(v)) {
+        const m = out[k] as Record<string, number>;
+        for (const [name, n] of Object.entries(v)) {
+          if (typeof n === "number" && n >= 0 && name.length < 40) m[name] = Math.max(m[name] ?? 0, Math.floor(n));
+        }
+      }
+    }
+  }
+  return out;
+}
+
+// Mengisi `progress` (objek yang dipakai seluruh game) dari hasil gabungan.
+export function applyProgress(src: Progress): void {
+  Object.assign(progress, JSON.parse(JSON.stringify(src)));
 }
 
 export interface Achievement {
@@ -90,4 +131,9 @@ export function checkAchievements(): Achievement[] {
   const fresh = ACHIEVEMENTS.filter((a) => !progress.achievements.includes(a.id) && a.done(progress));
   for (const a of fresh) progress.achievements.push(a.id);
   return fresh;
+}
+
+// Id karakter yang sudah terbuka (turunan dari jumlah kemenangan), untuk disimpan di akun.
+export function unlockWinsAll(): number[] {
+  return Array.from({ length: 12 }, (_, i) => i).filter((i) => isUnlocked(i));
 }

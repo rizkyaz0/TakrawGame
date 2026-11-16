@@ -2,6 +2,7 @@ import { aiBodyIfReady, loadAiBody } from "./aibody";
 import { SKINS, nextSkin, savedSkin, skinHint, winsWith } from "./skins";
 import { crowdSfx, getVolume, music, setBusLevel, setVolume, sfx, sillySfx, voice, VOLUME_STEPS } from "./audio";
 import { loadSettings, saveSettings, settings } from "./settings";
+import { account, authEnabled, initAuth, renameProfile, signInGoogle, signOut } from "./auth";
 import { ACHIEVEMENTS, checkAchievements, isUnlocked, loadProgress, progress, saveProgress, unlockWins } from "./progress";
 import {
   deviceActive,
@@ -1744,6 +1745,10 @@ function handleTap(v: string): void {
   } else if (cmd === "setrow") {
     app.setRow = Number(arg);
     renderSettings();
+  } else if (cmd === "login") {
+    profileAccountAction();
+  } else if (cmd === "rename") {
+    profileRename();
   } else if (cmd === "tutskip") {
     tutNext();
   } else if (cmd === "tutmenu") {
@@ -1818,6 +1823,9 @@ document.addEventListener("click", (e) => {
 // ===== Pengaturan =====
 loadSettings();
 loadProgress();
+initAuth(() => {
+  if (app.mode === "profile") renderProfile();
+});
 // Pemain baru: sorotan menu mulai di Tutorial.
 titleReset();
 function applySettings(): void {
@@ -2025,13 +2033,46 @@ function goHowto(): void {
   $("howHint").innerHTML = backBtn();
 }
 
+function profileAccountAction(): void {
+  if (!authEnabled) return;
+  if (account.user) void signOut();
+  else void signInGoogle();
+}
+
+function profileRename(): void {
+  if (!account.user || !account.profile) return;
+  const n = window.prompt("Nama baru (3–16 karakter: huruf, angka, spasi, _):", account.profile.displayName);
+  if (n === null) return;
+  void renameProfile(n).then((err) => {
+    if (err) window.alert(err);
+  });
+}
+
+function accountBox(): string {
+  if (!authEnabled) return "";
+  if (account.user && account.profile) {
+    const st = account.syncing ? "menyinkronkan…" : account.error ? "gagal sinkron" : "tersimpan di akun";
+    return `<div class="pfav">Masuk sebagai <b>${escapeHtml(account.profile.displayName)}</b> · ${st}</div>`;
+  }
+  return `<div class="pfav">Main sebagai <b>tamu</b>: progres hanya di perangkat ini. Masuk dengan Google untuk menyimpannya di akun.</div>`;
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
+}
+
 function goProfile(): void {
   setMode("profile");
+  renderProfile();
+}
+
+function renderProfile(): void {
   const p = progress;
   const stat = (label: string, value: string | number) => `<div class="pstat"><b class="display">${value}</b>${label}</div>`;
   const rate = p.matches > 0 ? `${Math.round((p.wins / p.matches) * 100)}%` : "–";
   const fav = Object.entries(p.winsByChar).sort((a, b) => b[1] - a[1])[0];
   $("profBox").innerHTML =
+    accountBox() +
     `<div class="pstats">` +
     stat("pertandingan", p.matches) +
     stat("menang", p.wins) +
@@ -2053,7 +2094,13 @@ function goProfile(): void {
       return `<div class="ach${got ? " got" : ""}"><b>${got ? "★" : "☆"} ${a.name}</b>${a.desc}${prog}</div>`;
     }).join("") +
     `</div>`;
-  $("profHint").innerHTML = backBtn();
+  $("profHint").innerHTML =
+    backBtn() +
+    (authEnabled
+      ? account.user
+        ? tapBtn("", "rename", "GANTI NAMA", "N") + tapBtn("", "login", "KELUAR AKUN", "G")
+        : tapBtn("go", "login", "MASUK DENGAN GOOGLE", "G")
+      : "");
 }
 
 function goSettings(): void {
@@ -2355,6 +2402,8 @@ function menuKey(code: string): void {
     return;
   }
   if (app.mode === "profile") {
+    if (code === "KeyG") return profileAccountAction();
+    if (code === "KeyN") return profileRename();
     if (code === "Escape" || code === "Backspace" || CONFIRM.has(code)) goTitle();
     return;
   }

@@ -88,21 +88,27 @@ export async function listRooms(): Promise<RoomInfo[]> {
 }
 
 // Cari lawan cepat: menunggu di antrean server sampai dipasangkan. Mengembalikan fungsi pembatal.
-export function findMatch(h: { onMatch(role: "host" | "guest", code: string): void; onError(text: string): void }): () => void {
+// Versi protokol klien; server menolak yang lebih lama dengan pesan "outdated" (klien diminta memuat ulang).
+export const PV = 3;
+
+export function findMatch(h: { onMatch(role: "host" | "guest", code: string, open: boolean): void; onError(text: string): void }): () => void {
   if (!SERVER) {
     h.onError("Cari lawan butuh server online.");
     return () => undefined;
   }
   let done = false;
-  const ws = new WebSocket(`${SERVER}/queue`);
+  const ws = new WebSocket(`${SERVER}/queue?pv=${PV}`);
   const ping = window.setInterval(() => ws.readyState === 1 && ws.send("ping"), 15000);
   ws.onmessage = (e) => {
     if (typeof e.data !== "string" || e.data === "pong") return;
     try {
-      const m = JSON.parse(e.data) as { t?: string; role?: string; code?: unknown };
-      if (m.t === "match" && (m.role === "host" || m.role === "guest") && typeof m.code === "string" && /^[A-Z]{4}$/.test(m.code)) {
+      const m = JSON.parse(e.data) as { t?: string; role?: string; code?: unknown; open?: unknown; type?: string };
+      if (m.t === "err") {
         done = true;
-        h.onMatch(m.role, m.code);
+        h.onError(ERRORS[m.type ?? ""] ?? "Pencarian gagal. Coba lagi.");
+      } else if (m.t === "match" && (m.role === "host" || m.role === "guest") && typeof m.code === "string" && /^[A-Z]{4}$/.test(m.code)) {
+        done = true;
+        h.onMatch(m.role, m.code, m.open === true);
       }
     } catch {
       // abaikan
@@ -318,6 +324,7 @@ const ERRORS: Record<string, string> = {
   "browser-incompatible": "Browser ini tidak mendukung sambungan langsung (WebRTC).",
   webrtc: "Sambungan langsung antar-perangkat gagal.",
   "ws-failed": "Tidak bisa menghubungi server. Cek internetmu.",
+  outdated: "Versi game kamu sudah lama. Perbarui dulu supaya cocok dengan server.",
   banned: "Kamu dikeluarkan dari room ini oleh host.",
   replaced: "Akunmu masuk dari tab atau perangkat lain, jadi sambungan ini ditutup.",
 };
@@ -389,7 +396,7 @@ function hostRoomWs(h: HostHandlers, attempt: number): void {
 function connectHost(h: HostHandlers, mine: number, attempt: number, resumeSince: number): void {
   const resume = resumeSince > 0;
   const q = !resume ? `&fmt=${hostOpts.fmt ?? 1}&name=${encodeURIComponent(hostOpts.name ?? "Pemain")}${hostOpts.open ? "&public=1" : ""}` : "";
-  const ws = new WebSocket(`${SERVER}/ws/${net.code}?role=host&tok=${playerToken()}${q}`);
+  const ws = new WebSocket(`${SERVER}/ws/${net.code}?pv=${PV}&role=host&tok=${playerToken()}${q}`);
   hostWs = ws;
   let retried = false;
   const retry = () => {
@@ -541,7 +548,7 @@ function joinRoomWs(code: string, h: ClientHandlers): void {
     closeNet();
     h.onClose(text);
   };
-  const ws = new WebSocket(`${SERVER}/ws/${code}?role=guest&tok=${playerToken()}`);
+  const ws = new WebSocket(`${SERVER}/ws/${code}?pv=${PV}&role=guest&tok=${playerToken()}`);
   hostWs = ws;
   hostConn = {
     get open() {

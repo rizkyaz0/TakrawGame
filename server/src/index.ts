@@ -20,6 +20,8 @@
 //   tamu: kirim {t:"lb",a,...}, terima {t:"lb",...} / {t:"lbnack",why} / {t:"demoted"}. Aksi: join{n}, hero{k}, ready{v}, seat{s},
 //   rules{fmt,bots,quick} (host), kick{p} (host), start/cancel/go/end (host). Setelah (re)connect kirim join lagi (idempoten).
 //   Host tidak kembali dalam masa tunggu dan belum bertanding: pemain tertua yang terhubung dijadikan host.
+//   Versi protokol: `&pv=3` wajib di /ws dan /queue; lebih lama dijawab {t:"err",type:"outdated"}.
+//   /queue: {t:"match", role:"guest", code} (masuk room terbuka yang ada), {t:"match", role:"host", code, open:true} (buka room terbuka).
 //   klien  -> server "ping"               dijawab "pong" tanpa membangunkan server
 import { DurableObject } from "cloudflare:workers";
 
@@ -38,23 +40,46 @@ const MAX_HOST_MSG = 64 * 1024;
 
 const LOBBY_TTL = 75_000; // ms: room terbuka tanpa denyut selama ini dianggap sudah mati
 
-export type RoomInfo = { code: string; name: string; guests: number };
+export type RoomInfo = { code: string; name: string; guests: number; free: number; phase: string };
+const PV_MIN = 3; // versi protokol terendah yang dilayani (klien lama diminta memperbarui)
+const pvOk = (url: URL) => Number(url.searchParams.get("pv")) >= PV_MIN;
 
 // Daftar room terbuka. Satu instans global ("main"); isinya kecil dan hanya diubah room.
 export class Lobby extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     ctx.storage.sql.exec("CREATE TABLE IF NOT EXISTS rooms (code TEXT PRIMARY KEY, name TEXT NOT NULL, guests INTEGER NOT NULL, seen INTEGER NOT NULL)");
+    // Kolom tambahan (tahap 4): sisa kursi, fase lobi, boleh cari cepat. Tabel lama diperluas di tempat.
+    for (const col of ["free INTEGER NOT NULL DEFAULT 0", "quick INTEGER NOT NULL DEFAULT 0", "phase TEXT NOT NULL DEFAULT 'lobby'"]) {
+      try {
+        ctx.storage.sql.exec(`ALTER TABLE rooms ADD COLUMN ${col}`);
+      } catch {
+        // kolom sudah ada
+      }
+    }
   }
 
-  upsert(code: string, name: string, guests: number): void {
+  upsert(code: string, name: string, guests: number, free = 0, quick = false, phase = "lobby"): void {
     this.ctx.storage.sql.exec(
-      "INSERT INTO rooms (code, name, guests, seen) VALUES (?, ?, ?, ?) ON CONFLICT(code) DO UPDATE SET name = excluded.name, guests = excluded.guests, seen = excluded.seen",
+      "INSERT INTO rooms (code, name, guests, seen, free, quick, phase) VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(code) DO UPDATE SET name = excluded.name, guests = excluded.guests, seen = excluded.seen, free = excluded.free, quick = excluded.quick, phase = excluded.phase",
       code,
       name,
       guests,
       Date.now(),
+      free,
+      quick ? 1 : 0,
+      phase,
     );
+  }
+
+  // Calon room untuk cari lawan cepat: terbuka, masih di lobi, boleh cari cepat, ada kursi kosong. Yang paling ramai dulu.
+  pick(): string[] {
+    const sql = this.ctx.storage.sql;
+    sql.exec("DELETE FROM rooms WHERE seen < ?", Date.now() - LOBBY_TTL);
+    return sql
+      .exec<{ code: string }>("SELECT code FROM rooms WHERE quick = 1 AND phase = 'lobby' AND free > 0 ORDER BY guests DESC, seen DESC LIMIT 5")
+      .toArray()
+      .map((r) => r.code);
   }
 
   remove(code: string): void {
@@ -64,37 +89,84 @@ export class Lobby extends DurableObject<Env> {
   list(): RoomInfo[] {
     const sql = this.ctx.storage.sql;
     sql.exec("DELETE FROM rooms WHERE seen < ?", Date.now() - LOBBY_TTL);
-    return sql.exec<RoomInfo>("SELECT code, name, guests FROM rooms ORDER BY seen DESC LIMIT 30").toArray();
+    return sql.exec<RoomInfo>("SELECT code, name, guests, free, phase FROM rooms ORDER BY seen DESC LIMIT 30").toArray();
   }
 }
 
 const ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ";
 const randomCode = () => Array.from({ length: 4 }, () => ALPHABET[Math.floor(Math.random() * ALPHABET.length)]).join("");
 
-// Antrean cari lawan cepat (tanpa peringkat): dua orang pertama yang menunggu dipasangkan.
+// Antrean cari lawan cepat (tanpa peringkat). Urutan: (1) masuk ke room terbuka yang masih di lobi, boleh cari cepat,
+// dan punya kursi kosong (dicek hidup dulu); (2) kalau ada pencari lain yang menunggu, keduanya dipasangkan;
+// (3) kalau sepi lebih dari WAIT_HOST_MS, pencari membuka room terbuka sendiri supaya pencari berikutnya bisa masuk.
+const WAIT_HOST_MS = 5000;
+type Wait = { w: "wait"; at: number } | { w: "done" };
 export class Matcher extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
   }
 
-  async fetch(): Promise<Response> {
+  async fetch(req: Request): Promise<Response> {
     const pair = new WebSocketPair();
     const [client, server] = [pair[0], pair[1]];
     this.ctx.acceptWebSocket(server);
-    const other = this.ctx.getWebSockets().find((s) => s !== server && s.deserializeAttachment() === "wait");
+    if (!pvOk(new URL(req.url))) {
+      server.send(JSON.stringify({ t: "err", type: "outdated" }));
+      server.close(1000, "versi lama");
+      return new Response(null, { status: 101, webSocket: client });
+    }
+    const lobby = this.env.LOBBY.getByName("main");
+    for (const code of await lobby.pick()) {
+      let alive = false;
+      try {
+        const p = await this.env.ROOMS.getByName(code).probe();
+        alive = p.alive;
+        if (p.alive && p.free > 0 && p.phase === "lobby" && p.quick) {
+          server.send(JSON.stringify({ t: "match", role: "guest", code }));
+          server.serializeAttachment({ w: "done" } satisfies Wait);
+          server.close(1000, "masuk room");
+          return new Response(null, { status: 101, webSocket: client });
+        }
+      } catch {
+        // room tidak menjawab: dianggap mati
+      }
+      if (!alive) await lobby.remove(code);
+    }
+    const other = this.ctx.getWebSockets().find((s) => s !== server && (s.deserializeAttachment() as Wait | null)?.w === "wait");
     if (other) {
       const code = randomCode();
-      other.send(JSON.stringify({ t: "match", role: "host", code }));
+      other.send(JSON.stringify({ t: "match", role: "host", code, open: true }));
       server.send(JSON.stringify({ t: "match", role: "guest", code }));
-      other.serializeAttachment("done");
-      server.serializeAttachment("done");
+      other.serializeAttachment({ w: "done" } satisfies Wait);
+      server.serializeAttachment({ w: "done" } satisfies Wait);
       other.close(1000, "dipasangkan");
       server.close(1000, "dipasangkan");
     } else {
-      server.serializeAttachment("wait");
+      server.serializeAttachment({ w: "wait", at: Date.now() } satisfies Wait);
+      if ((await this.ctx.storage.getAlarm()) === null) await this.ctx.storage.setAlarm(Date.now() + WAIT_HOST_MS);
     }
     return new Response(null, { status: 101, webSocket: client });
+  }
+
+  // Pencari yang sudah menunggu terlalu lama membuka room terbuka sendiri.
+  async alarm(): Promise<void> {
+    const now = Date.now();
+    let waiting = false;
+    for (const s of this.ctx.getWebSockets()) {
+      const a = s.deserializeAttachment() as Wait | null;
+      if (a?.w !== "wait") continue;
+      if (now - a.at >= WAIT_HOST_MS) {
+        try {
+          s.send(JSON.stringify({ t: "match", role: "host", code: randomCode(), open: true }));
+          s.serializeAttachment({ w: "done" } satisfies Wait);
+          s.close(1000, "buka room");
+        } catch {
+          // sudah tertutup
+        }
+      } else waiting = true;
+    }
+    if (waiting) await this.ctx.storage.setAlarm(now + 1000);
   }
 
   webSocketClose(ws: WebSocket, code: number): void {
@@ -237,6 +309,7 @@ export class Room extends DurableObject<Env> {
   private lbSend(): void {
     const lb = this.getLb();
     if (!lb) return;
+    this.publish(this.kv.get<string>("code") ?? "");
     const v = this.lbView(lb);
     const toHost = JSON.stringify({ s: "lb", ...v });
     const toGuest = JSON.stringify({ t: "lb", ...v });
@@ -450,7 +523,18 @@ export class Room extends DurableObject<Env> {
     if (!this.kv.get<boolean>("public")) return;
     const guests = this.guestSocks(leaving).length;
     const name = this.kv.get<string>("name") ?? "Room";
-    this.ctx.waitUntil(Promise.resolve(this.env.LOBBY.getByName("main").upsert(code, name, guests)));
+    const lb = this.getLb();
+    const free = lb ? lb.seats.slice(0, lb.fmt * 2).filter((p) => p === null).length : 0;
+    const quick = !!lb?.quick;
+    const phase = lb?.phase ?? "lobby";
+    this.ctx.waitUntil(Promise.resolve(this.env.LOBBY.getByName("main").upsert(code, name, guests, free, quick, phase)));
+  }
+
+  // Dipanggil Matcher: apakah room ini masih hidup dan menerima pemain lewat cari lawan cepat?
+  probe(): { alive: boolean; free: number; phase: string; quick: boolean } {
+    const lb = this.getLb();
+    const free = lb ? lb.seats.slice(0, lb.fmt * 2).filter((p) => p === null).length : 0;
+    return { alive: !!this.hostSock(), free, phase: lb?.phase ?? "lobby", quick: !!lb?.quick };
   }
 
   private ensureAlarm(): void {
@@ -479,6 +563,13 @@ export class Room extends DurableObject<Env> {
     const code = url.pathname.slice(-4);
     const tok = cleanTok(url.searchParams.get("tok"));
     let demoted = false;
+    if (!pvOk(url)) {
+      const old = new WebSocketPair();
+      this.ctx.acceptWebSocket(old[1]);
+      old[1].send(JSON.stringify({ t: "err", type: "outdated" }));
+      old[1].close(1000, "versi lama");
+      return new Response(null, { status: 101, webSocket: old[0] });
+    }
     {
       // Bekas host yang sudah digantikan masuk lagi: jadi tamu biasa dengan nomornya semula.
       const lb0 = this.getLb();

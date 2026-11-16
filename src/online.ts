@@ -6,7 +6,7 @@ import { ARENAS, TIMES, type ArenaId, type TimeId } from "./scenery";
 import { setTouchRole, touchState } from "./touch";
 import { Btn, CHARS, DT, type GameEvent, type GameState } from "./sim";
 import { account } from "./auth";
-import { goLobby } from "./lobby";
+import { goLobby, renderLobby } from "./lobby";
 import { SPEC_SEAT, ext, lobbyPlan, isPlayerSeat, startHosting, KEY_HELP, $, app, backBtn, callout, elHelp, elHud, elNetNote, excitement, guestGone, handleEvent, join, lockChar, renderControls, renderMenus, renderRoom, renderRoomClient, renderSelect, renderer, resetShown, room, roomPreview, seatKind, selectAct, setMode, setNetNote, startDemo, state, type Mode, ui, updateHud } from "./main";
 
 // ===== Mabar online =====
@@ -221,6 +221,7 @@ export const hostHandlers = {
   },
   onError(text: string): void {
     ui.roomError = text;
+    if (app.mode === "lobby") renderLobby();
   },
 };
 
@@ -235,6 +236,7 @@ export function stopSearch(): void {
 
 export function goQuickMatch(): void {
   stopSearch();
+  if (app.mode !== "join") quickRetries = 0;
   setMode("join");
   join.status = "searching";
   join.text = "";
@@ -253,11 +255,12 @@ export function goQuickMatch(): void {
     }
   }, 1000);
   cancelSearch = findMatch({
-    onMatch(role, code) {
+    onMatch(role, code, open) {
       cancelSearch = null;
       window.clearInterval(tick);
       if (app.mode !== "join") return;
-      if (role === "host") startHosting(false, code);
+      // Host dari cari cepat membuka room terbuka, supaya pencari berikutnya bisa langsung masuk.
+      if (role === "host") startHosting(open, code);
       else goJoin(code, true);
     },
     onError(text) {
@@ -271,6 +274,7 @@ export function goQuickMatch(): void {
 }
 
 let quickTries = 0;
+let quickRetries = 0; // berapa kali cari cepat mengulang karena room pilihannya tak bisa dimasuki
 export function goJoin(code: string, quick = false): void {
   setMode("join");
   if (code.length !== 4) {
@@ -301,6 +305,15 @@ export function goJoin(code: string, quick = false): void {
         window.setTimeout(() => {
           if (app.mode === "join" && app.online === "off") goJoin(code, true);
         }, 800);
+        return;
+      }
+      // Room pilihan cari cepat ternyata penuh atau sudah bubar: cari lagi (bukan memutus pemain).
+      if (quick && (text.startsWith("Room sudah penuh") || text.startsWith("Room tidak ditemukan")) && quickRetries < 3) {
+        quickRetries++;
+        app.online = "off";
+        window.setTimeout(() => {
+          if (app.mode === "join") goQuickMatch();
+        }, 500);
         return;
       }
       // Putus di tengah jalan: coba sambung ulang beberapa kali sebelum menyerah. Host
@@ -374,7 +387,7 @@ function renderJoin(): void {
         `<input id="roomInput" maxlength="4" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="ABCD" />`,
       ) +
       `<span class="tapbtn go" data-tap="join">GABUNG ▸</span>` +
-      (join.status === "error" ? `<br /><span class="bad">${join.text}</span>` : "") +
+      (join.status === "error" ? `<br /><span class="bad">${join.text}</span>${join.text.startsWith("Versi game") ? ` <span class="tapbtn go" data-tap="reload">PERBARUI</span>` : ""}` : "") +
       (roomListEnabled ? `<div id="roomList" class="rlist"></div>` : "");
     if (roomListEnabled) refreshRoomList();
     $("joinHint").innerHTML = back;

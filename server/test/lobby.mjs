@@ -7,7 +7,7 @@ const ok = (c, n) => (c || fail++, console.log(`${c ? "OK  " : "GAGAL"} ${n}`));
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const open = (code, q) =>
   new Promise((res, rej) => {
-    const ws = new WebSocket(`${BASE}/ws/${code}?${q}`, { headers: H });
+    const ws = new WebSocket(`${BASE}/ws/${code}?pv=3&${q}`, { headers: H });
     ws.inbox = [];
     ws.onmessage = (e) => ws.inbox.push(String(e.data));
     ws.onopen = () => res(ws);

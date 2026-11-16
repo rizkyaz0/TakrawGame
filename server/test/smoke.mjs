@@ -10,7 +10,7 @@ const ok = (c, name) => {
 };
 const open = (role) =>
   new Promise((res, rej) => {
-    const ws = new WebSocket(`${BASE}/ws/${code}?role=${role}`, { headers: { Origin: ORIGIN } });
+    const ws = new WebSocket(`${BASE}/ws/${code}?pv=3&role=${role}`, { headers: { Origin: ORIGIN } });
     ws.inbox = [];
     ws.onmessage = (e) => ws.inbox.push(String(e.data));
     ws.onopen = () => res(ws);

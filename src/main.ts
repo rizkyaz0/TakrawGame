@@ -1677,6 +1677,8 @@ function handleTap(v: string): void {
   } else if (cmd === "pause") {
     app.pauseIndex = Number(arg);
     menuKey("Enter");
+  } else if (cmd === "reload") {
+    location.reload();
   } else if (cmd === "lb") {
     lobbyTap(v);
   } else if (cmd === "rf") {

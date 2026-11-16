@@ -121,7 +121,9 @@ function seatCard(k: number, s: LobbySeat | null): string {
 export function renderLobby(): void {
   const v = view();
   if (!v) {
-    $("lobbyBody").innerHTML = `<div class="lbwait">Menyambung ke room…</div>`;
+    $("lobbyBody").innerHTML = ui.roomError
+      ? `<div class="lbwait">${esc(ui.roomError)}${ui.roomError.startsWith("Versi game") ? ` <span class="tapbtn go" data-tap="reload">PERBARUI</span>` : ""}</div>`
+      : `<div class="lbwait">Menyambung ke room…</div>`;
     $("lobbyHint").innerHTML = backBtn();
     return;
   }

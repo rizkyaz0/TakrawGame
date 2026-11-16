@@ -5,7 +5,7 @@ if (!code) throw new Error("pakai: node test/lobbybots.mjs KODE [jumlah] [detik]
 const tok = () => Array.from({ length: 32 }, () => "0123456789abcdef"[Math.floor(Math.random() * 16)]).join("");
 const bots = [];
 for (let n = 0; n < Number(count); n++) {
-  const ws = new WebSocket(`${base}/ws/${code}?role=guest&tok=${tok()}`, { headers: { Origin: "http://localhost:5173" } });
+  const ws = new WebSocket(`${base}/ws/${code}?pv=3&role=guest&tok=${tok()}`, { headers: { Origin: "http://localhost:5173" } });
   const bot = { n, id: -1, seat: -2, phase: "", frames: 0, ls: "", view: null };
   bots.push(bot);
   const act = (m) => ws.readyState === 1 && ws.send(JSON.stringify({ t: "lb", ...m }));

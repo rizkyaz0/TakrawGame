@@ -9,7 +9,7 @@ const tok = () => Array.from({ length: 32 }, () => "0123456789abcdef"[Math.floor
 const code = Array.from({ length: 4 }, () => "ABCDEFGHJKLMNPQRSTUVWXYZ"[Math.floor(Math.random() * 24)]).join("");
 const open = (role, t) =>
   new Promise((res, rej) => {
-    const ws = new WebSocket(`${BASE}/ws/${code}?role=${role}&tok=${t}`, { headers: H });
+    const ws = new WebSocket(`${BASE}/ws/${code}?pv=3&role=${role}&tok=${t}`, { headers: H });
     ws.inbox = [];
     ws.onmessage = (e) => ws.inbox.push(String(e.data));
     ws.onopen = () => res(ws);

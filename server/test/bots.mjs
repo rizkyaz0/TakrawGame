@@ -5,7 +5,7 @@ const [code, count = "5", secs = "40", base = "ws://localhost:8787"] = process.a
 if (!code) throw new Error("pakai: node test/bots.mjs KODE [jumlah] [detik] [ws-url]");
 const bots = [];
 for (let n = 0; n < Number(count); n++) {
-  const ws = new WebSocket(`${base}/ws/${code}?role=guest`, { headers: { Origin: "http://localhost:5173" } });
+  const ws = new WebSocket(`${base}/ws/${code}?pv=3&role=guest`, { headers: { Origin: "http://localhost:5173" } });
   const bot = { n, id: -1, seat: -2, hk: "", ts: 0, frames: 0, fb: 0 };
   bots.push(bot);
   ws.onmessage = (e) => {

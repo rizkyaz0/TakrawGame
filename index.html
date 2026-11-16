@@ -88,7 +88,7 @@
 
       /* ===== Layar menu ===== */
       .screen { position: absolute; inset: 0; display: none; }
-      #hud[data-mode="title"] #title, #hud[data-mode="settings"] #settings, #hud[data-mode="profile"] #profile, #hud[data-mode="join"] #join, #hud[data-mode="controls"] #controls, #hud[data-mode="room"] #room, #hud[data-mode="howto"] #howto, #hud[data-mode="pickchar"] #pickchar, #hud[data-mode="keys"] #keys, #hud[data-mode="select"] #select, #hud[data-paused="1"] #pause { display: block; }
+      #hud[data-mode="title"] #title, #hud[data-mode="settings"] #settings, #hud[data-mode="profile"] #profile, #hud[data-mode="join"] #join, #hud[data-mode="controls"] #controls, #hud[data-mode="room"] #room, #hud[data-mode="lobby"] #lobby, #hud[data-mode="howto"] #howto, #hud[data-mode="pickchar"] #pickchar, #hud[data-mode="keys"] #keys, #hud[data-mode="select"] #select, #hud[data-paused="1"] #pause { display: block; }
       /* Elemen pertandingan disembunyikan di luar pertandingan. */
       #hud:not([data-mode="match"]) > :is(#top, #c1, #c2, #help, #banner, #callout, #pop, #cutin, #dim, #lines, #flash, #tension) { display: none !important; }
       #title, #pause, #controls, #room, #howto, #keys { background: radial-gradient(ellipse at 50% 40%, rgba(23, 19, 28, 0.25), rgba(23, 19, 28, 0.78)); }
@@ -628,6 +628,46 @@
 
 
       /* ===== Aset Gemini untuk lobi: bingkai slot, sel grid, tombol emas dan abu, latar arena ===== */
+      /* Lobi mabar online */
+      #lobby { background: linear-gradient(rgba(6, 10, 30, 0.35), rgba(6, 10, 30, 0.7)), url(/ui/bg-lobby.webp) center / cover no-repeat; }
+      #lobbyBody { position: absolute; inset: 84px 18px 74px 18px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; color: var(--paper); text-shadow: 0 2px 0 var(--ink); }
+      #lobbyHint { background: none; border: none; bottom: 18px; display: flex; justify-content: center; align-items: center; gap: 10px; width: max-content; max-width: 98%; }
+      #lobbyHint .tapbtn.off { opacity: 0.45; }
+      .lbwait { margin: 80px auto; font-size: 18px; font-weight: 800; }
+      .lbtop { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; justify-content: space-between; }
+      .lbcode { display: flex; align-items: center; gap: 10px; }
+      .lbcode small { font-size: 11px; opacity: 0.8; }
+      .lbcode b { font-size: 28px; color: var(--sun); letter-spacing: 3px; }
+      .lbrules { display: flex; flex-wrap: wrap; gap: 6px; }
+      .lbteams { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+      .lbth { font-size: 13px; padding: 2px 10px; margin-bottom: 6px; display: inline-block; border: 3px solid var(--ink); }
+      .lbteam.r .lbth { background: #ff4f6d; } .lbteam.b .lbth { background: #3b82f6; }
+      .lbseat { position: relative; display: flex; align-items: center; gap: 10px; padding: 8px 10px; margin-bottom: 6px; min-height: 66px; background: rgba(23, 19, 28, 0.78); border: 3px solid rgba(255, 246, 224, 0.4); border-radius: 14px; }
+      .lbseat.r { border-left: 8px solid #ff4f6d; } .lbseat.b { border-left: 8px solid #3b82f6; }
+      .lbseat.me { border-color: var(--sun); box-shadow: 0 0 14px rgba(255, 210, 63, 0.5); }
+      .lbseat.ready { background: rgba(26, 82, 52, 0.85); }
+      .lbseat.off { opacity: 0.55; }
+      .lbseat.empty { background: rgba(23, 19, 28, 0.45); border-style: dashed; }
+      .lbseat.open { cursor: pointer; } .lbseat.open:hover { border-color: var(--sun); }
+      .lbpic { flex: none; width: 48px; height: 48px; border-radius: 50%; background: rgba(255, 246, 224, 0.12); display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 22px; overflow: hidden; border: 3px solid var(--pc, #888); }
+      .lbpic.empty { border-color: rgba(255, 246, 224, 0.3); }
+      .lbpic img { width: 140%; height: 140%; object-fit: cover; object-position: 50% 20%; }
+      .lbinfo { display: flex; flex-direction: column; min-width: 0; font-size: 13px; line-height: 1.25; }
+      .lbinfo b { font-size: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .lbinfo small { opacity: 0.85; font-size: 11px; font-weight: 700; }
+      .lbst { font-size: 11px; font-weight: 800; color: var(--sun); }
+      .lbkick { position: absolute; right: 8px; top: 6px; width: 24px; height: 24px; line-height: 22px; text-align: center; border-radius: 50%; background: #ff4f6d; border: 2px solid var(--ink); cursor: pointer; font-weight: 800; font-size: 13px; }
+      .lbspec { font-size: 12px; font-weight: 700; opacity: 0.9; }
+      .lbnote, .lbnack { text-align: center; font-size: 13px; font-weight: 700; }
+      .lbnack { align-self: center; padding: 3px 14px; background: #ff4f6d; border: 3px solid var(--ink); }
+      .lbcount { align-self: center; font-size: 34px; color: var(--sun); }
+      .lbgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(78px, 1fr)); gap: 6px; }
+      .lbcell { position: relative; display: flex; flex-direction: column; align-items: center; padding: 4px 2px 2px; background: rgba(23, 19, 28, 0.7); border: 3px solid rgba(255, 246, 224, 0.25); border-radius: 12px; cursor: pointer; font-size: 10px; font-weight: 800; }
+      .lbcell img { width: 56px; height: 56px; object-fit: cover; object-position: 50% 15%; }
+      .lbcell:hover { border-color: var(--pc); }
+      .lbcell.cur { border-color: var(--sun); box-shadow: 0 0 12px rgba(255, 210, 63, 0.7); }
+      .lbcell.shut { opacity: 0.3; cursor: not-allowed; }
+      @media (max-width: 640px) { .lbteams { grid-template-columns: 1fr; } #lobbyBody { inset: 74px 10px 80px 10px; } }
       #room { background: linear-gradient(rgba(6, 10, 30, 0.2), rgba(6, 10, 30, 0.5)), url(/ui/bg-lobby.webp) center / cover no-repeat; }
       .lob { --cw: clamp(210px, min(28vw, calc((var(--uh, 640px) - 305px) * 0.923)), 370px); grid-template-columns: var(--cw) minmax(0, 1fr) var(--cw); }
       .lcol { gap: 22px; padding-top: 6px; }
@@ -1048,6 +1088,13 @@
         <div id="roomBody"></div>
         <div id="roomNote"></div>
         <div class="hint" id="roomHint"></div>
+      </div>
+
+      <!-- Lobi mabar online: kursi dan jagoan dipegang server -->
+      <div id="lobby" class="screen">
+        <div class="heading display" id="lobbyTitle">LOBI</div>
+        <div id="lobbyBody"></div>
+        <div class="hint" id="lobbyHint"></div>
       </div>
 
       <!-- Layar pilih karakter -->

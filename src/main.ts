@@ -6,11 +6,12 @@ import { loadSettings, settings } from "./settings";
 import { initAuth } from "./auth";
 import { checkAchievements, isUnlocked, loadProgress, progress, saveProgress, unlockWins } from "./progress";
 import { deviceActive, deviceLabel, deviceOptions, devices, mouse, readSpectator, spectator, spectatorOptions, type SpecDevice, listPads, loadDevices, readInput, sameDevice, saveDevices, trackPads, type Device, keyHelp } from "./input";
-import { cleanCode, guestAim, guestBits, hostRoom, leaveRoom, net, roomListEnabled, roomLink, sendToHost, setRoomVisibility, sweepGuests } from "./net";
+import { cleanCode, guestAim, guestBits, hostRoom, leaveRoom, lobby, net, roomListEnabled, roomLink, sendToHost, setRoomVisibility, sweepGuests } from "./net";
 import { Renderer } from "./render";
 import { ARENAS, TIMES, type ArenaId, type TimeId } from "./scenery";
 import { initTouch, setSpecialReady, setTouchRole, touchCapable, touchState } from "./touch";
 import { BALL_R, BODY_Y, CHARS, COURT_HALF, SPEC_MAX_AMMO, GUARD_PERFECT, GUARD_R, PERFECT_FROM, PERFECT_TO, SMASH_R, sideOf, cpuInput, createState, DT, HEAT_MAX, heatMul, gameWinner, matchPointMask, MAX_TOUCHES, METER_MAX, SPECIAL_COST, step, type GameEvent, type GameState } from "./sim";
+import { goLobby, lobbyKey, lobbyReturn, lobbyTap, lobbyTick, renderLobby } from "./lobby";
 import { clientUpdate, goJoin, reseatGuests, sendEmote, updateOnlineHud, goQuickMatch, stopSearch, refreshRoomList, hostBroadcastMaybe, hostHandlers, jpanel, seatInput } from "./online";
 import { TUT_STEPS, startTutorial, tut, tutBegin, tutEvent, tutNext, tutPlay, tutTick } from "./tutorial";
 import { buzz, goHowto, goProfile, goSettings, keysKey, keysUi, profileAccountAction, profileRename, renderKeys, renderProfile, renderSettings, settingRows, stepSetting } from "./menus";
@@ -52,7 +53,7 @@ const shown = { score: [-1, -1], char: [-1, -1], rally: -1, heat: -1, over: fals
 const elMates = [$("mates1"), $("mates2")];
 
 // ===== Alur aplikasi: judul -> pilih karakter -> pertandingan =====
-export type Mode = "title" | "settings" | "profile" | "join" | "howto" | "keys" | "pickchar" | "controls" | "room" | "select" | "match";
+export type Mode = "title" | "settings" | "profile" | "join" | "howto" | "keys" | "pickchar" | "controls" | "room" | "lobby" | "select" | "match";
 export const app = {
   mode: "title" as Mode,
   paused: false,
@@ -80,6 +81,8 @@ export const app = {
   seat: -1, // tamu online: 0/1 pemain, 2 penonton, -1 hanya menonton
 };
 export const join = { status: "input" as "input" | "searching" | "connecting" | "waiting" | "error", text: "" };
+// Rencana pertandingan dari lobi server: nomor pemain di tiap kursi simulasi (-1 = bot), jagoan, dan skin.
+export const lobbyPlan = { on: false, pids: [] as number[], host: 0, chars: [] as number[], skins: [] as number[] };
 export const ui = { roomError: "", autoPicked: false, roomOpen: false, hk: "hgbbbb" };
 
 // Kursi pemain di simulasi: 0..5 (genap Tim Merah, ganjil Tim Biru). Penonton usil memakai nomor khusus.
@@ -274,6 +277,7 @@ export const slotOf = (human: number) => (human === 0 ? 0 : app.mate && app.team
 // dengan karakter yang belum dipakai.
 function buildLineup(): number[] {
   const n = app.teamSize * 2;
+  if (lobbyPlan.on) return lobbyPlan.chars.slice(0, n);
   if (room.active) return room.chars.slice(0, n); // pilihan dari layar Room
   const out = new Array<number>(n).fill(-1);
   out[0] = app.chars[0];
@@ -294,9 +298,9 @@ function applyArena(): void {
   renderer.setArena(arena, time);
 }
 const WIN_OPTIONS = [5, 7, 11, 15];
-const arenaName = () => (app.arena === "acak" ? "Acak" : ARENAS.find((a) => a.id === app.arena)!.name);
-const timeName = () => (app.time === "acak" ? "Acak" : TIMES.find((t) => t.id === app.time)!.name);
-function cycleOption(what: "arena" | "time" | "win"): void {
+export const arenaName = () => (app.arena === "acak" ? "Acak" : ARENAS.find((a) => a.id === app.arena)!.name);
+export const timeName = () => (app.time === "acak" ? "Acak" : TIMES.find((t) => t.id === app.time)!.name);
+export function cycleOption(what: "arena" | "time" | "win"): void {
   if (what === "arena") {
     const ids: Array<ArenaId | "acak"> = ["acak", ...ARENAS.map((a) => a.id)];
     app.arena = ids[(ids.indexOf(app.arena) + 1) % ids.length];
@@ -309,6 +313,7 @@ function cycleOption(what: "arena" | "time" | "win"): void {
   if (what !== "win") applyArena(); // pratinjau langsung di belakang layar pilih jagoan
   sfx.swing();
   if (app.mode === "room") renderRoom();
+  else if (app.mode === "lobby") renderLobby();
   else renderSelect();
 }
 
@@ -324,6 +329,7 @@ export function startDemo(): void {
 // Keluar dari mabar online: tutup sambungan dan kembalikan kursi online ke alat lokal.
 function endOnline(): void {
   stopSearch();
+  lobbyPlan.on = false;
   ext.fill(0);
   if (app.online === "off") return;
   leaveRoom();
@@ -371,11 +377,13 @@ export function startHosting(open: boolean, code?: string, team: 1 | 2 | 3 = 1):
   ui.autoPicked = false;
   ui.roomError = "";
   sfx.receivePerfect();
-  void hostRoom(hostHandlers, 0, { open, name: account.profile?.displayName ?? "Pemain", code });
-  goRoom();
+  lobby.name = account.profile?.displayName ?? "Pemain";
+  void hostRoom(hostHandlers, 0, { open, name: lobby.name, code, fmt: team });
+  if (lobby.want) goLobby();
+  else goRoom();
 }
 
-function goTitle(): void {
+export function goTitle(): void {
   room.active = false;
   endOnline();
   titleReset();
@@ -685,6 +693,7 @@ function goRoom(): void {
 
 // Pilihan jagoan sebelumnya dipakai lagi kalau kamu kembali dari pertandingan.
 function goPick(): void {
+  if (app.online === "host" && lobby.want) return lobbyReturn();
   if (room.active) {
     setMode("room");
     app.paused = false;
@@ -1289,8 +1298,12 @@ export function startMatch(keepSets = false): void {
     app.cpuLevel = ARCADE_LEVELS[app.arcade.stage] ?? 2;
   }
   Object.assign(state, createState(buildLineup()));
-  renderer.skins = room.active ? room.skins.slice(0, roomSize()) : [savedSkin(app.chars[0])];
-  renderer.humanSlots = app.humans === 2 ? [0, slotOf(1)] : [0];
+  renderer.skins = lobbyPlan.on ? lobbyPlan.skins.slice() : room.active ? room.skins.slice(0, roomSize()) : [savedSkin(app.chars[0])];
+  renderer.humanSlots = lobbyPlan.on ? [Math.max(0, lobbyPlan.pids.indexOf(lobbyPlan.host))] : app.humans === 2 ? [0, slotOf(1)] : [0];
+  if (lobbyPlan.on) {
+    const hs = lobbyPlan.pids.indexOf(lobbyPlan.host);
+    if (hs >= 0) renderer.skins[hs] = savedSkin(lobbyPlan.chars[hs]);
+  }
   state.winScore = app.training ? 7 : app.winScore;
   state.winCap = state.winScore + 3;
   // Arena acak diundi tiap pertandingan baru; saat latihan dan online-tamu dibiarkan.
@@ -1548,6 +1561,7 @@ export const portraits: string[] = CHARS.map((_, k) => renderer.portrait(k));
     else if (app.mode === "room" && app.online !== "client") renderRoom();
     else if (app.mode === "room") renderRoomClient();
     else if (app.mode === "pickchar") renderPickChar();
+    else if (app.mode === "lobby") renderLobby();
   };
   const next = (i: number): void => {
     if (i >= order.length) return;
@@ -1663,6 +1677,8 @@ function handleTap(v: string): void {
   } else if (cmd === "pause") {
     app.pauseIndex = Number(arg);
     menuKey("Enter");
+  } else if (cmd === "lb") {
+    lobbyTap(v);
   } else if (cmd === "rf") {
     room.focus = arg;
     if (seatOf(arg) >= 0) room.edit = seatOf(arg);
@@ -2008,6 +2024,7 @@ function menuKey(code: string): void {
   }
 
   if (app.mode === "pickchar") return pickKey(code);
+  if (app.mode === "lobby") return lobbyKey(code);
   if (app.online === "client" && app.mode === "room") return roomClientKey(code);
   if (app.online === "client") {
     // Tamu: pilihannya dikirim ke host; menu jeda hanya berisi "keluar room".
@@ -2786,6 +2803,7 @@ function update(now: number): void {
     elNetNote.classList.add("good");
     sfx.receivePerfect();
   }
+  lobbyTick(now);
   if (app.online === "client") {
     last = now;
     acc = 0;
@@ -2819,7 +2837,7 @@ function update(now: number): void {
       in0 = cpuInput(state, 0, 2);
       in1 = cpuInput(state, 1, 2);
       if (state.phase === "over" && state.timer === 0) startDemo();
-    } else if (app.mode === "room") {
+    } else if (app.mode === "room" || app.mode === "lobby") {
       // Pratinjau Room: semua pemain berdiri di posisi awal, bola diam di atas net.
       state.phase = "serve";
       state.timer = 999;
@@ -2848,6 +2866,14 @@ function update(now: number): void {
         train.forceSpecial--;
         in1 = train.forceSpecial === 1 ? 0 : 128; // lepas dulu, lalu tekan: butuh tepi naik
       }
+    } else if (lobbyPlan.on && app.mode === "match" && state.phase !== "over") {
+      // Kursi dari lobi server: host memakai alatnya sendiri, tamu lewat tombol kirimannya, sisanya bot.
+      team = state.players.map((_, i) => {
+        const pid = lobbyPlan.pids[i] ?? -1;
+        if (pid >= 0 && pid === lobbyPlan.host) return seatInput(0);
+        if (pid >= 0 && net.guests.has(pid)) return guestBits(pid);
+        return cpuInput(state, i, app.cpuLevel);
+      });
     } else if (state.phase !== "over" && state.players.length > 2) {
       const second = app.humans === 2 ? slotOf(1) : -1;
       team = state.players.map((_, i) =>

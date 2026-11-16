@@ -59,6 +59,7 @@ export interface HostOptions {
   open?: boolean;
   name?: string;
   code?: string; // kode yang ditentukan server (cari lawan cepat)
+  fmt?: 1 | 2 | 3; // format awal lobi (pemain per sisi)
 }
 let hostOpts: HostOptions = {};
 
@@ -163,15 +164,40 @@ export const lobby = {
   want: false, // sudah ikut lobi: ikut lagi otomatis setiap sambungan (ulang)
   view: null as LobbyView | null,
   nack: "", // alasan penolakan terakhir (taken, locked, hostonly, notready, noteam, …)
+  name: "", // nama tampilan di lobi
+  pid: -1, // nomorku di lobi (0 = host pertama, selain itu nomor tamu)
   demoted: false, // bekas host yang digantikan saat ia pergi
   onChange: null as (() => void) | null,
 };
+// Pergantian peran di tengah lobi: tamu dijadikan host oleh server, atau bekas host yang digantikan.
+let roleHandlers: { promote(): void; demote(): void } | null = null;
+export function setRoleHandlers(h: { promote(): void; demote(): void }): void {
+  roleHandlers = h;
+}
 function adoptLobby(m: unknown): void {
   const v = m as Partial<LobbyView> | null;
   if (!v || !Array.isArray(v.seats) || !Array.isArray(v.spec)) return;
   const left = typeof v.left === "number" ? v.left : 0;
   lobby.view = { ...(v as LobbyView), until: v.phase === "count" ? performance.now() + left : 0 };
   lobby.onChange?.();
+  if (net.role === "client" && lobby.pid >= 0 && v.host === lobby.pid) roleHandlers?.promote();
+}
+// Tamu yang dijadikan host: tutup soket tamu lalu sambung lagi sebagai host (server mengenali tokennya).
+export function becomeHost(h: HostHandlers): void {
+  session++;
+  window.clearInterval(pingTimer);
+  try {
+    hostWs?.close();
+  } catch {
+    // sudah tertutup
+  }
+  hostConn = null;
+  net.role = "host";
+  net.guests.clear();
+  net.inbox = [];
+  net.myId = -1;
+  net.ready = false;
+  connectHost(h, session, 0, Date.now());
 }
 function lobbyNack(why: unknown): void {
   lobby.nack = typeof why === "string" ? why : "";
@@ -185,7 +211,7 @@ export function lobbyAct(m: { a: string } & Record<string, unknown>): void {
 }
 export function lobbyJoin(name?: string): void {
   lobby.want = true;
-  lobbyAct({ a: "join", n: name });
+  lobbyAct({ a: "join", n: name ?? (lobby.name || undefined) });
 }
 
 // Token tetap pemain, disimpan di perangkat: server memakainya untuk mengenali pemain yang sama setelah putus.
@@ -254,6 +280,7 @@ export function roomLink(): string {
 export function closeNet(): void {
   session++;
   lobby.want = false;
+  lobby.pid = -1;
   lobby.view = null;
   lobby.nack = "";
   lobby.demoted = false;
@@ -323,6 +350,7 @@ function onHostMsg(m: { t?: string; id?: number } | null, fail: (t: string) => v
   net.lastHeard = performance.now();
   if (m.t === "hi" && typeof m.id === "number") {
     net.myId = m.id;
+    lobby.pid = m.id;
     net.ready = true;
     ready();
     if (lobby.want && SERVER) lobbyJoin();
@@ -360,7 +388,7 @@ function hostRoomWs(h: HostHandlers, attempt: number): void {
 // resumeSince > 0: sedang menyambung ulang ke room yang sama (sejak waktu itu); server mengenali host lewat token.
 function connectHost(h: HostHandlers, mine: number, attempt: number, resumeSince: number): void {
   const resume = resumeSince > 0;
-  const q = !resume && hostOpts.open ? `&public=1&name=${encodeURIComponent(hostOpts.name ?? "Pemain")}` : "";
+  const q = !resume ? `&fmt=${hostOpts.fmt ?? 1}&name=${encodeURIComponent(hostOpts.name ?? "Pemain")}${hostOpts.open ? "&public=1" : ""}` : "";
   const ws = new WebSocket(`${SERVER}/ws/${net.code}?role=host&tok=${playerToken()}${q}`);
   hostWs = ws;
   let retried = false;
@@ -426,6 +454,13 @@ function connectHost(h: HostHandlers, mine: number, attempt: number, resumeSince
         retried = true; // jangan coba sambung ulang setelah ditolak
         h.onError(ERRORS[m.type ?? ""] ?? "Ada masalah sambungan.");
       }
+      return;
+    }
+    if (m.t === "demoted") {
+      retried = true; // jangan sambung ulang sebagai host
+      ws.onclose = null;
+      ws.close();
+      roleHandlers?.demote();
       return;
     }
     if (m.s === "lb") return adoptLobby(m);
@@ -525,12 +560,16 @@ function joinRoomWs(code: string, h: ClientHandlers): void {
   ws.onmessage = (e) => {
     if (mine !== session || typeof e.data !== "string") return;
     if (e.data === "pong") return onPong();
-    let m: { t?: string; type?: string; id?: number } | null;
+    let m: { t?: string; type?: string; id?: number; s?: string } | null;
     try {
       m = JSON.parse(e.data);
     } catch {
       return;
     }
+    // Setelah dijadikan host oleh server, soket ini menerima format host sebelum sempat disambung ulang.
+    if (m?.s === "lb") return adoptLobby(m);
+    if (m?.s === "lbnack") return lobbyNack((m as { why?: unknown }).why);
+    if (m?.s) return;
     if (m?.t === "err") {
       window.clearTimeout(timeout);
       fail(ERRORS[m.type ?? ""] ?? "Ada masalah sambungan.");
@@ -548,7 +587,11 @@ function joinRoomWs(code: string, h: ClientHandlers): void {
 
 // ===== Host =====
 export async function hostRoom(h: HostHandlers, attempt = 0, opts?: HostOptions): Promise<void> {
-  if (attempt === 0) closeNet();
+  if (attempt === 0) {
+    closeNet();
+    lobby.want = !!SERVER; // dengan server perantara, lobi dipegang server
+    lobby.pid = 0;
+  }
   if (opts) hostOpts = opts;
   if (SERVER) return hostRoomWs(h, attempt);
   const mine = session;
@@ -643,6 +686,7 @@ export const guestAim = (id: number) => net.guests.get(id)?.aim ?? null;
 // ===== Tamu =====
 export async function joinRoom(code: string, h: ClientHandlers): Promise<void> {
   closeNet();
+  lobby.want = !!SERVER;
   if (SERVER) return joinRoomWs(code, h);
   const mine = session;
   net.role = "client";

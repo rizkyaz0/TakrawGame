@@ -1,11 +1,13 @@
 // Mabar online: sisi host dan sisi tamu (klien) di dalam game.
 import { crowdSfx, sfx } from "./audio";
 import { devices, mouse, spectator, type SpecDevice, readAll, readInput, type Device } from "./input";
-import { EMOTE_COUNT, allGuestsBatch, broadcast, findMatch, setEmoteHandler, guestBits, joinRoom, listRooms, net, roomListEnabled, sendToHost, type GuestCommand } from "./net";
+import { EMOTE_COUNT, allGuestsBatch, broadcast, findMatch, setEmoteHandler, guestBits, joinRoom, listRooms, lobby, net, roomListEnabled, sendToHost, type GuestCommand } from "./net";
 import { ARENAS, TIMES, type ArenaId, type TimeId } from "./scenery";
 import { setTouchRole, touchState } from "./touch";
 import { Btn, CHARS, DT, type GameEvent, type GameState } from "./sim";
-import { SPEC_SEAT, ext, isPlayerSeat, startHosting, KEY_HELP, $, app, backBtn, callout, elHelp, elHud, elNetNote, excitement, guestGone, handleEvent, join, lockChar, renderControls, renderMenus, renderRoom, renderRoomClient, renderSelect, renderer, resetShown, room, roomPreview, seatKind, selectAct, setMode, setNetNote, startDemo, state, type Mode, ui, updateHud } from "./main";
+import { account } from "./auth";
+import { goLobby } from "./lobby";
+import { SPEC_SEAT, ext, lobbyPlan, isPlayerSeat, startHosting, KEY_HELP, $, app, backBtn, callout, elHelp, elHud, elNetNote, excitement, guestGone, handleEvent, join, lockChar, renderControls, renderMenus, renderRoom, renderRoomClient, renderSelect, renderer, resetShown, room, roomPreview, seatKind, selectAct, setMode, setNetNote, startDemo, state, type Mode, ui, updateHud } from "./main";
 
 // ===== Mabar online =====
 // Host: tombol kursi online diambil dari tamu; keadaan game disiarkan tiap frame.
@@ -46,6 +48,8 @@ function hostBroadcast(events: GameEvent[], stepped: boolean): void {
     ev: events,
     hp: Math.round(net.ping),
     ts: app.teamSize,
+    ls: lobbyPlan.on ? lobbyPlan.pids : undefined,
+    lh: lobbyPlan.on ? lobbyPlan.host : undefined,
   });
   if (stepped && pendingFrames.length < BATCH && allGuestsBatch()) return;
   const out = pendingFrames;
@@ -59,6 +63,7 @@ function hostBroadcast(events: GameEvent[], stepped: boolean): void {
 // Kursi pemain milik tamu `id` (0..5), atau -1 kalau ia bukan pemain.
 let autoPaused = false; // dijeda otomatis karena putus (bukan pilihan host)
 const seatByGuest = (id: number): number => {
+  if (lobbyPlan.on) return lobbyPlan.pids.indexOf(id);
   const d = devices.findIndex((x) => x.kind === "net" && x.id === id);
   return d >= 0 ? d : ext.findIndex((g, i) => i >= 2 && g === id);
 };
@@ -93,6 +98,12 @@ export function reseatGuests(): void {
 
 export const hostHandlers = {
   onJoin(id: number): void {
+    if (lobby.want) {
+      // Lobi dipegang server: kursi diatur di sana, bukan di sini.
+      sfx.receivePerfect();
+      setNetNote(`TAMU ${id} MASUK`, 2.5);
+      return;
+    }
     // Kursi yang ditinggal tamu putus diisi dulu; di lobi, tamu pertama jadi P2 dan
     // berikutnya mengisi kursi tim (sesuai format), lalu penonton. Host tetap bisa menukarnya.
     if (guestGone(devices[0]) || guestGone(devices[1])) placeGuest(id);
@@ -270,6 +281,7 @@ export function goJoin(code: string, quick = false): void {
   }
   if (!quick) quickTries = 0;
   app.online = "client";
+  lobby.name = account.profile?.displayName ?? "Pemain";
   ui.autoPicked = false;
   app.seat = -1;
   app.teamSize = 1;
@@ -399,6 +411,8 @@ interface FrameMsg {
   ts?: 1 | 2 | 3; // pemain per sisi (format 1v1, 2v2, 3v3)
   xs?: number[]; // nomor tamu pemain di kursi 0..5 (0 = bukan tamu)
   hk?: string; // jenis tiap kursi: h host, g tamu, b bot
+  ls?: number[]; // pertandingan dari lobi server: nomor pemain di tiap kursi (-1 bot)
+  lh?: number; // nomor pemain yang jadi host
 }
 
 function clientHelp(): void {
@@ -433,6 +447,12 @@ function applyFrame(m: FrameMsg): void {
     const k = m.xs.indexOf(net.myId);
     if (k >= 2) seat = k;
   }
+  if (Array.isArray(m.ls)) {
+    // Kursi dari lobi server menggantikan perhitungan kursi lama.
+    const ls = m.ls.slice(0, 6).map((x) => (Number.isInteger(x) ? x : -1));
+    seat = ls.indexOf(net.myId >= 0 ? net.myId : lobby.pid);
+    m.hk = ls.map((p) => (p < 0 ? "b" : p === m.lh ? "h" : "g")).join("");
+  }
   if (typeof m.hk === "string") ui.hk = m.hk.slice(0, 6);
   const seatChanged = seat !== app.seat;
   app.seat = seat;
@@ -446,7 +466,7 @@ function applyFrame(m: FrameMsg): void {
     Object.assign(state, m.s);
     state.events = [];
   }
-  const want: Mode = m.m === "match" || m.m === "select" || m.m === "room" ? m.m : "join";
+  const want: Mode = m.m === "match" || m.m === "select" || m.m === "room" ? m.m : m.m === "lobby" && lobby.view ? "lobby" : "join";
   // Jagoan di Room dari host (kursi 1 dan 2).
   let roomChanged = false;
   if (Array.isArray(m.rc) && m.rc.length >= 2) {
@@ -467,7 +487,8 @@ function applyFrame(m: FrameMsg): void {
       app.paused = true;
       elHud.dataset.paused = "1";
     }
-    if (want === "match") {
+    if (want === "lobby") goLobby();
+    else if (want === "match") {
       resetShown();
       clientHelp();
       callout(app.seat === SPEC_SEAT ? "KAMU PENONTON USIL!" : app.seat >= 0 ? `KAMU P${app.seat + 1}!` : "MULAI!", "#ffd23f", true);

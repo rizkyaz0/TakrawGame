@@ -562,6 +562,23 @@ export class Scenery {
       }
     });
     this.assignCrowd();
+    void this.loadCameo(this.buildId);
+  }
+
+  // Easter egg: satu penonton berjas berdiri di ujung kanan tribun atas, ikut melompat saat sorakan.
+  private async loadCameo(id: number): Promise<void> {
+    try {
+      const { getModel, stand } = await import("./models");
+      const m = await getModel("pojok");
+      if (id !== this.buildId) return; // arena sudah diganti selagi memuat
+      const holder = new THREE.Group();
+      holder.add(m);
+      stand(holder, 7.6, 0.55, -6.75, 0.82, -0.25);
+      this.root.add(holder);
+      this.fans.push({ body: holder, baseY: holder.position.y, phase: 2.2 });
+    } catch {
+      // gagal dimuat: tribun tetap tampil tanpa easter egg
+    }
   }
 
   // Jajanan yang sedang bertanding tidak ikut duduk di tribun.

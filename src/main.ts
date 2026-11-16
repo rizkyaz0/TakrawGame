@@ -1277,6 +1277,8 @@ const setNeed = () => (app.setsActive + 1) / 2;
 const matchDecided = () => app.setsActive <= 1 || Math.max(app.setWins[0], app.setWins[1]) >= setNeed();
 
 export function startMatch(keepSets = false): void {
+  finalSlowAt = 0;
+  ultAnimEnd = 0;
   if (!keepSets) {
     app.setsActive = app.arcade.on || app.training || app.tutorial || app.online !== "off" ? 1 : app.sets;
     app.setWins = [0, 0];
@@ -2321,6 +2323,13 @@ const charOf = (player: number) => CHARS[state.chars[player]];
 // Slow-motion: hanya memperlambat laju simulasi di layar, tidak mengubah hasilnya.
 let slowScale = 1;
 let slowUntil = 0;
+// Ulti: simulasi ditahan sampai animasi potongan ulti (0,62 dtk, lihat #cutin di index.html) benar-benar selesai,
+// supaya bola tidak melesat sebelum animasinya habis. Hanya tampilan: hasil simulasi tidak berubah.
+const ULT_ANIM_MS = 620;
+let ultAnimEnd = 0;
+// Poin penentu: tayangan lambat dimulai 0,5 detik setelah bola menyentuh tanah.
+const FINAL_SLOW_DELAY_MS = 500;
+let finalSlowAt = 0;
 function slowMo(scale: number, seconds: number): void {
   const until = performance.now() + seconds * 1000;
   if (performance.now() >= slowUntil || scale <= slowScale) slowScale = scale;
@@ -2333,8 +2342,6 @@ export function excitement(): number {
   const mp = matchPointMask(state.score, state.winScore, state.winCap) !== 0 ? 0.3 : 0;
   return Math.min(1, state.rally / 24 + (Math.min(state.heat, HEAT_MAX) / HEAT_MAX) * 0.5 + mp);
 }
-
-const isMatchPoint = () => state.phase !== "over" && matchPointMask(state.score, state.winScore, state.winCap) !== 0;
 
 // Ulti diaktifkan: layar meredup, garis kecepatan memancar dari pemain, nama jurus masuk.
 function superCutin(player: number): void {
@@ -2458,7 +2465,6 @@ export function handleEvent(e: GameEvent): void {
         sfx.receivePerfect();
         pop("TERIMA SEMPURNA!", e.player, "#bfeaff");
         crowdSfx.cheer(0.4);
-        if (isMatchPoint()) slowMo(0.4, 0.35);
       } else {
         sfx.receive();
         pop("TERIMA!", e.player, "#7fd4ff");
@@ -2471,11 +2477,6 @@ export function handleEvent(e: GameEvent): void {
         flash("#fff6cf");
         crowdSfx.cheer(0.5);
         renderer.cheer(0.7);
-        if (isMatchPoint()) slowMo(0.3, 0.45);
-      } else if (isMatchPoint()) {
-        sfx.smash(Math.min(state.heat, HEAT_MAX) / HEAT_MAX);
-        pop("SMASH!", e.player, hex(charOf(e.player).color));
-        slowMo(0.45, 0.3);
       } else {
         sfx.smash(Math.min(state.heat, HEAT_MAX) / HEAT_MAX);
         pop("SMASH!", e.player, hex(charOf(e.player).color));
@@ -2500,6 +2501,7 @@ export function handleEvent(e: GameEvent): void {
     case "special":
       sfx.special();
       superCutin(e.player);
+      ultAnimEnd = performance.now() + ULT_ANIM_MS;
       break;
     case "specialHit":
       if (e.kind === "fire" || e.kind === "meteor" || e.kind === "bounce") sfx.fire();
@@ -2541,7 +2543,7 @@ export function handleEvent(e: GameEvent): void {
       lastHit = null;
       renderer.cheer(1.4);
       // Poin penentu pertandingan: tayangan lambat.
-      if (gameWinner(state.score[0], state.score[1]) >= 0) slowMo(0.22, 1.1);
+      if (gameWinner(state.score[0], state.score[1]) >= 0) finalSlowAt = performance.now() + FINAL_SLOW_DELAY_MS;
       break;
     }
     case "heckle":
@@ -2794,17 +2796,21 @@ function update(now: number): void {
   let stepped = false;
   const inMatch = app.mode === "match";
 
-  // Bola hampir jatuh di sisi yang akan kalah saat match point: detik-detik lambat.
-  const mpMask = inMatch && isMatchPoint() ? matchPointMask(state.score, state.winScore, state.winCap) : 0;
-  if (mpMask !== 0 && state.phase === "play" && state.ball.y < 1.5 && state.ball.vy < -3) {
-    const losingSide = state.ball.x < 0 ? 0 : 1; // pemain yang kebobolan kalau bola jatuh di sini
-    if (mpMask & (losingSide === 0 ? 2 : 1)) slowMo(0.4, 0.08);
-  }
   const scale = inMatch && now < slowUntil ? slowScale : 1;
   if (now >= slowUntil) slowScale = 1;
   acc += Math.min(0.1, (now - last) / 1000) * (app.paused ? 0 : scale);
   last = now;
+  // Tayangan lambat poin penentu dimulai 0,5 detik setelah bola menyentuh tanah.
+  if (finalSlowAt !== 0 && now >= finalSlowAt) {
+    finalSlowAt = 0;
+    slowMo(0.22, 1.1);
+  }
   while (acc >= DT) {
+    // Ulti: jeda beku bawaan simulasi (0,3 dtk) lebih pendek dari animasinya; tahan sisanya.
+    if (inMatch && now < ultAnimEnd && state.hitstop === 0) {
+      acc = 0;
+      break;
+    }
     let in0 = 0;
     let in1 = 0;
     let team: number[] | null = null; // input semua pemain di mode tim

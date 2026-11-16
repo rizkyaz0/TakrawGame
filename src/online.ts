@@ -57,6 +57,7 @@ function hostBroadcast(events: GameEvent[], stepped: boolean): void {
 }
 
 // Kursi pemain milik tamu `id` (0..5), atau -1 kalau ia bukan pemain.
+let autoPaused = false; // dijeda otomatis karena putus (bukan pilihan host)
 const seatByGuest = (id: number): number => {
   const d = devices.findIndex((x) => x.kind === "net" && x.id === id);
   return d >= 0 ? d : ext.findIndex((g, i) => i >= 2 && g === id);
@@ -127,6 +128,55 @@ export const hostHandlers = {
       app.pauseIndex = 0;
       elHud.dataset.paused = "1";
       renderMenus();
+    }
+  },
+  onDrop(id: number): void {
+    // Putus sementara: kursinya ditahan. Di pertandingan, game dijeda sampai ia kembali (atau masa tunggu habis).
+    const seat = seatByGuest(id);
+    setNetNote(`TAMU ${id} TERPUTUS · KURSI DITAHAN`, 6);
+    sfx.fault();
+    if (app.mode === "room") renderRoom();
+    else if (app.mode === "controls") renderControls();
+    else if (app.mode === "match" && seat >= 0 && state.phase !== "over" && !app.paused) {
+      app.paused = true;
+      app.pauseIndex = 0;
+      autoPaused = true;
+      elHud.dataset.paused = "1";
+      renderMenus();
+    }
+  },
+  onBack(id: number): void {
+    setNetNote(`TAMU ${id} KEMBALI`, 2.5);
+    sfx.receivePerfect();
+    // Dijeda karena tamu putus dan tak ada lagi yang putus: lanjut sendiri.
+    if (autoPaused && app.mode === "match" && !Array.from(net.guests.values()).some((g) => g.dropped)) {
+      autoPaused = false;
+      app.paused = false;
+      elHud.dataset.paused = "0";
+      renderMenus();
+    }
+    if (app.mode === "room") renderRoom();
+    else if (app.mode === "controls") renderControls();
+  },
+  onLink(down: boolean): void {
+    // Sambungan host ke server putus: jeda pertandingan dan menyambung ulang otomatis.
+    if (down) {
+      setNetNote("KONEKSI TERPUTUS · MENYAMBUNG ULANG…");
+      if (app.mode === "match" && !app.paused && state.phase !== "over") {
+        app.paused = true;
+        app.pauseIndex = 0;
+        autoPaused = true;
+        elHud.dataset.paused = "1";
+        renderMenus();
+      }
+    } else {
+      setNetNote("KONEKSI PULIH", 2.5);
+      if (autoPaused && app.mode === "match" && !Array.from(net.guests.values()).some((g) => g.dropped)) {
+        autoPaused = false;
+        app.paused = false;
+        elHud.dataset.paused = "0";
+        renderMenus();
+      }
     }
   },
   onEmote(id: number, k: number): void {
@@ -250,12 +300,12 @@ export function goJoin(code: string, quick = false): void {
       setNetNote("");
       setMode("join");
       startDemo();
-      if (dropped && rejoinTries < 3) {
+      if (dropped && rejoinTries < 25) {
         rejoinTries++;
         join.status = "connecting";
         join.text = code;
         renderJoin();
-        $("joinBox").innerHTML += `<br />Sambungan putus. Menyambung ulang (${rejoinTries}/3)…`;
+        $("joinBox").innerHTML += `<br />Sambungan putus. Menyambung ulang (${rejoinTries})…`;
         window.setTimeout(() => {
           if (app.mode === "join" && app.online === "off" && join.status === "connecting") goJoin(code);
         }, 1500);
@@ -509,7 +559,7 @@ export function clientUpdate(now: number): void {
 
   if (net.ready && app.mode !== "join") {
     const stale = performance.now() - net.lastHeard > 1500;
-    const note = stale ? "SAMBUNGAN TERSENDAT…" : hostPaused && app.mode === "match" ? "HOST MENJEDA" : "";
+    const note = net.down ? "HOST TERPUTUS · MENUNGGU…" : stale ? "SAMBUNGAN TERSENDAT…" : hostPaused && app.mode === "match" ? "HOST MENJEDA" : "";
     if (elNetNote.textContent !== note) setNetNote(note);
   }
 

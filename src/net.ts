@@ -30,6 +30,8 @@ export interface Guest {
   seen: number;
   ping: number; // ms ke server perantara, dilaporkan tamu (-1 = tidak diketahui)
   v: number; // versi protokol tamu: 2 = paham frame gabungan (pesan "fb")
+  dropped: boolean; // putus sementara: kursinya ditahan server, tombolnya dianggap 0
+  peer: boolean; // lewat PeerJS (tanpa server perantara): keadaan hidup dicek host sendiri
   emoteAt: number;
 }
 
@@ -40,6 +42,9 @@ export interface HostHandlers {
   onLeave(id: number): void;
   onCommand(id: number, cmd: GuestCommand): void;
   onEmote(id: number, k: number): void;
+  onDrop(id: number): void; // tamu putus sementara; kursinya ditahan
+  onBack(id: number): void; // tamu yang putus kembali
+  onLink?(down: boolean): void; // sambungan host ke server putus (sedang menyambung ulang) atau pulih
   onError(text: string): void;
 }
 
@@ -131,7 +136,30 @@ export const net = {
   inbox: [] as unknown[], // tamu: pesan dari host yang belum diproses
   lastHeard: 0,
   ping: -1, // ms ke server perantara (tanpa server: -1)
+  down: false, // host: sambungan ke server putus; tamu: host sedang putus. Keduanya menunggu pulih.
 };
+
+// Token tetap pemain, disimpan di perangkat: server memakainya untuk mengenali pemain yang sama setelah putus.
+let memToken = "";
+function playerToken(): string {
+  try {
+    const saved = localStorage.getItem("takraw.token");
+    if (saved && /^[a-f0-9]{32}$/.test(saved)) return saved;
+  } catch {
+    // penyimpanan diblokir: pakai token sesi ini saja
+  }
+  if (!memToken) {
+    const b = new Uint8Array(16);
+    crypto.getRandomValues(b);
+    memToken = Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
+    try {
+      localStorage.setItem("takraw.token", memToken);
+    } catch {
+      // diabaikan
+    }
+  }
+  return memToken;
+}
 
 // Emote dari host (nomor kursi + emote), diteruskan ke tampilan.
 let emoteHandler: ((seat: number, k: number) => void) | null = null;
@@ -191,6 +219,7 @@ export function closeNet(): void {
   }
   hostWs = null;
   net.ping = -1;
+  net.down = false;
   pingAt = 0;
   net.role = "off";
   net.code = "";
@@ -209,6 +238,8 @@ const ERRORS: Record<string, string> = {
   "browser-incompatible": "Browser ini tidak mendukung sambungan langsung (WebRTC).",
   webrtc: "Sambungan langsung antar-perangkat gagal.",
   "ws-failed": "Tidak bisa menghubungi server. Cek internetmu.",
+  banned: "Kamu dikeluarkan dari room ini oleh host.",
+  replaced: "Akunmu masuk dari tab atau perangkat lain, jadi sambungan ini ditutup.",
 };
 
 // Data dari tamu: jangan percaya bentuknya.
@@ -248,7 +279,9 @@ function onHostMsg(m: { t?: string; id?: number } | null, fail: (t: string) => v
       for (const fr of f.slice(0, 8)) if (fr && typeof fr === "object") net.inbox.push(fr);
       if (net.inbox.length > 120) net.inbox.splice(0, net.inbox.length - 120);
     }
-  } else if (m.t === "emo") {
+  } else if (m.t === "hostdrop") net.down = true;
+  else if (m.t === "hostback") net.down = false;
+  else if (m.t === "emo") {
     const e = m as { s?: unknown; k?: unknown };
     if (typeof e.s === "number" && typeof e.k === "number" && Number.isInteger(e.k) && e.k >= 0 && e.k < EMOTE_COUNT) emoteHandler?.(e.s, e.k);
   } else if (m.t === "full") fail("Room sudah penuh.");
@@ -261,16 +294,53 @@ function onHostMsg(m: { t?: string; id?: number } | null, fail: (t: string) => v
 
 // ===== Host lewat server perantara (WebSocket) =====
 function hostRoomWs(h: HostHandlers, attempt: number): void {
-  const mine = session;
   net.role = "host";
   // Kode dari server (cari lawan cepat) dipakai pada percobaan pertama; bila terpakai, ambil acak.
   net.code = attempt === 0 && hostOpts.code ? hostOpts.code : randomCode();
-  const q = hostOpts.open ? `&public=1&name=${encodeURIComponent(hostOpts.name ?? "Pemain")}` : "";
-  const ws = new WebSocket(`${SERVER}/ws/${net.code}?role=host${q}`);
+  connectHost(h, session, attempt, 0);
+}
+
+// resumeSince > 0: sedang menyambung ulang ke room yang sama (sejak waktu itu); server mengenali host lewat token.
+function connectHost(h: HostHandlers, mine: number, attempt: number, resumeSince: number): void {
+  const resume = resumeSince > 0;
+  const q = !resume && hostOpts.open ? `&public=1&name=${encodeURIComponent(hostOpts.name ?? "Pemain")}` : "";
+  const ws = new WebSocket(`${SERVER}/ws/${net.code}?role=host&tok=${playerToken()}${q}`);
   hostWs = ws;
+  let retried = false;
+  const retry = () => {
+    // Putus di tengah jalan: coba sambung ulang ke room yang sama selama ~55 detik (server menahan room 60 detik).
+    if (mine !== session || retried) return;
+    retried = true;
+    window.clearInterval(pingTimer);
+    const since = resumeSince || Date.now();
+    if (Date.now() - since > 55000) {
+      h.onLink?.(false);
+      return h.onError(ERRORS["socket-closed"]);
+    }
+    net.down = true;
+    h.onLink?.(true);
+    window.setTimeout(() => connectHost(h, mine, 0, since), Math.min(3000, 600 + (Date.now() - since) / 8));
+  };
+  const addGuest = (id: number): Guest => {
+    const conn: Conn = {
+      get open() {
+        return ws.readyState === 1;
+      },
+      send: (msg) => ws.readyState === 1 && ws.send(JSON.stringify({ to: id, m: msg })),
+      close: () => ws.readyState === 1 && ws.send(JSON.stringify({ kick: id })),
+    };
+    const g: Guest = { id, conn, bits: 0, aim: null, seen: performance.now(), ping: -1, v: 1, dropped: false, peer: false, emoteAt: 0 };
+    net.guests.set(id, g);
+    h.onJoin(id);
+    return g;
+  };
   ws.onopen = () => {
     if (mine !== session) return;
     net.ready = true;
+    if (net.down) {
+      net.down = false;
+      h.onLink?.(false);
+    }
     // Ping tiap 3 detik (juga menjaga sambungan hidup); tiap ~15 detik denyut untuk daftar room terbuka.
     let beat = 0;
     sendPing(ws);
@@ -282,34 +352,70 @@ function hostRoomWs(h: HostHandlers, attempt: number): void {
   ws.onmessage = (e) => {
     if (mine !== session || typeof e.data !== "string") return;
     if (e.data === "pong") return onPong();
-    let m: { t?: string; type?: string; s?: string; id?: number; m?: unknown };
+    let m: { t?: string; type?: string; s?: string; id?: number; m?: unknown; live?: number[]; held?: number[] };
     try {
       m = JSON.parse(e.data);
     } catch {
       return;
     }
     if (m.t === "err") {
-      if (m.type === "unavailable-id" && attempt < 5) {
+      if (m.type === "unavailable-id" && attempt < 5 && !resume) {
         hostWs = null;
         ws.onclose = null;
         ws.close();
         hostRoomWs(h, attempt + 1);
-      } else h.onError(ERRORS[m.type ?? ""] ?? "Ada masalah sambungan.");
+      } else {
+        retried = true; // jangan coba sambung ulang setelah ditolak
+        h.onError(ERRORS[m.type ?? ""] ?? "Ada masalah sambungan.");
+      }
+      return;
+    }
+    if (m.s === "sync") {
+      // Setelah sambung ulang: samakan daftar tamu dengan keadaan server.
+      const live = new Set(Array.isArray(m.live) ? m.live : []);
+      const held = new Set(Array.isArray(m.held) ? m.held : []);
+      for (const id of Array.from(net.guests.keys())) {
+        if (!live.has(id) && !held.has(id)) {
+          net.guests.delete(id);
+          h.onLeave(id);
+        }
+      }
+      for (const id of live) {
+        const g = net.guests.get(id);
+        if (!g) addGuest(id);
+        else if (g.dropped) {
+          g.dropped = false;
+          h.onBack(id);
+        }
+      }
+      for (const id of held) {
+        const g = net.guests.get(id);
+        if (g && !g.dropped) {
+          g.dropped = true;
+          g.bits = 0;
+          h.onDrop(id);
+        }
+      }
       return;
     }
     const id = m.id;
     if (typeof id !== "number") return;
-    if (m.s === "join") {
-      const conn: Conn = {
-        get open() {
-          return ws.readyState === 1;
-        },
-        send: (msg) => ws.send(JSON.stringify({ to: id, m: msg })),
-        close: () => ws.send(JSON.stringify({ kick: id })),
-      };
-      const g: Guest = { id, conn, bits: 0, aim: null, seen: performance.now(), ping: -1, v: 1, emoteAt: 0 };
-      net.guests.set(id, g);
-      h.onJoin(id);
+    if (m.s === "join") addGuest(id);
+    else if (m.s === "drop") {
+      const g = net.guests.get(id);
+      if (g && !g.dropped) {
+        g.dropped = true;
+        g.bits = 0;
+        h.onDrop(id);
+      }
+    } else if (m.s === "back") {
+      const g = net.guests.get(id);
+      if (!g) addGuest(id);
+      else {
+        g.dropped = false;
+        g.seen = performance.now();
+        h.onBack(id);
+      }
     } else if (m.s === "leave") {
       if (net.guests.delete(id)) h.onLeave(id);
     } else if (m.s === "msg") {
@@ -318,10 +424,13 @@ function hostRoomWs(h: HostHandlers, attempt: number): void {
     }
   };
   ws.onclose = () => {
-    if (mine === session) h.onError(ERRORS["socket-closed"]);
+    if (mine === session && !retried) retry();
   };
   ws.onerror = () => {
-    if (mine === session && !net.ready) h.onError(ERRORS["ws-failed"]);
+    if (mine === session && !net.ready) {
+      retried = true;
+      h.onError(ERRORS["ws-failed"]);
+    }
   };
 }
 
@@ -337,7 +446,7 @@ function joinRoomWs(code: string, h: ClientHandlers): void {
     closeNet();
     h.onClose(text);
   };
-  const ws = new WebSocket(`${SERVER}/ws/${code}?role=guest`);
+  const ws = new WebSocket(`${SERVER}/ws/${code}?role=guest&tok=${playerToken()}`);
   hostWs = ws;
   hostConn = {
     get open() {
@@ -425,7 +534,7 @@ export async function hostRoom(h: HostHandlers, attempt = 0, opts?: HostOptions)
         window.setTimeout(() => conn.close(), 300);
         return;
       }
-      const g: Guest = { id: nextGuest++, conn, bits: 0, aim: null, seen: performance.now(), ping: -1, v: 1, emoteAt: 0 };
+      const g: Guest = { id: nextGuest++, conn, bits: 0, aim: null, seen: performance.now(), ping: -1, v: 1, dropped: false, peer: true, emoteAt: 0 };
       net.guests.set(g.id, g);
       conn.send({ t: "hi", id: g.id });
       h.onJoin(g.id);
@@ -446,7 +555,8 @@ export async function hostRoom(h: HostHandlers, attempt = 0, opts?: HostOptions)
 export function sweepGuests(): void {
   const now = performance.now();
   for (const g of Array.from(net.guests.values())) {
-    if (now - g.seen > GUEST_TIMEOUT) g.conn.close();
+    // Lewat server perantara, server yang mengecek soket mati (dan menahan kursinya); hanya PeerJS dicek di sini.
+    if (g.peer && now - g.seen > GUEST_TIMEOUT) g.conn.close();
   }
 }
 

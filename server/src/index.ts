@@ -16,6 +16,10 @@
 //   host   -> server {hb:1}               denyut tiap ~20 detik; menyegarkan daftar room terbuka
 //   `/queue` (cari lawan cepat): klien menunggu; saat dua orang menunggu, keduanya menerima
 //   {t:"match", role:"host"|"guest", code} lalu ditutup; host membuka room `code`, tamu masuk ke sana.
+//   Lobi server (opt-in; klien lama tidak terpengaruh). Host: kirim {lb:{a,...}}, terima {s:"lb",...} / {s:"lbnack",why};
+//   tamu: kirim {t:"lb",a,...}, terima {t:"lb",...} / {t:"lbnack",why} / {t:"demoted"}. Aksi: join{n}, hero{k}, ready{v}, seat{s},
+//   rules{fmt,bots,quick} (host), kick{p} (host), start/cancel/go/end (host). Setelah (re)connect kirim join lagi (idempoten).
+//   Host tidak kembali dalam masa tunggu dan belum bertanding: pemain tertua yang terhubung dijadikan host.
 //   klien  -> server "ping"               dijawab "pong" tanpa membangunkan server
 import { DurableObject } from "cloudflare:workers";
 
@@ -114,7 +118,26 @@ const STALE_MS = 45_000; // ms tanpa "ping" dari soket = soket dianggap mati (se
 const ALARM_MS = 10_000;
 const cleanTok = (s: string | null) => (s && /^[a-f0-9]{16,64}$/.test(s) ? s : "");
 
-type Att = { role: "host"; tok?: string; replaced?: boolean } | { role: "guest"; id: number; tok?: string; replaced?: boolean };
+type Att = { role: "host"; tok?: string; pid?: number; lb?: boolean; replaced?: boolean } | { role: "guest"; id: number; tok?: string; lb?: boolean; replaced?: boolean };
+
+// Lobi yang dipegang server (tahap 2). Klien memilih ikut dengan pesan "lb"/"join"; klien lama tidak terpengaruh.
+// Kursi 0..5: genap = Tim Merah, ganjil = Tim Biru. Hanya `fmt*2` kursi pertama yang dipakai.
+// pid: 0 = host pertama, selain itu nomor tamu. Aturan (fmt/bots/quick) hanya boleh diubah host.
+type Part = { h: number; r: boolean; s: number; n: string; tok: string }; // jagoan (-1 belum), siap, urutan masuk, nama, token
+type Lb = {
+  fmt: 1 | 2 | 3;
+  bots: boolean;
+  quick: boolean;
+  phase: "lobby" | "count" | "play";
+  at: number; // ms: kapan hitung mundur selesai
+  seats: (number | null)[];
+  parts: Record<string, Part>;
+  host: number;
+  seq: number;
+};
+const COUNT_MS = 3000;
+const MAX_HERO = 63;
+const cleanName = (s: unknown) => (typeof s === "string" ? s.replace(/[^\w ]/g, "").trim().slice(0, 16) : "");
 
 const attOf = (ws: WebSocket) => ws.deserializeAttachment() as Att | null;
 
@@ -142,6 +165,285 @@ export class Room extends DurableObject<Env> {
   private tk = () => this.kv.get<Record<string, number>>("tk") ?? {};
   private drops = () => this.kv.get<Record<string, number>>("drop") ?? {};
   private bans = () => this.kv.get<string[]>("ban") ?? [];
+
+
+  // ---- Lobi yang dipegang server ----
+  private getLb = () => this.kv.get<Lb>("lb") ?? null;
+  private lbOnline(lb: Lb, pid: number): boolean {
+    if (pid === lb.host) return !!this.hostSock();
+    return this.guestSocks().some((s) => (attOf(s) as { id: number }).id === pid);
+  }
+  private lbCount(lb: Lb, team: number): number {
+    let n = 0;
+    for (let k = team; k < lb.fmt * 2; k += 2) if (lb.seats[k] !== null) n++;
+    return n;
+  }
+  // Kursi pertama yang kosong, mulai dari tim yang pemainnya lebih sedikit.
+  private lbPlace(lb: Lb, pid: number): void {
+    if (lb.seats.includes(pid)) return;
+    const first = this.lbCount(lb, 0) <= this.lbCount(lb, 1) ? 0 : 1;
+    for (const team of [first, 1 - first]) {
+      for (let k = team; k < lb.fmt * 2; k += 2) {
+        if (lb.seats[k] === null) {
+          lb.seats[k] = pid;
+          return;
+        }
+      }
+    }
+  }
+  private lbFill(lb: Lb): void {
+    const waiting = Object.keys(lb.parts)
+      .map(Number)
+      .filter((pid) => !lb.seats.includes(pid))
+      .sort((a, b) => lb.parts[a].s - lb.parts[b].s);
+    for (const pid of waiting) this.lbPlace(lb, pid);
+  }
+  private lbCancel(lb: Lb): void {
+    if (lb.phase === "count") {
+      lb.phase = "lobby";
+      lb.at = 0;
+    }
+  }
+  private lbRemove(pid: number): void {
+    const lb = this.getLb();
+    if (!lb || !lb.parts[pid]) return;
+    delete lb.parts[pid];
+    lb.seats = lb.seats.map((p) => (p === pid ? null : p));
+    this.lbFill(lb);
+    this.lbCancel(lb);
+    this.kv.put("lb", lb);
+    this.lbSend();
+  }
+  private lbView(lb: Lb) {
+    const info = (pid: number) => {
+      const p = lb.parts[pid];
+      return { p: pid, h: p.h, r: p.r, n: p.n, o: this.lbOnline(lb, pid) };
+    };
+    return {
+      fmt: lb.fmt,
+      bots: lb.bots,
+      quick: lb.quick,
+      phase: lb.phase,
+      left: lb.phase === "count" ? Math.max(0, lb.at - Date.now()) : 0,
+      host: lb.host,
+      seats: lb.seats.map((pid, k) => (pid === null || k >= lb.fmt * 2 ? null : info(pid))),
+      spec: Object.keys(lb.parts)
+        .map(Number)
+        .filter((pid) => !lb.seats.includes(pid))
+        .sort((a, b) => lb.parts[a].s - lb.parts[b].s)
+        .map(info),
+    };
+  }
+  private lbSend(): void {
+    const lb = this.getLb();
+    if (!lb) return;
+    const v = this.lbView(lb);
+    const toHost = JSON.stringify({ s: "lb", ...v });
+    const toGuest = JSON.stringify({ t: "lb", ...v });
+    for (const ws of this.ctx.getWebSockets()) {
+      const a = attOf(ws);
+      if (!a || a.replaced || !a.lb) continue;
+      try {
+        ws.send(a.role === "host" ? toHost : toGuest);
+      } catch {
+        // sedang menutup
+      }
+    }
+  }
+  private lbNack(ws: WebSocket, why: string): void {
+    try {
+      ws.send(JSON.stringify(attOf(ws)?.role === "host" ? { s: "lbnack", why } : { t: "lbnack", why }));
+    } catch {
+      // sedang menutup
+    }
+  }
+
+  private lbAct(ws: WebSocket, m: Record<string, unknown>): void {
+    const a = attOf(ws);
+    const lb = this.getLb();
+    if (!a || !lb) return;
+    const isHost = a.role === "host";
+    const pid = a.role === "host" ? (a.pid ?? lb.host) : a.id;
+    const me = lb.parts[pid];
+    const act = m.a;
+    if (act === "join") {
+      ws.serializeAttachment({ ...a, lb: true });
+      if (!me) {
+        if (!a.tok) return this.lbNack(ws, "notok");
+        lb.parts[pid] = { h: -1, r: false, s: lb.seq++, n: cleanName(m.n) || `Pemain ${pid}`, tok: a.tok };
+        this.lbPlace(lb, pid);
+        this.lbCancel(lb);
+        this.kv.put("lb", lb);
+      } else if (typeof m.n === "string" && cleanName(m.n)) {
+        me.n = cleanName(m.n);
+        this.kv.put("lb", lb);
+      }
+      this.lbSend();
+      return;
+    }
+    if (!me) return this.lbNack(ws, "notjoined");
+    const seat = lb.seats.indexOf(pid);
+    const inLobby = lb.phase === "lobby";
+    if (act === "hero") {
+      const k = Number(m.k);
+      if (!Number.isInteger(k) || k < 0 || k > MAX_HERO) return this.lbNack(ws, "bad");
+      if (!inLobby) return this.lbNack(ws, "locked");
+      if (seat < 0) return this.lbNack(ws, "spectator");
+      for (let o = seat % 2; o < lb.fmt * 2; o += 2) {
+        const other = lb.seats[o];
+        if (other !== null && other !== pid && lb.parts[other].h === k) return this.lbNack(ws, "taken");
+      }
+      me.h = k;
+      me.r = false;
+    } else if (act === "ready") {
+      const v = m.v === true;
+      if (v) {
+        if (!inLobby) return this.lbNack(ws, "locked");
+        if (seat < 0) return this.lbNack(ws, "spectator");
+        if (me.h < 0) return this.lbNack(ws, "nohero");
+      } else if (lb.phase === "play") return this.lbNack(ws, "locked");
+      me.r = v;
+      if (!v) this.lbCancel(lb);
+    } else if (act === "seat") {
+      const k = Number(m.s);
+      if (!inLobby) return this.lbNack(ws, "locked");
+      if (!Number.isInteger(k) || k < 0 || k >= lb.fmt * 2 || lb.seats[k] !== null) return this.lbNack(ws, "occupied");
+      if (seat >= 0) lb.seats[seat] = null;
+      lb.seats[k] = pid;
+      me.r = false;
+      if (me.h >= 0) {
+        for (let o = k % 2; o < lb.fmt * 2; o += 2) {
+          const other = lb.seats[o];
+          if (other !== null && other !== pid && lb.parts[other].h === me.h) me.h = -1;
+        }
+      }
+      this.lbFill(lb);
+    } else if (act === "rules") {
+      if (!isHost) return this.lbNack(ws, "hostonly");
+      if (!inLobby) return this.lbNack(ws, "locked");
+      const fmt = Number(m.fmt ?? lb.fmt);
+      if (fmt !== 1 && fmt !== 2 && fmt !== 3) return this.lbNack(ws, "bad");
+      lb.bots = m.bots === undefined ? lb.bots : m.bots === true;
+      lb.quick = m.quick === undefined ? lb.quick : m.quick === true;
+      if (fmt !== lb.fmt) {
+        lb.fmt = fmt;
+        // kursi di luar format dikosongkan; pemainnya pindah ke kursi lain yang kosong, kalau tidak jadi penonton
+        const out = lb.seats.map((p, k) => (k >= fmt * 2 ? p : null)).filter((p): p is number => p !== null);
+        lb.seats = lb.seats.map((p, k) => (k >= fmt * 2 ? null : p));
+        for (const p of out) this.lbPlace(lb, p);
+        this.lbFill(lb);
+        // jagoan kembar dalam satu tim (setelah pindah kursi) dihapus pilihannya
+        for (let team = 0; team < 2; team++) {
+          const seen = new Set<number>();
+          for (let k = team; k < fmt * 2; k += 2) {
+            const p = lb.seats[k];
+            if (p === null) continue;
+            const h = lb.parts[p].h;
+            if (h >= 0 && seen.has(h)) lb.parts[p].h = -1;
+            seen.add(h);
+          }
+        }
+      }
+      for (const p of Object.values(lb.parts)) p.r = false;
+      this.lbCancel(lb);
+      this.publish(this.kv.get<string>("code") ?? "");
+    } else if (act === "kick") {
+      if (!isHost) return this.lbNack(ws, "hostonly");
+      const target = Number(m.p);
+      if (!lb.parts[target] || target === pid) return this.lbNack(ws, "bad");
+      this.kv.put("lb", lb);
+      this.kickGuest(target);
+      return; // kickGuest memanggil lbRemove
+    } else if (act === "start") {
+      if (!isHost) return this.lbNack(ws, "hostonly");
+      if (!inLobby) return this.lbNack(ws, "locked");
+      const seated = lb.seats.slice(0, lb.fmt * 2).filter((p): p is number => p !== null);
+      if (seated.some((p) => !this.lbOnline(lb, p))) return this.lbNack(ws, "offline");
+      if (seated.some((p) => !lb.parts[p].r)) return this.lbNack(ws, "notready");
+      if (this.lbCount(lb, 0) === 0 || this.lbCount(lb, 1) === 0) return this.lbNack(ws, "noteam");
+      if (!lb.bots && seated.length < lb.fmt * 2) return this.lbNack(ws, "needfull");
+      lb.phase = "count";
+      lb.at = Date.now() + COUNT_MS;
+    } else if (act === "cancel") {
+      if (!isHost) return this.lbNack(ws, "hostonly");
+      this.lbCancel(lb);
+    } else if (act === "go") {
+      if (!isHost) return this.lbNack(ws, "hostonly");
+      if (lb.phase !== "count" || Date.now() < lb.at - 300) return this.lbNack(ws, "early");
+      lb.phase = "play";
+    } else if (act === "end") {
+      if (!isHost) return this.lbNack(ws, "hostonly");
+      if (lb.phase !== "play") return this.lbNack(ws, "bad");
+      lb.phase = "lobby";
+      lb.at = 0;
+      for (const p of Object.values(lb.parts)) p.r = false;
+    } else return this.lbNack(ws, "bad");
+    this.kv.put("lb", lb);
+    this.lbSend();
+  }
+
+  // Keluarkan satu tamu: tokennya dilarang masuk lagi ke room ini, kursinya dikosongkan.
+  private kickGuest(id: number): void {
+    const map = this.tk();
+    const tok = Object.keys(map).find((t) => map[t] === id) ?? this.getLb()?.parts[id]?.tok;
+    if (tok) {
+      this.kv.put("ban", [...this.bans(), tok].slice(-50));
+      delete map[tok];
+      this.kv.put("tk", map);
+    }
+    const host = this.hostSock();
+    const drop = this.drops();
+    if (drop[String(id)] !== undefined) {
+      delete drop[String(id)];
+      this.kv.put("drop", drop);
+      host?.send(JSON.stringify({ s: "leave", id }));
+    }
+    const target = this.guestSocks().find((s) => (attOf(s) as { id: number }).id === id);
+    if (target) {
+      const t = attOf(target);
+      if (t) target.serializeAttachment({ ...t, replaced: true });
+      try {
+        target.send(JSON.stringify({ t: "err", type: "banned" }));
+        target.close(1000, "dikeluarkan");
+      } catch {
+        // sudah tertutup
+      }
+      host?.send(JSON.stringify({ s: "leave", id }));
+    }
+    this.lbRemove(id);
+    this.publish(this.kv.get<string>("code") ?? "");
+  }
+
+  // Host tidak kembali sampai masa tunggu habis (dan belum bertanding): pemain tertua yang masih terhubung jadi host.
+  private promote(): boolean {
+    const lb = this.getLb();
+    if (!lb || lb.phase === "play") return false;
+    const cands = this.guestSocks()
+      .filter((s) => attOf(s)?.lb && attOf(s)?.tok)
+      .sort((x, y) => lb.parts[(attOf(x) as { id: number }).id]?.s - lb.parts[(attOf(y) as { id: number }).id]?.s);
+    const ws = cands[0];
+    if (!ws) return false;
+    const a = attOf(ws) as { id: number; tok: string };
+    const map = this.tk();
+    delete map[a.tok];
+    this.kv.put("tk", map);
+    const drop = this.drops();
+    delete drop[String(a.id)];
+    this.kv.put("drop", drop);
+    this.kv.put("htok", a.tok);
+    this.kv.put("hdrop", 0);
+    lb.host = a.id;
+    lb.phase = "lobby";
+    lb.at = 0;
+    for (const p of Object.values(lb.parts)) p.r = false;
+    this.kv.put("lb", lb);
+    ws.serializeAttachment({ role: "host", tok: a.tok, pid: a.id, lb: true } satisfies Att);
+    const live = this.guestSocks().map((s) => (attOf(s) as { id: number }).id);
+    ws.send(JSON.stringify({ s: "sync", live, held: Object.keys(this.drops()).map(Number) }));
+    for (const g of this.guestSocks()) g.send(JSON.stringify({ t: "hostback" }));
+    this.lbSend();
+    return true;
+  }
 
   // Memberi tahu daftar room terbuka (hanya bila host memilih room terbuka).
   private publish(code: string, leaving?: WebSocket): void {
@@ -173,9 +475,24 @@ export class Room extends DurableObject<Env> {
 
   async fetch(req: Request): Promise<Response> {
     const url = new URL(req.url);
-    const role = url.searchParams.get("role") === "host" ? "host" : "guest";
+    let role: "host" | "guest" = url.searchParams.get("role") === "host" ? "host" : "guest";
     const code = url.pathname.slice(-4);
     const tok = cleanTok(url.searchParams.get("tok"));
+    let demoted = false;
+    {
+      // Bekas host yang sudah digantikan masuk lagi: jadi tamu biasa dengan nomornya semula.
+      const lb0 = this.getLb();
+      if (role === "host" && tok && tok !== this.kv.get<string>("htok") && lb0) {
+        const pid = Object.keys(lb0.parts).find((k) => lb0.parts[k].tok === tok && Number(k) !== lb0.host);
+        if (pid !== undefined) {
+          const map0 = this.tk();
+          map0[tok] = Number(pid);
+          this.kv.put("tk", map0);
+          role = "guest";
+          demoted = true;
+        }
+      }
+    }
     const pair = new WebSocketPair();
     const [client, server] = [pair[0], pair[1]];
     const hostWs = this.hostSock();
@@ -201,6 +518,9 @@ export class Room extends DurableObject<Env> {
         const live = this.guestSocks().map((s) => (attOf(s) as { id: number }).id);
         server.send(JSON.stringify({ s: "sync", live, held: Object.keys(this.drops()).map(Number) }));
         for (const g of this.guestSocks()) g.send(JSON.stringify({ t: "hostback" }));
+        const att = attOf(server);
+        if (att && att.role === "host") server.serializeAttachment({ ...att, pid: this.getLb()?.host ?? 0 });
+        this.ctx.waitUntil(Promise.resolve().then(() => this.lbSend()));
       } else {
         this.ctx.acceptWebSocket(server);
         server.serializeAttachment({ role: "host", tok } satisfies Att);
@@ -213,6 +533,18 @@ export class Room extends DurableObject<Env> {
         kv.put("public", url.searchParams.get("public") === "1");
         kv.put("name", (url.searchParams.get("name") ?? "").replace(/[^\w ]/g, "").trim().slice(0, 16) || "Pemain");
         kv.put("code", code);
+        const fmt = Number(url.searchParams.get("fmt"));
+        kv.put("lb", {
+          fmt: fmt === 2 || fmt === 3 ? fmt : 1,
+          bots: true,
+          quick: true,
+          phase: "lobby",
+          at: 0,
+          seats: [0, null, null, null, null, null],
+          parts: { "0": { h: -1, r: false, s: 0, n: cleanName(url.searchParams.get("name")) || "Host", tok } },
+          host: 0,
+          seq: 1,
+        } satisfies Lb);
         server.send(JSON.stringify({ s: "sync", live: [], held: [] })); // room baru: daftar tamu kosong
         this.publish(code);
       }
@@ -231,11 +563,13 @@ export class Room extends DurableObject<Env> {
         this.ctx.acceptWebSocket(server);
         server.serializeAttachment({ role: "guest", id, tok } satisfies Att);
         server.send(JSON.stringify({ t: "hi", id }));
+        if (demoted) server.send(JSON.stringify({ t: "demoted" }));
         if (drop[id] !== undefined) {
           delete drop[id];
           kv.put("drop", drop);
         }
         hostWs?.send(JSON.stringify({ s: "back", id }));
+        this.ctx.waitUntil(Promise.resolve().then(() => this.lbSend()));
       } else if (this.guestSocks().length + Object.keys(drop).length >= MAX_GUESTS) {
         reject({ t: "full" });
       } else {
@@ -268,14 +602,27 @@ export class Room extends DurableObject<Env> {
       } catch {
         return;
       }
+      if (m && typeof m === "object" && (m as { t?: unknown }).t === "lb") {
+        this.lbAct(ws, m as Record<string, unknown>);
+        return;
+      }
       this.hostSock()?.send(JSON.stringify({ s: "msg", id: a.id, m }));
       return;
     }
     if (raw.length > MAX_HOST_MSG) return;
-    let env: { to?: unknown; m?: unknown; kick?: unknown; hb?: unknown; pub?: unknown; name?: unknown };
+    let env: { to?: unknown; m?: unknown; kick?: unknown; hb?: unknown; pub?: unknown; name?: unknown; lb?: unknown };
     try {
       env = JSON.parse(raw);
     } catch {
+      return;
+    }
+    if (env.lb && typeof env.lb === "object") {
+      this.lbAct(ws, env.lb as Record<string, unknown>);
+      return;
+    }
+    if ((env as { t?: unknown }).t === "lb") {
+      // klien yang baru dijadikan host mungkin masih mengirim dalam format tamu
+      this.lbAct(ws, env as Record<string, unknown>);
       return;
     }
     if (env.pub !== undefined) {
@@ -293,34 +640,7 @@ export class Room extends DurableObject<Env> {
       return;
     }
     if (typeof env.kick === "number") {
-      // Dikeluarkan: token pemain dilarang masuk lagi ke room ini; kursinya langsung dikosongkan.
-      const id = env.kick;
-      const map = this.tk();
-      const tok = Object.keys(map).find((t) => map[t] === id);
-      if (tok) {
-        this.kv.put("ban", [...this.bans(), tok].slice(-50));
-        delete map[tok];
-        this.kv.put("tk", map);
-      }
-      const drop = this.drops();
-      if (drop[String(id)] !== undefined) {
-        delete drop[String(id)];
-        this.kv.put("drop", drop);
-        ws.send(JSON.stringify({ s: "leave", id }));
-      }
-      const target = this.guestSocks().find((s) => (attOf(s) as { id: number }).id === id);
-      if (target) {
-        const t = attOf(target);
-        if (t) target.serializeAttachment({ ...t, replaced: true });
-        try {
-          target.send(JSON.stringify({ t: "err", type: "banned" }));
-          target.close(1000, "dikeluarkan");
-        } catch {
-          // sudah tertutup
-        }
-        ws.send(JSON.stringify({ s: "leave", id }));
-      }
-      this.publish(this.kv.get<string>("code") ?? "");
+      this.kickGuest(env.kick);
       return;
     }
     if (env.m === undefined) return;
@@ -382,8 +702,10 @@ export class Room extends DurableObject<Env> {
         this.kv.put("drop", drop);
         this.hostSock()?.send(JSON.stringify({ s: "drop", id: a.id }));
         this.ensureAlarm();
+        this.lbSend();
       } else {
         this.hostSock()?.send(JSON.stringify({ s: "leave", id: a.id }));
+        this.lbRemove(a.id);
       }
       this.publish(code, ws);
       return;
@@ -393,6 +715,7 @@ export class Room extends DurableObject<Env> {
       this.kv.put("hdrop", Date.now() + (Number(this.env.HOST_GRACE_MS) || HOST_GRACE));
       for (const g of this.guestSocks()) g.send(JSON.stringify({ t: "hostdrop" }));
       this.ensureAlarm();
+      this.lbSend();
       return;
     }
     // Host pergi: room selesai, tidak lagi terdaftar, semua tamu diberi tahu lalu ditutup.
@@ -416,10 +739,11 @@ export class Room extends DurableObject<Env> {
         this.kv.put("tk", map);
       }
       host?.send(JSON.stringify({ s: "leave", id }));
+      this.lbRemove(id);
     }
     this.kv.put("drop", drop);
     const hdrop = this.kv.get<number>("hdrop") ?? 0;
-    if (hdrop > 0 && hdrop <= now && !host) this.endRoom();
+    if (hdrop > 0 && hdrop <= now && !host && !this.promote()) this.endRoom();
     for (const s of this.ctx.getWebSockets()) {
       const ts = this.ctx.getWebSocketAutoResponseTimestamp(s);
       if (ts && now - ts.getTime() > STALE_MS) {

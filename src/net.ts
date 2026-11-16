@@ -139,6 +139,55 @@ export const net = {
   down: false, // host: sambungan ke server putus; tamu: host sedang putus. Keduanya menunggu pulih.
 };
 
+// ===== Lobi yang dipegang server (tahap 2) =====
+// Server menyimpan kursi, jagoan, siap, dan aturan; klien hanya mengirim niat dan menampilkan keadaannya.
+export interface LobbySeat {
+  p: number; // nomor pemain (0 = host pertama)
+  h: number; // jagoan, -1 belum memilih
+  r: boolean; // siap
+  n: string;
+  o: boolean; // sedang tersambung
+}
+export interface LobbyView {
+  fmt: 1 | 2 | 3;
+  bots: boolean; // kursi kosong diisi bot saat mulai
+  quick: boolean; // boleh dimasuki cari lawan cepat
+  phase: "lobby" | "count" | "play";
+  left: number; // ms sisa hitung mundur (saat diterima)
+  until: number; // performance.now() saat hitung mundur selesai (0 bila tidak sedang menghitung)
+  host: number; // nomor pemain yang jadi host
+  seats: (LobbySeat | null)[]; // 6 kursi: genap Tim Merah, ganjil Tim Biru
+  spec: LobbySeat[]; // pemain tanpa kursi
+}
+export const lobby = {
+  want: false, // sudah ikut lobi: ikut lagi otomatis setiap sambungan (ulang)
+  view: null as LobbyView | null,
+  nack: "", // alasan penolakan terakhir (taken, locked, hostonly, notready, noteam, …)
+  demoted: false, // bekas host yang digantikan saat ia pergi
+  onChange: null as (() => void) | null,
+};
+function adoptLobby(m: unknown): void {
+  const v = m as Partial<LobbyView> | null;
+  if (!v || !Array.isArray(v.seats) || !Array.isArray(v.spec)) return;
+  const left = typeof v.left === "number" ? v.left : 0;
+  lobby.view = { ...(v as LobbyView), until: v.phase === "count" ? performance.now() + left : 0 };
+  lobby.onChange?.();
+}
+function lobbyNack(why: unknown): void {
+  lobby.nack = typeof why === "string" ? why : "";
+  lobby.onChange?.();
+}
+// Kirim perintah lobi: join, hero{k}, ready{v}, seat{s}, rules{fmt,bots,quick}, kick{p}, start, cancel, go, end.
+export function lobbyAct(m: { a: string } & Record<string, unknown>): void {
+  if (net.role === "host") {
+    if (hostWs?.readyState === 1) hostWs.send(JSON.stringify({ lb: m }));
+  } else sendToHost({ t: "lb", ...m });
+}
+export function lobbyJoin(name?: string): void {
+  lobby.want = true;
+  lobbyAct({ a: "join", n: name });
+}
+
 // Token tetap pemain, disimpan di perangkat: server memakainya untuk mengenali pemain yang sama setelah putus.
 let memToken = "";
 function playerToken(): string {
@@ -204,6 +253,10 @@ export function roomLink(): string {
 
 export function closeNet(): void {
   session++;
+  lobby.want = false;
+  lobby.view = null;
+  lobby.nack = "";
+  lobby.demoted = false;
   try {
     peer?.destroy();
   } catch {
@@ -272,7 +325,11 @@ function onHostMsg(m: { t?: string; id?: number } | null, fail: (t: string) => v
     net.myId = m.id;
     net.ready = true;
     ready();
-  } else if (m.t === "fb") {
+    if (lobby.want && SERVER) lobbyJoin();
+  } else if (m.t === "lb") adoptLobby(m);
+  else if (m.t === "lbnack") lobbyNack((m as { why?: unknown }).why);
+  else if (m.t === "demoted") lobby.demoted = true;
+  else if (m.t === "fb") {
     // Beberapa frame dalam satu pesan: dimasukkan satu per satu ke antrean.
     const f = (m as { f?: unknown }).f;
     if (Array.isArray(f)) {
@@ -341,6 +398,7 @@ function connectHost(h: HostHandlers, mine: number, attempt: number, resumeSince
       net.down = false;
       h.onLink?.(false);
     }
+    if (lobby.want) lobbyJoin();
     // Ping tiap 3 detik (juga menjaga sambungan hidup); tiap ~15 detik denyut untuk daftar room terbuka.
     let beat = 0;
     sendPing(ws);
@@ -370,6 +428,8 @@ function connectHost(h: HostHandlers, mine: number, attempt: number, resumeSince
       }
       return;
     }
+    if (m.s === "lb") return adoptLobby(m);
+    if (m.s === "lbnack") return lobbyNack((m as { why?: unknown }).why);
     if (m.s === "sync") {
       // Setelah sambung ulang: samakan daftar tamu dengan keadaan server.
       const live = new Set(Array.isArray(m.live) ? m.live : []);

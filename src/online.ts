@@ -1,7 +1,7 @@
 // Mabar online: sisi host dan sisi tamu (klien) di dalam game.
 import { crowdSfx, sfx } from "./audio";
 import { devices, mouse, spectator, type SpecDevice, readAll, readInput, type Device } from "./input";
-import { EMOTE_COUNT, broadcast, findMatch, setEmoteHandler, guestBits, joinRoom, listRooms, net, roomListEnabled, sendToHost, type GuestCommand } from "./net";
+import { EMOTE_COUNT, allGuestsBatch, broadcast, findMatch, setEmoteHandler, guestBits, joinRoom, listRooms, net, roomListEnabled, sendToHost, type GuestCommand } from "./net";
 import { ARENAS, TIMES, type ArenaId, type TimeId } from "./scenery";
 import { setTouchRole, touchState } from "./touch";
 import { Btn, CHARS, DT, type GameEvent, type GameState } from "./sim";
@@ -16,12 +16,21 @@ export function seatInput(i: 0 | 1): number {
 
 let idleFrames = 0;
 export function hostBroadcastMaybe(stepped: boolean, events: GameEvent[]): void {
-  if (stepped || ++idleFrames % 20 === 0) hostBroadcast(events);
+  if (stepped || ++idleFrames % 20 === 0) hostBroadcast(events, stepped);
 }
-function hostBroadcast(events: GameEvent[]): void {
-  if (net.guests.size === 0) return;
+
+// Dua frame digabung dalam satu pesan: jumlah pesan ke server separuhnya (biaya dan beban turun),
+// tamu tetap memutar frame satu per satu. Frame yang tidak datang dari langkah simulasi
+// (menu, jeda) langsung dikirim tanpa menunggu pasangan.
+const BATCH = 2;
+let pendingFrames: object[] = [];
+function hostBroadcast(events: GameEvent[], stepped: boolean): void {
+  if (net.guests.size === 0) {
+    pendingFrames = [];
+    return;
+  }
   const seatOf = (d: SpecDevice) => (d.kind === "net" ? d.id : 0);
-  broadcast({
+  pendingFrames.push({
     t: "f",
     m: app.mode === "pickchar" ? "room" : app.mode === "select" || app.mode === "match" || app.mode === "room" ? app.mode : "lobby",
     rc: room.chars.slice(0, 2),
@@ -35,6 +44,13 @@ function hostBroadcast(events: GameEvent[]): void {
     ev: events,
     hp: Math.round(net.ping),
   });
+  if (stepped && pendingFrames.length < BATCH && allGuestsBatch()) return;
+  const out = pendingFrames;
+  pendingFrames = [];
+  // Tamu lama (v1) tidak mengerti "fb": kirim satu-satu.
+  if (out.length === 1) broadcast(out[0]);
+  else if (allGuestsBatch()) broadcast({ t: "fb", f: out });
+  else for (const f of out) broadcast(f);
 }
 
 const seatByGuest = (id: number) => devices.findIndex((d) => d.kind === "net" && d.id === id);
@@ -445,7 +461,7 @@ export function clientUpdate(now: number): void {
     sentAim = aim;
     sentAt = now;
     const p = net.ping >= 0 ? Math.round(net.ping) : undefined;
-    sendToHost(aim === null ? { t: "i", b: bits, p } : { t: "i", b: bits, x: aim, p });
+    sendToHost(aim === null ? { t: "i", b: bits, p, v: 2 } : { t: "i", b: bits, x: aim, p, v: 2 });
   }
 
   if (net.ready && app.mode !== "join") {

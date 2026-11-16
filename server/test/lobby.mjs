@@ -13,7 +13,7 @@ const open = (code, q) =>
     ws.onopen = () => res(ws);
     ws.onerror = () => rej(new Error("gagal " + code));
   });
-const rooms = async () => (await fetch(`${HTTP}/rooms`, { headers: H })).json();
+const rooms = async () => (await wait(2100), await fetch(`${HTTP}/rooms`, { headers: H })).json();
 
 const priv = await open("PRIV", "role=host");
 const pub = await open("PUBL", "role=host&public=1&name=Budi%20Kampung!");

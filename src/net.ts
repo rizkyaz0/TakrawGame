@@ -29,6 +29,7 @@ export interface Guest {
   aim: number | null; // bidikan penonton dari mouse, dalam koordinat lapangan
   seen: number;
   ping: number; // ms ke server perantara, dilaporkan tamu (-1 = tidak diketahui)
+  v: number; // versi protokol tamu: 2 = paham frame gabungan (pesan "fb")
   emoteAt: number;
 }
 
@@ -206,13 +207,14 @@ const ERRORS: Record<string, string> = {
 
 // Data dari tamu: jangan percaya bentuknya.
 function onGuestData(g: Guest, raw: unknown, h: HostHandlers): void {
-  const m = raw as { t?: unknown; b?: unknown; x?: unknown; c?: unknown; k?: unknown; p?: unknown } | null;
+  const m = raw as { t?: unknown; b?: unknown; x?: unknown; c?: unknown; k?: unknown; p?: unknown; v?: unknown } | null;
   if (!m || typeof m !== "object") return;
   g.seen = performance.now();
   if (m.t === "i") {
     g.bits = typeof m.b === "number" ? m.b & 0x1ff : 0;
     g.aim = typeof m.x === "number" && Number.isFinite(m.x) ? m.x : null;
     g.ping = typeof m.p === "number" && Number.isFinite(m.p) ? Math.min(2000, Math.max(0, m.p)) : -1;
+    g.v = m.v === 2 ? 2 : 1;
   } else if (m.t === "emo") {
     const now = performance.now();
     if (typeof m.k === "number" && Number.isInteger(m.k) && m.k >= 0 && m.k < EMOTE_COUNT && now - g.emoteAt >= EMOTE_GAP) {
@@ -233,6 +235,13 @@ function onHostMsg(m: { t?: string; id?: number } | null, fail: (t: string) => v
     net.myId = m.id;
     net.ready = true;
     ready();
+  } else if (m.t === "fb") {
+    // Beberapa frame dalam satu pesan: dimasukkan satu per satu ke antrean.
+    const f = (m as { f?: unknown }).f;
+    if (Array.isArray(f)) {
+      for (const fr of f.slice(0, 8)) if (fr && typeof fr === "object") net.inbox.push(fr);
+      if (net.inbox.length > 120) net.inbox.splice(0, net.inbox.length - 120);
+    }
   } else if (m.t === "emo") {
     const e = m as { s?: unknown; k?: unknown };
     if (typeof e.s === "number" && typeof e.k === "number" && Number.isInteger(e.k) && e.k >= 0 && e.k < EMOTE_COUNT) emoteHandler?.(e.s, e.k);
@@ -292,7 +301,7 @@ function hostRoomWs(h: HostHandlers, attempt: number): void {
         send: (msg) => ws.send(JSON.stringify({ to: id, m: msg })),
         close: () => ws.send(JSON.stringify({ kick: id })),
       };
-      const g: Guest = { id, conn, bits: 0, aim: null, seen: performance.now(), ping: -1, emoteAt: 0 };
+      const g: Guest = { id, conn, bits: 0, aim: null, seen: performance.now(), ping: -1, v: 1, emoteAt: 0 };
       net.guests.set(id, g);
       h.onJoin(id);
     } else if (m.s === "leave") {
@@ -410,7 +419,7 @@ export async function hostRoom(h: HostHandlers, attempt = 0, opts?: HostOptions)
         window.setTimeout(() => conn.close(), 300);
         return;
       }
-      const g: Guest = { id: nextGuest++, conn, bits: 0, aim: null, seen: performance.now(), ping: -1, emoteAt: 0 };
+      const g: Guest = { id: nextGuest++, conn, bits: 0, aim: null, seen: performance.now(), ping: -1, v: 1, emoteAt: 0 };
       net.guests.set(g.id, g);
       conn.send({ t: "hi", id: g.id });
       h.onJoin(g.id);
@@ -450,6 +459,8 @@ export function broadcast(msg: unknown): void {
   }
 }
 
+// Frame boleh digabung hanya bila semua tamu paham (tamu lama dari cache tidak mengerti "fb").
+export const allGuestsBatch = () => Array.from(net.guests.values()).every((g) => g.v >= 2);
 export const guestBits = (id: number) => net.guests.get(id)?.bits ?? 0;
 export const guestAim = (id: number) => net.guests.get(id)?.aim ?? null;
 

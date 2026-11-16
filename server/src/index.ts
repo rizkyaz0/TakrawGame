@@ -248,6 +248,8 @@ export class Room extends DurableObject<Env> {
   }
 }
 
+let roomsCache: { at: number; data: RoomInfo[] } | null = null;
+
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
     const url = new URL(req.url);
@@ -261,7 +263,9 @@ export default {
     if (url.pathname === "/rooms") {
       const origin = req.headers.get("Origin") ?? "";
       const allowed = env.ALLOWED_ORIGINS.split(",").includes(origin) || /^http:\/\/localhost:\d+$/.test(origin);
-      const rooms = await env.LOBBY.getByName("main").list();
+      // Ingatan sementara 2 detik per isolat: banyak pemain membuka daftar sekaligus tidak membebani Lobby.
+      if (!roomsCache || Date.now() - roomsCache.at > 2000) roomsCache = { at: Date.now(), data: await env.LOBBY.getByName("main").list() };
+      const rooms = roomsCache.data;
       return Response.json(rooms, {
         headers: { "Access-Control-Allow-Origin": allowed ? origin : "null", Vary: "Origin", "Cache-Control": "no-store" },
       });

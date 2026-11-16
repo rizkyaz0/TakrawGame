@@ -1,11 +1,11 @@
 // Mabar online: sisi host dan sisi tamu (klien) di dalam game.
 import { crowdSfx, sfx } from "./audio";
 import { devices, mouse, spectator, type SpecDevice, readAll, readInput, type Device } from "./input";
-import { broadcast, guestBits, joinRoom, net, sendToHost, type GuestCommand } from "./net";
+import { EMOTE_COUNT, broadcast, findMatch, setEmoteHandler, guestBits, joinRoom, listRooms, net, roomListEnabled, sendToHost, type GuestCommand } from "./net";
 import { ARENAS, TIMES, type ArenaId, type TimeId } from "./scenery";
 import { setTouchRole, touchState } from "./touch";
 import { Btn, CHARS, DT, type GameEvent, type GameState } from "./sim";
-import { KEY_HELP, $, app, backBtn, callout, elHelp, elHud, elNetNote, excitement, guestGone, handleEvent, join, lockChar, renderControls, renderMenus, renderRoom, renderRoomClient, renderSelect, renderer, resetShown, room, roomPreview, seatKind, selectAct, setMode, setNetNote, startDemo, state, type Mode, ui, updateHud } from "./main";
+import { startHosting, KEY_HELP, $, app, backBtn, callout, elHelp, elHud, elNetNote, excitement, guestGone, handleEvent, join, lockChar, renderControls, renderMenus, renderRoom, renderRoomClient, renderSelect, renderer, resetShown, room, roomPreview, seatKind, selectAct, setMode, setNetNote, startDemo, state, type Mode, ui, updateHud } from "./main";
 
 // ===== Mabar online =====
 // Host: tombol kursi online diambil dari tamu; keadaan game disiarkan tiap frame.
@@ -33,6 +33,7 @@ function hostBroadcast(events: GameEvent[]): void {
     sk: renderer.skins,
     s: app.mode === "select" || app.mode === "match" || app.mode === "room" || app.mode === "pickchar" ? { ...state, events: [] } : undefined,
     ev: events,
+    hp: Math.round(net.ping),
   });
 }
 
@@ -79,6 +80,12 @@ export const hostHandlers = {
       renderMenus();
     }
   },
+  onEmote(id: number, k: number): void {
+    const seat = seatByGuest(id);
+    if (app.mode !== "match" || seat < 0 || seat > 1) return;
+    showEmote(seat, k);
+    broadcast({ t: "emo", s: seat, k });
+  },
   onCommand(id: number, cmd: GuestCommand): void {
     const seat = seatByGuest(id);
     // Di Room: tamu memilih jagoan untuk kursinya sendiri dari halaman Pilih Jagoan.
@@ -108,7 +115,53 @@ export const hostHandlers = {
 };
 
 // ----- Tamu -----
-export function goJoin(code: string): void {
+// ===== Cari lawan cepat =====
+// Antre di server; begitu dipasangkan, satu orang jadi host dan yang lain masuk ke room-nya.
+let cancelSearch: (() => void) | null = null;
+export function stopSearch(): void {
+  cancelSearch?.();
+  cancelSearch = null;
+}
+
+export function goQuickMatch(): void {
+  stopSearch();
+  setMode("join");
+  join.status = "searching";
+  join.text = "";
+  renderJoin();
+  let waited = 0;
+  const tick = window.setInterval(() => {
+    if (app.mode !== "join" || join.status !== "searching") return window.clearInterval(tick);
+    waited++;
+    renderJoin();
+    if (waited >= 90) {
+      stopSearch();
+      window.clearInterval(tick);
+      join.status = "error";
+      join.text = "Belum ada lawan. Coba lagi sebentar, atau buat room dan ajak teman.";
+      renderJoin();
+    }
+  }, 1000);
+  cancelSearch = findMatch({
+    onMatch(role, code) {
+      cancelSearch = null;
+      window.clearInterval(tick);
+      if (app.mode !== "join") return;
+      if (role === "host") startHosting(false, code);
+      else goJoin(code, true);
+    },
+    onError(text) {
+      cancelSearch = null;
+      window.clearInterval(tick);
+      join.status = "error";
+      join.text = text;
+      if (app.mode === "join") renderJoin();
+    },
+  });
+}
+
+let quickTries = 0;
+export function goJoin(code: string, quick = false): void {
   setMode("join");
   if (code.length !== 4) {
     join.status = "input";
@@ -116,6 +169,7 @@ export function goJoin(code: string): void {
     renderJoin();
     return;
   }
+  if (!quick) quickTries = 0;
   app.online = "client";
   ui.autoPicked = false;
   app.seat = -1;
@@ -129,6 +183,15 @@ export function goJoin(code: string): void {
   const wasPlaying = () => net.myId >= 0;
   void joinRoom(code, {
     onClose(text) {
+      // Baru dipasangkan: host mungkin belum selesai membuka room, jadi coba lagi sebentar.
+      if (quick && text.startsWith("Room tidak ditemukan") && quickTries < 8) {
+        quickTries++;
+        app.online = "off";
+        window.setTimeout(() => {
+          if (app.mode === "join" && app.online === "off") goJoin(code, true);
+        }, 800);
+        return;
+      }
       // Putus di tengah jalan: coba sambung ulang beberapa kali sebelum menyerah. Host
       // mengembalikan kursimu begitu kamu masuk lagi.
       const dropped = text.startsWith("Sambungan ke host putus") && hadSeat;
@@ -170,6 +233,26 @@ export function goJoin(code: string): void {
 export const jpanel = (top: string, bottom: string, cls = "") =>
   `<div class="jpanel ${cls}"><div class="jtop display">${top}</div><div class="jbot">${bottom}</div></div>`;
 
+// Daftar room terbuka di bawah kotak kode: tap satu untuk langsung masuk.
+let listToken = 0;
+const escapeText = (t: string) => t.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+export function refreshRoomList(): void {
+  const box = document.getElementById("roomList");
+  if (!box || !roomListEnabled) return;
+  const mine = ++listToken;
+  box.innerHTML = `<small>Mencari room terbuka…</small>`;
+  void listRooms().then((rooms) => {
+    const el = document.getElementById("roomList");
+    if (mine !== listToken || !el || app.mode !== "join") return;
+    const refresh = `<span class="tapbtn" data-tap="rooms">SEGARKAN</span>`;
+    el.innerHTML = rooms.length
+      ? `<small>ROOM TERBUKA</small>` +
+        rooms.map((r) => `<span class="tapbtn go" data-tap="joinroom:${r.code}">${escapeText(r.name)} · ${r.code} · ${r.guests} tamu ▸</span>`).join("") +
+        refresh
+      : `<small>Belum ada room terbuka. Buat satu lewat BUAT ROOM TERBUKA.</small>${refresh}`;
+  });
+}
+
 const SEAT_NAMES = ["PEMAIN 1", "PEMAIN 2", "PENONTON USIL"];
 function renderJoin(): void {
   const back = backBtn();
@@ -180,12 +263,16 @@ function renderJoin(): void {
         `<input id="roomInput" maxlength="4" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="ABCD" />`,
       ) +
       `<span class="tapbtn go" data-tap="join">GABUNG ▸</span>` +
-      (join.status === "error" ? `<br /><span class="bad">${join.text}</span>` : "");
+      (join.status === "error" ? `<br /><span class="bad">${join.text}</span>` : "") +
+      (roomListEnabled ? `<div id="roomList" class="rlist"></div>` : "");
+    if (roomListEnabled) refreshRoomList();
     $("joinHint").innerHTML = back;
     if (!touchState.enabled) (document.getElementById("roomInput") as HTMLInputElement | null)?.focus();
     return;
   }
-  if (join.status === "connecting") {
+  if (join.status === "searching") {
+    $("joinBox").innerHTML = jpanel("MENCARI LAWAN…", "Menunggu pemain lain yang juga mencari. Tahan sebentar, ya.");
+  } else if (join.status === "connecting") {
     $("joinBox").innerHTML = jpanel(`ROOM ${join.text}`, "Menyambung ke host…");
   } else {
     const seat =
@@ -209,6 +296,7 @@ interface FrameMsg {
   locked: [boolean, boolean];
   s?: GameState;
   ev: GameEvent[];
+  hp?: number; // ping host ke server perantara (ms)
 }
 
 function clientHelp(): void {
@@ -224,7 +312,9 @@ function clientHelp(): void {
   elHelp.innerHTML = `${text} &nbsp;·&nbsp; <kbd>Esc</kbd> menu`;
 }
 
+let hostPing = -1;
 function applyFrame(m: FrameMsg): void {
+  hostPing = typeof m.hp === "number" ? m.hp : -1;
   if (
     Array.isArray(m.ar) &&
     ARENAS.some((a) => a.id === m.ar![0]) &&
@@ -354,7 +444,8 @@ export function clientUpdate(now: number): void {
     sentBits = bits;
     sentAim = aim;
     sentAt = now;
-    sendToHost(aim === null ? { t: "i", b: bits } : { t: "i", b: bits, x: aim });
+    const p = net.ping >= 0 ? Math.round(net.ping) : undefined;
+    sendToHost(aim === null ? { t: "i", b: bits, p } : { t: "i", b: bits, x: aim, p });
   }
 
   if (net.ready && app.mode !== "join") {
@@ -363,6 +454,7 @@ export function clientUpdate(now: number): void {
     if (elNetNote.textContent !== note) setNetNote(note);
   }
 
+  updateOnlineHud();
   const inMatch = app.mode === "match";
   const excite = inMatch ? excitement() : 0.12;
   crowdSfx.level(excite);
@@ -370,3 +462,78 @@ export function clientUpdate(now: number): void {
   renderer.draw(state, excite);
 }
 
+
+// ===== Emote dan ping =====
+// Emote dikirim ke host, host menyiarkannya ke semua. Hanya pemain yang duduk (bukan penonton) boleh mengirim.
+export const EMOTES: readonly { e: string; t: string }[] = [
+  { e: "👍", t: "MANTAP" },
+  { e: "😂", t: "WKWK" },
+  { e: "🔥", t: "PANAS" },
+  { e: "👏", t: "GG" },
+  { e: "😮", t: "WAH!" },
+  { e: "🙏", t: "SABAR" },
+];
+if (EMOTES.length !== EMOTE_COUNT) throw new Error("EMOTE_COUNT tidak cocok dengan EMOTES");
+
+const bubbleTimer = [0, 0];
+function showEmote(seat: number, k: number): void {
+  const el = document.getElementById(`emoteB${seat}`);
+  const em = EMOTES[k];
+  if (!el || !em || seat < 0 || seat > 1) return;
+  el.innerHTML = `${em.e}<b>${em.t}</b>`;
+  el.classList.remove("on");
+  void el.offsetWidth; // mulai ulang animasinya
+  el.classList.add("on");
+  window.clearTimeout(bubbleTimer[seat]);
+  bubbleTimer[seat] = window.setTimeout(() => el.classList.remove("on"), 2300);
+}
+setEmoteHandler(showEmote);
+
+let emoteSentAt = 0;
+export function sendEmote(k: number): void {
+  const now = performance.now();
+  if (app.mode !== "match" || app.online === "off" || k < 0 || k >= EMOTE_COUNT || now - emoteSentAt < 1500) return;
+  if (app.online === "client") {
+    if (app.seat < 0 || app.seat > 1) return;
+    emoteSentAt = now;
+    sendToHost({ t: "emo", k });
+    return;
+  }
+  const seat = devices[0].kind === "net" ? 1 : 0; // kursi host: yang bukan milik tamu
+  emoteSentAt = now;
+  showEmote(seat, k);
+  broadcast({ t: "emo", s: seat, k });
+}
+
+// Ping total = jarak ke server (host) + jarak ke server (tamu), dalam milidetik.
+let pingShown = "";
+let emotesShown = false;
+export function updateOnlineHud(): void {
+  const tag = document.getElementById("pingTag");
+  const bar = document.getElementById("emotes");
+  if (!tag || !bar) return;
+  let text = "";
+  let cls = "";
+  if (app.mode === "match" && app.online !== "off" && net.ready && net.ping >= 0) {
+    let total = net.ping;
+    if (app.online === "client") total += hostPing >= 0 ? hostPing : 0;
+    else {
+      const worst = Math.max(-1, ...Array.from(net.guests.values(), (g) => g.ping));
+      if (worst >= 0) total += worst;
+    }
+    const ms = Math.round(total);
+    text = `PING ${ms}`;
+    cls = ms < 90 ? "ok" : ms < 180 ? "mid" : "bad";
+  }
+  const key = text + cls;
+  if (key !== pingShown) {
+    pingShown = key;
+    tag.textContent = text;
+    tag.className = cls + (text ? " on" : "");
+  }
+  const canEmote = app.mode === "match" && app.online !== "off" && (app.online === "host" || (app.seat >= 0 && app.seat <= 1));
+  if (canEmote !== emotesShown) {
+    emotesShown = canEmote;
+    bar.classList.toggle("on", canEmote);
+  }
+}

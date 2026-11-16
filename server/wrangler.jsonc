@@ -1,0 +1,21 @@
+{
+  "name": "takraw-clash-server",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-11-01",
+  "durable_objects": {
+    "bindings": [
+      { "name": "ROOMS", "class_name": "Room" },
+      { "name": "LOBBY", "class_name": "Lobby" },
+      { "name": "MATCH", "class_name": "Matcher" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["Room"] },
+    { "tag": "v2", "new_sqlite_classes": ["Lobby"] },
+    { "tag": "v3", "new_sqlite_classes": ["Matcher"] }
+  ],
+  "vars": {
+    // Asal halaman yang boleh membuka WebSocket (pisahkan dengan koma); http://localhost:* selalu boleh.
+    "ALLOWED_ORIGINS": "https://takraw-clash.vercel.app"
+  }
+}

@@ -1,4 +1,4 @@
-import type { DataConnection, Peer } from "peerjs";
+import type { Peer } from "peerjs";
 
 // Mabar online. Satu perangkat jadi host: ia menjalankan simulasi dan mengirim keadaan
 // game ke tamu. Tamu hanya mengirim tombol yang ditekan dan menggambar apa yang diterima.
@@ -8,14 +8,28 @@ import type { DataConnection, Peer } from "peerjs";
 const PREFIX = "takrawclash-v1-";
 const ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ"; // tanpa I dan O supaya tidak tertukar angka
 export const MAX_GUESTS = 4;
+export const EMOTE_COUNT = 6;
+const EMOTE_GAP = 1500; // ms: jeda minimum antar-emote dari satu tamu
 const GUEST_TIMEOUT = 6000; // ms tanpa kabar sebelum tamu dianggap putus
+
+// Sambungan ke satu tamu: PeerJS (DataConnection) atau WebSocket lewat server perantara.
+export interface Conn {
+  readonly open: boolean;
+  send(msg: unknown): void;
+  close(): void;
+}
+
+// Alamat server perantara (O2), mis. wss://takraw-clash-server.<akun>.workers.dev. Kosong = PeerJS publik.
+const SERVER = ((import.meta.env.VITE_ONLINE_URL as string | undefined) ?? "").replace(/\/$/, "");
 
 export interface Guest {
   id: number;
-  conn: DataConnection;
+  conn: Conn;
   bits: number;
   aim: number | null; // bidikan penonton dari mouse, dalam koordinat lapangan
   seen: number;
+  ping: number; // ms ke server perantara, dilaporkan tamu (-1 = tidak diketahui)
+  emoteAt: number;
 }
 
 export type GuestCommand = { c: "left" | "right" | "lock" } | { c: "char"; k: number };
@@ -24,7 +38,77 @@ export interface HostHandlers {
   onJoin(id: number): void;
   onLeave(id: number): void;
   onCommand(id: number, cmd: GuestCommand): void;
+  onEmote(id: number, k: number): void;
   onError(text: string): void;
+}
+
+export interface RoomInfo {
+  code: string;
+  name: string;
+  guests: number;
+}
+
+// Opsi host: room terbuka tampil di daftar room dengan nama pemilik.
+export interface HostOptions {
+  open?: boolean;
+  name?: string;
+  code?: string; // kode yang ditentukan server (cari lawan cepat)
+}
+let hostOpts: HostOptions = {};
+
+export const roomListEnabled = !!SERVER;
+
+// Daftar room terbuka dari server perantara; kosong bila server tidak dipakai atau tak terjangkau.
+export async function listRooms(): Promise<RoomInfo[]> {
+  if (!SERVER) return [];
+  try {
+    const res = await fetch(`${SERVER.replace(/^ws/, "http")}/rooms`, { cache: "no-store" });
+    if (!res.ok) return [];
+    const data = (await res.json()) as unknown;
+    if (!Array.isArray(data)) return [];
+    return data
+      .filter((r): r is RoomInfo => !!r && typeof r.code === "string" && typeof r.name === "string" && typeof r.guests === "number")
+      .slice(0, 30);
+  } catch {
+    return [];
+  }
+}
+
+// Cari lawan cepat: menunggu di antrean server sampai dipasangkan. Mengembalikan fungsi pembatal.
+export function findMatch(h: { onMatch(role: "host" | "guest", code: string): void; onError(text: string): void }): () => void {
+  if (!SERVER) {
+    h.onError("Cari lawan butuh server online.");
+    return () => undefined;
+  }
+  let done = false;
+  const ws = new WebSocket(`${SERVER}/queue`);
+  const ping = window.setInterval(() => ws.readyState === 1 && ws.send("ping"), 15000);
+  ws.onmessage = (e) => {
+    if (typeof e.data !== "string" || e.data === "pong") return;
+    try {
+      const m = JSON.parse(e.data) as { t?: string; role?: string; code?: unknown };
+      if (m.t === "match" && (m.role === "host" || m.role === "guest") && typeof m.code === "string" && /^[A-Z]{4}$/.test(m.code)) {
+        done = true;
+        h.onMatch(m.role, m.code);
+      }
+    } catch {
+      // abaikan
+    }
+  };
+  const lost = () => {
+    window.clearInterval(ping);
+    if (!done) {
+      done = true;
+      h.onError("Pencarian terputus. Coba lagi.");
+    }
+  };
+  ws.onclose = lost;
+  ws.onerror = lost;
+  return () => {
+    done = true;
+    window.clearInterval(ping);
+    ws.close();
+  };
 }
 
 export interface ClientHandlers {
@@ -39,10 +123,33 @@ export const net = {
   guests: new Map<number, Guest>(),
   inbox: [] as unknown[], // tamu: pesan dari host yang belum diproses
   lastHeard: 0,
+  ping: -1, // ms ke server perantara (tanpa server: -1)
 };
 
+// Emote dari host (nomor kursi + emote), diteruskan ke tampilan.
+let emoteHandler: ((seat: number, k: number) => void) | null = null;
+export function setEmoteHandler(fn: (seat: number, k: number) => void): void {
+  emoteHandler = fn;
+}
+
+// Pengukur ping: "ping" dijawab "pong" oleh server tanpa membangunkannya.
+let pingAt = 0;
+function sendPing(ws: WebSocket): void {
+  if (ws.readyState !== 1) return;
+  pingAt = performance.now();
+  ws.send("ping");
+}
+function onPong(): void {
+  if (pingAt === 0) return;
+  const rtt = performance.now() - pingAt;
+  net.ping = net.ping < 0 ? rtt : net.ping * 0.6 + rtt * 0.4;
+  net.lastHeard = performance.now();
+}
+
 let peer: Peer | null = null;
-let hostConn: DataConnection | null = null;
+let hostConn: Conn | null = null;
+let hostWs: WebSocket | null = null; // host lewat server perantara
+let pingTimer = 0;
 let nextGuest = 1;
 let session = 0; // naik tiap kali room dibuka/ditutup; panggilan balik lama diabaikan
 
@@ -69,6 +176,15 @@ export function closeNet(): void {
   }
   peer = null;
   hostConn = null;
+  window.clearInterval(pingTimer);
+  try {
+    hostWs?.close();
+  } catch {
+    // sudah mati
+  }
+  hostWs = null;
+  net.ping = -1;
+  pingAt = 0;
   net.role = "off";
   net.code = "";
   net.ready = false;
@@ -85,11 +201,172 @@ const ERRORS: Record<string, string> = {
   "socket-closed": "Sambungan ke server perantara putus.",
   "browser-incompatible": "Browser ini tidak mendukung sambungan langsung (WebRTC).",
   webrtc: "Sambungan langsung antar-perangkat gagal.",
+  "ws-failed": "Tidak bisa menghubungi server. Cek internetmu.",
 };
 
+// Data dari tamu: jangan percaya bentuknya.
+function onGuestData(g: Guest, raw: unknown, h: HostHandlers): void {
+  const m = raw as { t?: unknown; b?: unknown; x?: unknown; c?: unknown; k?: unknown; p?: unknown } | null;
+  if (!m || typeof m !== "object") return;
+  g.seen = performance.now();
+  if (m.t === "i") {
+    g.bits = typeof m.b === "number" ? m.b & 0x1ff : 0;
+    g.aim = typeof m.x === "number" && Number.isFinite(m.x) ? m.x : null;
+    g.ping = typeof m.p === "number" && Number.isFinite(m.p) ? Math.min(2000, Math.max(0, m.p)) : -1;
+  } else if (m.t === "emo") {
+    const now = performance.now();
+    if (typeof m.k === "number" && Number.isInteger(m.k) && m.k >= 0 && m.k < EMOTE_COUNT && now - g.emoteAt >= EMOTE_GAP) {
+      g.emoteAt = now;
+      h.onEmote(g.id, m.k);
+    }
+  } else if (m.t === "cmd") {
+    if (m.c === "left" || m.c === "right" || m.c === "lock") h.onCommand(g.id, { c: m.c });
+    else if (m.c === "char" && typeof m.k === "number" && Number.isInteger(m.k)) h.onCommand(g.id, { c: "char", k: m.k });
+  }
+}
+
+// Pesan dari host untuk tamu (sama untuk PeerJS dan WebSocket).
+function onHostMsg(m: { t?: string; id?: number } | null, fail: (t: string) => void, ready: () => void): void {
+  if (!m || typeof m !== "object") return;
+  net.lastHeard = performance.now();
+  if (m.t === "hi" && typeof m.id === "number") {
+    net.myId = m.id;
+    net.ready = true;
+    ready();
+  } else if (m.t === "emo") {
+    const e = m as { s?: unknown; k?: unknown };
+    if (typeof e.s === "number" && typeof e.k === "number" && Number.isInteger(e.k) && e.k >= 0 && e.k < EMOTE_COUNT) emoteHandler?.(e.s, e.k);
+  } else if (m.t === "full") fail("Room sudah penuh.");
+  else if (m.t === "bye") fail("Host menutup room.");
+  else {
+    net.inbox.push(m);
+    if (net.inbox.length > 120) net.inbox.splice(0, net.inbox.length - 120);
+  }
+}
+
+// ===== Host lewat server perantara (WebSocket) =====
+function hostRoomWs(h: HostHandlers, attempt: number): void {
+  const mine = session;
+  net.role = "host";
+  // Kode dari server (cari lawan cepat) dipakai pada percobaan pertama; bila terpakai, ambil acak.
+  net.code = attempt === 0 && hostOpts.code ? hostOpts.code : randomCode();
+  const q = hostOpts.open ? `&public=1&name=${encodeURIComponent(hostOpts.name ?? "Pemain")}` : "";
+  const ws = new WebSocket(`${SERVER}/ws/${net.code}?role=host${q}`);
+  hostWs = ws;
+  ws.onopen = () => {
+    if (mine !== session) return;
+    net.ready = true;
+    // Ping tiap 3 detik (juga menjaga sambungan hidup); tiap ~15 detik denyut untuk daftar room terbuka.
+    let beat = 0;
+    sendPing(ws);
+    pingTimer = window.setInterval(() => {
+      sendPing(ws);
+      if (++beat % 5 === 0 && ws.readyState === 1) ws.send('{"hb":1}');
+    }, 3000);
+  };
+  ws.onmessage = (e) => {
+    if (mine !== session || typeof e.data !== "string") return;
+    if (e.data === "pong") return onPong();
+    let m: { t?: string; type?: string; s?: string; id?: number; m?: unknown };
+    try {
+      m = JSON.parse(e.data);
+    } catch {
+      return;
+    }
+    if (m.t === "err") {
+      if (m.type === "unavailable-id" && attempt < 5) {
+        hostWs = null;
+        ws.onclose = null;
+        ws.close();
+        hostRoomWs(h, attempt + 1);
+      } else h.onError(ERRORS[m.type ?? ""] ?? "Ada masalah sambungan.");
+      return;
+    }
+    const id = m.id;
+    if (typeof id !== "number") return;
+    if (m.s === "join") {
+      const conn: Conn = {
+        get open() {
+          return ws.readyState === 1;
+        },
+        send: (msg) => ws.send(JSON.stringify({ to: id, m: msg })),
+        close: () => ws.send(JSON.stringify({ kick: id })),
+      };
+      const g: Guest = { id, conn, bits: 0, aim: null, seen: performance.now(), ping: -1, emoteAt: 0 };
+      net.guests.set(id, g);
+      h.onJoin(id);
+    } else if (m.s === "leave") {
+      if (net.guests.delete(id)) h.onLeave(id);
+    } else if (m.s === "msg") {
+      const g = net.guests.get(id);
+      if (g) onGuestData(g, m.m, h);
+    }
+  };
+  ws.onclose = () => {
+    if (mine === session) h.onError(ERRORS["socket-closed"]);
+  };
+  ws.onerror = () => {
+    if (mine === session && !net.ready) h.onError(ERRORS["ws-failed"]);
+  };
+}
+
+// ===== Tamu lewat server perantara (WebSocket) =====
+function joinRoomWs(code: string, h: ClientHandlers): void {
+  const mine = session;
+  net.role = "client";
+  net.code = code;
+  let done = false;
+  const fail = (text: string) => {
+    if (mine !== session || done) return;
+    done = true;
+    closeNet();
+    h.onClose(text);
+  };
+  const ws = new WebSocket(`${SERVER}/ws/${code}?role=guest`);
+  hostWs = ws;
+  hostConn = {
+    get open() {
+      return ws.readyState === 1;
+    },
+    send: (msg) => ws.send(JSON.stringify(msg)),
+    close: () => ws.close(),
+  };
+  const timeout = window.setTimeout(() => {
+    if (!net.ready) fail("Tidak bisa tersambung ke room.");
+  }, 12000);
+  ws.onopen = () => {
+    sendPing(ws);
+    pingTimer = window.setInterval(() => sendPing(ws), 3000);
+  };
+  ws.onmessage = (e) => {
+    if (mine !== session || typeof e.data !== "string") return;
+    if (e.data === "pong") return onPong();
+    let m: { t?: string; type?: string; id?: number } | null;
+    try {
+      m = JSON.parse(e.data);
+    } catch {
+      return;
+    }
+    if (m?.t === "err") {
+      window.clearTimeout(timeout);
+      fail(ERRORS[m.type ?? ""] ?? "Ada masalah sambungan.");
+      return;
+    }
+    onHostMsg(m, (t) => (window.clearTimeout(timeout), fail(t)), () => window.clearTimeout(timeout));
+  };
+  const lost = () => {
+    window.clearTimeout(timeout);
+    fail("Sambungan ke host putus.");
+  };
+  ws.onclose = lost;
+  ws.onerror = lost;
+}
+
 // ===== Host =====
-export async function hostRoom(h: HostHandlers, attempt = 0): Promise<void> {
+export async function hostRoom(h: HostHandlers, attempt = 0, opts?: HostOptions): Promise<void> {
   if (attempt === 0) closeNet();
+  if (opts) hostOpts = opts;
+  if (SERVER) return hostRoomWs(h, attempt);
   const mine = session;
   net.role = "host";
   net.code = randomCode();
@@ -113,7 +390,7 @@ export async function hostRoom(h: HostHandlers, attempt = 0): Promise<void> {
     if (type === "unavailable-id" && attempt < 5) {
       // Kodenya sedang dipakai room lain: ambil kode baru.
       p.destroy();
-      void hostRoom(h, attempt + 1);
+      void hostRoom(h, attempt + 1, hostOpts);
       return;
     }
     if (type === "peer-unavailable") return; // bukan urusan host
@@ -133,7 +410,7 @@ export async function hostRoom(h: HostHandlers, attempt = 0): Promise<void> {
         window.setTimeout(() => conn.close(), 300);
         return;
       }
-      const g: Guest = { id: nextGuest++, conn, bits: 0, aim: null, seen: performance.now() };
+      const g: Guest = { id: nextGuest++, conn, bits: 0, aim: null, seen: performance.now(), ping: -1, emoteAt: 0 };
       net.guests.set(g.id, g);
       conn.send({ t: "hi", id: g.id });
       h.onJoin(g.id);
@@ -144,19 +421,7 @@ export async function hostRoom(h: HostHandlers, attempt = 0): Promise<void> {
       };
       conn.on("close", leave);
       conn.on("error", leave);
-      conn.on("data", (raw) => {
-        // Data dari luar: jangan percaya bentuknya.
-        const m = raw as { t?: unknown; b?: unknown; x?: unknown; c?: unknown; k?: unknown } | null;
-        if (!m || typeof m !== "object") return;
-        g.seen = performance.now();
-        if (m.t === "i") {
-          g.bits = typeof m.b === "number" ? m.b & 0x1ff : 0;
-          g.aim = typeof m.x === "number" && Number.isFinite(m.x) ? m.x : null;
-        } else if (m.t === "cmd") {
-          if (m.c === "left" || m.c === "right" || m.c === "lock") h.onCommand(g.id, { c: m.c });
-          else if (m.c === "char" && typeof m.k === "number" && Number.isInteger(m.k)) h.onCommand(g.id, { c: "char", k: m.k });
-        }
-      });
+      conn.on("data", (raw) => onGuestData(g, raw, h));
     });
   });
 }
@@ -171,6 +436,10 @@ export function sweepGuests(): void {
 }
 
 export function broadcast(msg: unknown): void {
+  if (hostWs) {
+    if (hostWs.readyState === 1 && net.guests.size > 0) hostWs.send(JSON.stringify({ m: msg }));
+    return;
+  }
   for (const g of net.guests.values()) {
     if (!g.conn.open) continue;
     try {
@@ -187,6 +456,7 @@ export const guestAim = (id: number) => net.guests.get(id)?.aim ?? null;
 // ===== Tamu =====
 export async function joinRoom(code: string, h: ClientHandlers): Promise<void> {
   closeNet();
+  if (SERVER) return joinRoomWs(code, h);
   const mine = session;
   net.role = "client";
   net.code = code;
@@ -222,22 +492,7 @@ export async function joinRoom(code: string, h: ClientHandlers): Promise<void> {
     hostConn = conn;
     conn.on("data", (raw) => {
       if (mine !== session) return;
-      const m = raw as { t?: string; id?: number } | null;
-      if (!m || typeof m !== "object") return;
-      net.lastHeard = performance.now();
-      if (m.t === "hi" && typeof m.id === "number") {
-        net.myId = m.id;
-        net.ready = true;
-        window.clearTimeout(timeout);
-      } else if (m.t === "full") {
-        window.clearTimeout(timeout);
-        fail("Room sudah penuh.");
-      } else if (m.t === "bye") {
-        fail("Host menutup room.");
-      } else {
-        net.inbox.push(m);
-        if (net.inbox.length > 120) net.inbox.splice(0, net.inbox.length - 120);
-      }
+      onHostMsg(raw as { t?: string; id?: number } | null, (t) => (window.clearTimeout(timeout), fail(t)), () => window.clearTimeout(timeout));
     });
     conn.on("close", () => {
       window.clearTimeout(timeout);

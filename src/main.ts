@@ -1,16 +1,17 @@
 import { aiBodyIfReady, loadAiBody } from "./aibody";
+import { account } from "./auth";
 import { SKINS, nextSkin, savedSkin, skinHint, winsWith } from "./skins";
 import { crowdSfx, getVolume, music, setBusLevel, setVolume, sfx, sillySfx, voice, VOLUME_STEPS } from "./audio";
 import { loadSettings, settings } from "./settings";
 import { initAuth } from "./auth";
 import { checkAchievements, isUnlocked, loadProgress, progress, saveProgress, unlockWins } from "./progress";
 import { deviceActive, deviceLabel, deviceOptions, devices, mouse, readSpectator, spectator, spectatorOptions, type SpecDevice, listPads, loadDevices, readInput, sameDevice, saveDevices, trackPads, type Device, keyHelp } from "./input";
-import { cleanCode, guestAim, guestBits, hostRoom, leaveRoom, net, roomLink, sendToHost, sweepGuests } from "./net";
+import { cleanCode, guestAim, guestBits, hostRoom, leaveRoom, net, roomListEnabled, roomLink, sendToHost, sweepGuests } from "./net";
 import { Renderer } from "./render";
 import { ARENAS, TIMES, type ArenaId, type TimeId } from "./scenery";
 import { initTouch, setSpecialReady, setTouchRole, touchCapable, touchState } from "./touch";
 import { BALL_R, BODY_Y, CHARS, COURT_HALF, SPEC_MAX_AMMO, GUARD_PERFECT, GUARD_R, PERFECT_FROM, PERFECT_TO, SMASH_R, sideOf, cpuInput, createState, DT, HEAT_MAX, heatMul, gameWinner, matchPointMask, MAX_TOUCHES, METER_MAX, SPECIAL_COST, step, type GameEvent, type GameState } from "./sim";
-import { clientUpdate, goJoin, hostBroadcastMaybe, hostHandlers, jpanel, seatInput } from "./online";
+import { clientUpdate, goJoin, sendEmote, updateOnlineHud, goQuickMatch, stopSearch, refreshRoomList, hostBroadcastMaybe, hostHandlers, jpanel, seatInput } from "./online";
 import { TUT_STEPS, startTutorial, tut, tutBegin, tutEvent, tutNext, tutPlay, tutTick } from "./tutorial";
 import { buzz, goHowto, goProfile, goSettings, keysKey, keysUi, profileAccountAction, profileRename, renderKeys, renderProfile, renderSettings, settingRows, stepSetting } from "./menus";
 
@@ -78,7 +79,7 @@ export const app = {
   online: "off" as "off" | "host" | "client",
   seat: -1, // tamu online: 0/1 pemain, 2 penonton, -1 hanya menonton
 };
-export const join = { status: "input" as "input" | "connecting" | "waiting" | "error", text: "" };
+export const join = { status: "input" as "input" | "searching" | "connecting" | "waiting" | "error", text: "" };
 export const ui = { roomError: "", autoPicked: false };
 
 // ===== Mode latihan =====
@@ -316,6 +317,7 @@ export function startDemo(): void {
 
 // Keluar dari mabar online: tutup sambungan dan kembalikan kursi online ke alat lokal.
 function endOnline(): void {
+  stopSearch();
   if (app.online === "off") return;
   leaveRoom();
   app.online = "off";
@@ -346,6 +348,22 @@ function backToMenu(): void {
   setMode("title");
   startDemo();
   renderMenus();
+}
+
+// Host mengatur kursi di layar kontrol. Online baru 1 lawan 1 (tim online menyusul).
+// Room terbuka tampil di daftar room dengan nama akunmu (atau "Pemain").
+export function startHosting(open: boolean, code?: string): void {
+  app.teamSize = 1;
+  app.mate = false;
+  app.humans = 2;
+  app.training = false;
+  app.arcade.on = false;
+  app.online = "host";
+  ui.autoPicked = false;
+  ui.roomError = "";
+  sfx.receivePerfect();
+  void hostRoom(hostHandlers, 0, { open, name: account.profile?.displayName ?? "Pemain", code });
+  goRoom();
 }
 
 function goTitle(): void {
@@ -1380,26 +1398,10 @@ function titleItems(): TitleItem[] {
   }
   if (menuNav.id === "online") {
     return [
-      {
-        label: "BUAT ROOM",
-        row: 0,
-        big: true,
-        run: () => {
-          // Host mengatur kursi di layar kontrol. Online baru 1 lawan 1 (tim online menyusul).
-          app.teamSize = 1;
-          app.mate = false;
-          app.humans = 2;
-          app.training = false;
-          app.arcade.on = false;
-          app.online = "host";
-          ui.autoPicked = false;
-          ui.roomError = "";
-          sfx.receivePerfect();
-          void hostRoom(hostHandlers);
-          goRoom();
-        },
-      },
-      { label: "MASUKKAN KODE", row: 1, big: true, run: () => (sfx.receivePerfect(), goJoin("")) },
+      ...(roomListEnabled ? [{ label: "CARI LAWAN CEPAT", row: 0, big: true, run: () => (sfx.receivePerfect(), goQuickMatch()) }] : []),
+      { label: "BUAT ROOM", row: roomListEnabled ? 1 : 0, big: true, run: () => startHosting(false) },
+      ...(roomListEnabled ? [{ label: "BUAT ROOM TERBUKA", row: 2, big: true, run: () => startHosting(true) }] : []),
+      { label: "MASUKKAN KODE", row: roomListEnabled ? 3 : 1, big: true, run: () => (sfx.receivePerfect(), goJoin("")) },
       back,
     ];
   }
@@ -1685,6 +1687,12 @@ function handleTap(v: string): void {
   } else if (cmd === "setrow") {
     app.setRow = Number(arg);
     renderSettings();
+  } else if (cmd === "emote") {
+    sendEmote(Number(arg));
+  } else if (cmd === "joinroom") {
+    goJoin(arg);
+  } else if (cmd === "rooms") {
+    refreshRoomList();
   } else if (cmd === "login") {
     profileAccountAction();
   } else if (cmd === "rename") {
@@ -1906,6 +1914,8 @@ export const LEFT = new Set(["KeyA", "ArrowLeft"]);
 export const RIGHT = new Set(["KeyD", "ArrowRight"]);
 
 function menuKey(code: string): void {
+  // Emote di pertandingan online: tombol 1 sampai 6.
+  if (app.mode === "match" && app.online !== "off" && /^Digit[1-6]$/.test(code)) return sendEmote(Number(code.slice(5)) - 1);
   if (app.mode === "title") {
     const items = titleItems();
     if (code === "Escape" || code === "Backspace") {
@@ -2830,6 +2840,7 @@ function update(now: number): void {
   if (app.online === "host") {
     sweepGuests();
     hostBroadcastMaybe(stepped, sent);
+    updateOnlineHud();
   }
   updateCue();
   const excite = inMatch ? excitement() : 0.12;

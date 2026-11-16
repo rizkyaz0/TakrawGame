@@ -64,11 +64,23 @@
           saat halaman dibuka.
         </li>
         <li>
-          <b>Mabar online.</b> Hanya kalau kamu membuat atau bergabung ke room. Server PeerJS publik dipakai
-          untuk mempertemukan perangkat lewat kode room. Setelah tersambung, data permainan mengalir langsung
-          antar-perangkat, sehingga alamat IP-mu terlihat oleh perangkat pemain lain di room yang sama (dan
-          oleh server perantara bila sambungan langsung tidak memungkinkan). Isi yang dikirim hanya tombol
-          yang ditekan dan keadaan permainan.
+          <b>Mabar online.</b> Hanya kalau kamu membuat room, mencari lawan, atau bergabung ke room. Pesan
+          permainan (tombol yang ditekan, keadaan pertandingan, dan emote) lewat server perantara milik game
+          ini yang berjalan di Cloudflare (Workers dan Durable Objects). Server itu dapat melihat alamat IP-mu
+          dan kode room, dan hanya meneruskan pesan: isinya tidak disimpan setelah room selesai, dan server
+          tidak mencatat riwayat pertandingan. Karena pertandingan dijalankan di perangkat host, pemain lain di
+          room yang sama tidak menerima alamat IP-mu dari game ini.
+        </li>
+        <li>
+          <b>Room terbuka dan cari lawan.</b> Kalau kamu memilih <i>Buat Room Terbuka</i>, kode room, nama
+          tampilan (nama akunmu, atau "Pemain" kalau kamu tamu), dan jumlah tamu tampil di daftar room untuk
+          semua pemain selama room itu terbuka, lalu hilang saat host pergi. <i>Cari Lawan Cepat</i> hanya
+          menaruhmu di antrean sementara sampai dipasangkan; tidak ada yang disimpan.
+        </li>
+        <li>
+          <b>Server cadangan.</b> Kalau server perantara tidak dipakai di versi yang kamu buka, mabar memakai
+          server PeerJS publik untuk mempertemukan perangkat. Setelah tersambung, data mengalir langsung
+          antar-perangkat, sehingga alamat IP-mu terlihat oleh perangkat pemain lain di room itu.
         </li>
       </ul>
 
